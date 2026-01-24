@@ -20,11 +20,60 @@ function App() {
   const [showFeedback, setShowFeedback] = useState(false);
   const [darkMode, setDarkMode] = useState(localStorage.getItem('darkMode') === 'true');
   const [isInjured, setIsInjured] = useState(localStorage.getItem('isInjured') === 'true');
+  const [isAuthenticated, setIsAuthenticated] = useState(localStorage.getItem('authenticated') === 'true');
+  const [password, setPassword] = useState('');
   const [apiKey, setApiKey] = useState(
     import.meta.env.VITE_OPENAI_API_KEY || 
     localStorage.getItem('openai_api_key') || 
     ''
   );
+
+  const handleLogin = () => {
+    // Your secure password
+    if (password === 'Kx9#mP2$vL8@nQ4!') {
+      setIsAuthenticated(true);
+      localStorage.setItem('authenticated', 'true');
+    } else {
+      setError('Incorrect password');
+    }
+  };
+
+  // Show login screen if not authenticated
+  if (!isAuthenticated) {
+    return (
+      <div className="app">
+        <div className="header">
+          <h1>🔒 Access Required</h1>
+        </div>
+        <div className="workout-display">
+          <div className="workout-title">Enter Password</div>
+          <div className="workout-block">
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
+              style={{
+                width: '100%',
+                padding: '12px',
+                border: '1px solid var(--border-color)',
+                borderRadius: '8px',
+                fontSize: '16px',
+                marginBottom: '15px',
+                background: 'var(--card-bg)',
+                color: 'var(--text-color)'
+              }}
+              placeholder="Enter password"
+            />
+            <button className="btn btn-primary" onClick={handleLogin} style={{ width: '100%' }}>
+              🔓 Access App
+            </button>
+            {error && <div className="error" style={{ marginTop: '15px' }}>{error}</div>}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Apply dark mode
   useEffect(() => {
