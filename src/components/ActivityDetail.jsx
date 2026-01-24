@@ -54,7 +54,11 @@ const ActivityDetail = ({ activityId, onBack }) => {
     <div className="app">
       <div className="header">
         <button 
-          onClick={onBack}
+          onClick={() => {
+            setSelectedActivityId(null);
+            // Update browser history
+            window.history.pushState({ view: 'main' }, '', window.location.pathname);
+          }}
           style={{ 
             background: 'none', 
             border: 'none', 

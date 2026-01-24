@@ -233,21 +233,52 @@ export const generateInsights = async (apiKey, activities) => {
   const recentActivity = activities[0];
   if (!recentActivity) return null;
 
-  const prompt = `Analyze this running activity and provide insights:
+  // Determine what type of workout this should have been based on day
+  const activityDate = new Date(recentActivity.start_date);
+  const dayOfWeek = activityDate.getDay();
+  let expectedWorkoutType;
+  if (dayOfWeek === 2) { // Tuesday
+    expectedWorkoutType = "Easy Run (recovery pace, HR 150-160 bpm)";
+  } else if (dayOfWeek === 4) { // Thursday  
+    expectedWorkoutType = "Speed/Tempo Work (intervals or tempo run)";
+  } else if (dayOfWeek === 0 || dayOfWeek === 6) { // Weekend
+    expectedWorkoutType = "Long Run (endurance building)";
+  } else {
+    expectedWorkoutType = "Flexible workout (easy run, cross-training, or rest)";
+  }
 
-Activity: ${recentActivity.name}
-Distance: ${(recentActivity.distance / 1609.34).toFixed(2)} miles
-Duration: ${Math.floor(recentActivity.moving_time / 60)} minutes
-Average Pace: ${formatPace(recentActivity.average_speed)}
-Date: ${new Date(recentActivity.start_date).toLocaleDateString()}
+  const distance = (recentActivity.distance / 1609.34).toFixed(2);
+  const duration = Math.floor(recentActivity.moving_time / 60);
+  const pace = formatPace(recentActivity.average_speed);
+  const avgHR = recentActivity.average_heartrate ? Math.round(recentActivity.average_heartrate) : 'N/A';
+
+  const prompt = `Analyze this running activity for a runner training for a 1:45:00 half marathon on May 2nd, 2026. Current PR is 2:01:00.
+
+Activity Details:
+- Name: ${recentActivity.name}
+- Distance: ${distance} miles
+- Duration: ${duration} minutes
+- Average Pace: ${pace}
+- Average HR: ${avgHR} bpm
+- Date: ${activityDate.toLocaleDateString()}
+- Expected workout type for this day: ${expectedWorkoutType}
+
+Training Context:
+- Goal race pace: 8:01/mile
+- Easy run target pace: 10:00-11:00/mile (HR 150-160)
+- Tempo pace: 8:00-8:15/mile
+- Interval pace: 7:15-7:45/mile
+- Injury-prone athlete (focus on conservative progression)
 
 Provide insights in JSON format:
 {
-  "summary": "Brief performance summary",
-  "strengths": "What went well",
-  "improvements": "Areas for improvement", 
-  "nextWorkout": "Recommended next workout type"
-}`;
+  "summary": "Brief analysis of how this workout aligns with half marathon training goals",
+  "strengths": "What went well relative to the expected workout type and training goals",
+  "improvements": "Areas for improvement specific to half marathon training and injury prevention", 
+  "nextWorkout": "Specific recommendation for next workout based on training schedule and this performance"
+}
+
+Focus on: pace appropriateness for workout type, heart rate zones, injury prevention, and progression toward 1:45 goal.`;
 
   const response = await fetch(OPENAI_API_URL, {
     method: 'POST',

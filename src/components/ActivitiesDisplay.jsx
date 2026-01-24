@@ -38,6 +38,12 @@ const ActivityCard = ({ activity, onClick }) => {
           <span className="detail-label">Date</span>
           <span className="detail-value">{new Date(activity.start_date).toLocaleDateString()}</span>
         </div>
+        {activity.average_heartrate && (
+          <div className="detail-item">
+            <span className="detail-label">Avg HR</span>
+            <span className="detail-value">{Math.round(activity.average_heartrate)} bpm</span>
+          </div>
+        )}
       </div>
     </div>
   );

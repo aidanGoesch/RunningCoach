@@ -35,6 +35,37 @@ function App() {
       setIsStravaCallback(true);
     }
     
+    // Handle browser back/forward navigation
+    const handlePopState = (event) => {
+      if (event.state) {
+        if (event.state.view === 'activity') {
+          setSelectedActivityId(event.state.activityId);
+          setShowPromptEditor(false);
+          setShowFeedback(false);
+        } else if (event.state.view === 'promptEditor') {
+          setShowPromptEditor(true);
+          setSelectedActivityId(null);
+          setShowFeedback(false);
+        } else if (event.state.view === 'feedback') {
+          setShowFeedback(true);
+          setSelectedActivityId(null);
+          setShowPromptEditor(false);
+        } else {
+          // Main view
+          setSelectedActivityId(null);
+          setShowPromptEditor(false);
+          setShowFeedback(false);
+        }
+      } else {
+        // No state, go to main view
+        setSelectedActivityId(null);
+        setShowPromptEditor(false);
+        setShowFeedback(false);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    
     // Load stored activities
     const stored = localStorage.getItem('strava_activities');
     if (stored) {
@@ -46,6 +77,10 @@ function App() {
     if (savedWorkout) {
       setWorkout(JSON.parse(savedWorkout));
     }
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
   }, []);
 
   const handleGenerateWorkout = async () => {
@@ -78,6 +113,8 @@ function App() {
   const handleSavePrompt = (prompt) => {
     localStorage.setItem('coaching_prompt', prompt);
     setShowPromptEditor(false);
+    // Update browser history
+    window.history.pushState({ view: 'main' }, '', window.location.pathname);
   };
 
   const handleWorkoutFeedback = (feedback) => {
@@ -87,6 +124,8 @@ function App() {
     localStorage.setItem('workout_feedback', JSON.stringify(existingFeedback));
     
     setShowFeedback(false);
+    // Update browser history
+    window.history.pushState({ view: 'main' }, '', window.location.pathname);
     
     // Show confirmation
     setError(null);
@@ -246,7 +285,11 @@ function App() {
         
         <button 
           className="btn btn-secondary" 
-          onClick={() => setShowPromptEditor(true)}
+          onClick={() => {
+            setShowPromptEditor(true);
+            // Add to browser history
+            window.history.pushState({ view: 'promptEditor' }, '', window.location.pathname);
+          }}
           style={{ fontSize: '14px', padding: '10px 15px' }}
         >
           ⚙️ Coaching Settings
@@ -265,7 +308,11 @@ function App() {
         <div style={{ marginBottom: '20px' }}>
           <button 
             className="btn btn-secondary"
-            onClick={() => setShowFeedback(true)}
+            onClick={() => {
+              setShowFeedback(true);
+              // Add to browser history
+              window.history.pushState({ view: 'feedback' }, '', window.location.pathname);
+            }}
             style={{ width: '100%' }}
           >
             📝 Rate This Workout
@@ -275,7 +322,11 @@ function App() {
       
       <ActivitiesDisplay 
         activities={activities} 
-        onActivityClick={setSelectedActivityId}
+        onActivityClick={(activityId) => {
+          setSelectedActivityId(activityId);
+          // Add to browser history
+          window.history.pushState({ view: 'activity', activityId }, '', window.location.pathname);
+        }}
       />
       <InsightsDisplay insights={insights} />
     </div>
