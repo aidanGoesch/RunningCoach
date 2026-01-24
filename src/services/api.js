@@ -2,7 +2,7 @@ const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 const STRAVA_CLIENT_ID = import.meta.env.VITE_STRAVA_CLIENT_ID;
 const STRAVA_REDIRECT_URI = window.location.hostname === 'localhost' 
   ? 'http://localhost:5173/strava-callback'
-  : `${window.location.origin}${import.meta.env.BASE_URL || '/'}strava-callback`;
+  : `https://aidangoesch.github.io/RunningCoach/strava-callback`;
 
 console.log('Environment check:', {
   STRAVA_CLIENT_ID: STRAVA_CLIENT_ID ? 'set' : 'missing',
