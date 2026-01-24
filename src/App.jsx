@@ -86,6 +86,26 @@ function App() {
     localStorage.setItem('isInjured', isInjured);
   }, [isInjured]);
 
+  // Listen for storage changes from other tabs
+  useEffect(() => {
+    const handleStorageChange = (e) => {
+      if (e.key === 'darkMode') {
+        setDarkMode(e.newValue === 'true');
+      } else if (e.key === 'isInjured') {
+        setIsInjured(e.newValue === 'true');
+      } else if (e.key === 'strava_activities') {
+        const newActivities = e.newValue ? JSON.parse(e.newValue) : [];
+        setActivities(newActivities);
+      } else if (e.key === 'current_workout') {
+        const newWorkout = e.newValue ? JSON.parse(e.newValue) : null;
+        setWorkout(newWorkout);
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
+
   useEffect(() => {
     // Check if this is a Strava callback - handle both paths and URL params
     const urlParams = new URLSearchParams(window.location.search);
@@ -434,7 +454,6 @@ function App() {
           window.history.pushState({ view: 'activity', activityId }, '', window.location.pathname);
         }}
       />
-      <InsightsDisplay insights={insights} />
     </div>
   );
 }
