@@ -95,6 +95,12 @@ const ActivityDetail = ({ activityId, onBack }) => {
               <span className="detail-label">Elevation</span>
               <span className="detail-value">{Math.round(activity.total_elevation_gain * 3.28084)} ft</span>
             </div>
+            {activity.average_heartrate && (
+              <div className="detail-item">
+                <span className="detail-label">Avg HR</span>
+                <span className="detail-value">{Math.round(activity.average_heartrate)} bpm</span>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -202,6 +208,18 @@ const HeartRateChart = ({ data }) => {
     ctx.lineTo(width - padding, height - padding);
     ctx.stroke();
     
+    // Draw horizontal grid lines for HR chart
+    ctx.strokeStyle = '#f0f0f0';
+    ctx.lineWidth = 1;
+    const gridLines = 4;
+    for (let i = 1; i < gridLines; i++) {
+      const y = padding + (i * (height - 2 * padding) / gridLines);
+      ctx.beginPath();
+      ctx.moveTo(padding, y);
+      ctx.lineTo(width - padding, y);
+      ctx.stroke();
+    }
+    
     // Draw HR line
     ctx.strokeStyle = '#e74c3c';
     ctx.lineWidth = 2;
@@ -294,6 +312,18 @@ const PaceChart = ({ data }) => {
     ctx.lineTo(padding, height - padding);
     ctx.lineTo(width - padding, height - padding);
     ctx.stroke();
+    
+    // Draw horizontal grid lines for pace chart
+    ctx.strokeStyle = '#f0f0f0';
+    ctx.lineWidth = 1;
+    const gridLines = 4;
+    for (let i = 1; i < gridLines; i++) {
+      const y = padding + (i * (height - 2 * padding) / gridLines);
+      ctx.beginPath();
+      ctx.moveTo(padding, y);
+      ctx.lineTo(width - padding, y);
+      ctx.stroke();
+    }
     
     // Draw pace line
     ctx.strokeStyle = '#3498db';
