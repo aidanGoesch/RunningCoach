@@ -580,21 +580,97 @@ export const syncWithStrava = async () => {
   }
 };
 
-export const getActivityDetails = async (accessToken, activityId) => {
-  const response = await fetch(`https://www.strava.com/api/v3/activities/${activityId}?include_all_efforts=false`, {
-    headers: { 'Authorization': `Bearer ${accessToken}` }
+export const refreshStravaToken = async () => {
+  const refreshToken = localStorage.getItem('strava_refresh_token');
+  const clientSecret = import.meta.env.VITE_STRAVA_CLIENT_SECRET;
+  
+  if (!refreshToken || !clientSecret) {
+    throw new Error('No refresh token or client secret available');
+  }
+
+  const response = await fetch('https://www.strava.com/oauth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      client_id: STRAVA_CLIENT_ID,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+      grant_type: 'refresh_token'
+    })
   });
 
-  if (!response.ok) throw new Error('Failed to fetch activity details');
-  return response.json();
+  if (!response.ok) throw new Error('Failed to refresh Strava token');
+  
+  const data = await response.json();
+  localStorage.setItem('strava_access_token', data.access_token);
+  localStorage.setItem('strava_refresh_token', data.refresh_token);
+  
+  return data.access_token;
+};
+
+export const getActivityDetails = async (accessToken, activityId) => {
+  try {
+    const response = await fetch(`https://www.strava.com/api/v3/activities/${activityId}?include_all_efforts=false`, {
+      headers: { 'Authorization': `Bearer ${accessToken}` }
+    });
+
+    if (response.status === 401) {
+      // Token expired, try to refresh
+      console.log('Access token expired, attempting refresh...');
+      const newToken = await refreshStravaToken();
+      
+      // Retry with new token
+      const retryResponse = await fetch(`https://www.strava.com/api/v3/activities/${activityId}?include_all_efforts=false`, {
+        headers: { 'Authorization': `Bearer ${newToken}` }
+      });
+      
+      if (!retryResponse.ok) throw new Error('Failed to fetch activity details after token refresh');
+      return retryResponse.json();
+    }
+
+    if (!response.ok) throw new Error('Failed to fetch activity details');
+    return response.json();
+  } catch (error) {
+    if (error.message.includes('refresh')) {
+      // Refresh failed, need to re-authenticate
+      localStorage.removeItem('strava_access_token');
+      localStorage.removeItem('strava_refresh_token');
+      throw new Error('Strava session expired. Please re-authorize Strava.');
+    }
+    throw error;
+  }
 };
 
 export const getActivityStreams = async (accessToken, activityId) => {
-  const streamTypes = 'time,latlng,heartrate,cadence,watts,temp,moving,grade_smooth,velocity_smooth';
-  const response = await fetch(`https://www.strava.com/api/v3/activities/${activityId}/streams?keys=${streamTypes}&key_by_type=true`, {
-    headers: { 'Authorization': `Bearer ${accessToken}` }
-  });
+  try {
+    const streamTypes = 'time,latlng,heartrate,cadence,watts,temp,moving,grade_smooth,velocity_smooth';
+    const response = await fetch(`https://www.strava.com/api/v3/activities/${activityId}/streams?keys=${streamTypes}&key_by_type=true`, {
+      headers: { 'Authorization': `Bearer ${accessToken}` }
+    });
 
-  if (!response.ok) throw new Error('Failed to fetch activity streams');
-  return response.json();
+    if (response.status === 401) {
+      // Token expired, try to refresh
+      console.log('Access token expired, attempting refresh...');
+      const newToken = await refreshStravaToken();
+      
+      // Retry with new token
+      const retryResponse = await fetch(`https://www.strava.com/api/v3/activities/${activityId}/streams?keys=${streamTypes}&key_by_type=true`, {
+        headers: { 'Authorization': `Bearer ${newToken}` }
+      });
+      
+      if (!retryResponse.ok) throw new Error('Failed to fetch activity streams after token refresh');
+      return retryResponse.json();
+    }
+
+    if (!response.ok) throw new Error('Failed to fetch activity streams');
+    return response.json();
+  } catch (error) {
+    if (error.message.includes('refresh')) {
+      // Refresh failed, need to re-authenticate
+      localStorage.removeItem('strava_access_token');
+      localStorage.removeItem('strava_refresh_token');
+      throw new Error('Strava session expired. Please re-authorize Strava.');
+    }
+    throw error;
+  }
 };
