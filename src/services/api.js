@@ -229,7 +229,7 @@ const formatPace = (speedMs) => {
   return `${minutes}:${seconds.toString().padStart(2, '0')}/mile`;
 };
 
-export const generateInsights = async (apiKey, activities) => {
+export const generateInsights = async (apiKey, activities, streamData = null) => {
   const recentActivity = activities[0];
   if (!recentActivity) return null;
 
@@ -252,6 +252,50 @@ export const generateInsights = async (apiKey, activities) => {
   const pace = formatPace(recentActivity.average_speed);
   const avgHR = recentActivity.average_heartrate ? Math.round(recentActivity.average_heartrate) : 'N/A';
 
+  // Add detailed pace and HR analysis if stream data is available
+  let detailedAnalysis = '';
+  if (streamData) {
+    // Analyze pace variations
+    if (streamData.velocity_smooth?.data) {
+      const paces = streamData.velocity_smooth.data
+        .map(v => v > 0 ? 26.8224 / v : 0)
+        .filter(pace => pace > 0 && pace < 20);
+      
+      if (paces.length > 0) {
+        const fastestPace = Math.min(...paces);
+        const slowestPace = Math.max(...paces);
+        const paceRange = slowestPace - fastestPace;
+        
+        detailedAnalysis += `\nDetailed Pace Analysis:
+- Fastest pace: ${formatPaceFromMinutes(fastestPace)}
+- Slowest pace: ${formatPaceFromMinutes(slowestPace)}
+- Pace range: ${paceRange.toFixed(1)} minutes/mile variation
+- This ${paceRange > 2 ? 'indicates interval/tempo work' : 'suggests steady effort'}`;
+      }
+    }
+    
+    // Analyze heart rate variations
+    if (streamData.heartrate?.data) {
+      const hrData = streamData.heartrate.data;
+      const maxHR = Math.max(...hrData);
+      const minHR = Math.min(...hrData);
+      const hrRange = maxHR - minHR;
+      
+      // Count time in different zones
+      const zone1 = hrData.filter(hr => hr < 150).length;
+      const zone2 = hrData.filter(hr => hr >= 150 && hr < 170).length;
+      const zone3 = hrData.filter(hr => hr >= 170 && hr < 190).length;
+      const zone4 = hrData.filter(hr => hr >= 190).length;
+      const total = hrData.length;
+      
+      detailedAnalysis += `\nDetailed Heart Rate Analysis:
+- Max HR: ${maxHR} bpm, Min HR: ${minHR} bpm
+- HR Range: ${hrRange} bpm variation
+- Time in zones: Easy(<150): ${Math.round(zone1/total*100)}%, Moderate(150-170): ${Math.round(zone2/total*100)}%, Hard(170-190): ${Math.round(zone3/total*100)}%, Max(190+): ${Math.round(zone4/total*100)}%
+- This ${hrRange > 40 ? 'shows significant intensity variation (likely intervals)' : 'shows steady effort'}`;
+    }
+  }
+
   const prompt = `Analyze this running activity for a runner training for a 1:45:00 half marathon on May 2nd, 2026. Current PR is 2:01:00.
 
 Activity Details:
@@ -262,6 +306,7 @@ Activity Details:
 - Average HR: ${avgHR} bpm
 - Date: ${activityDate.toLocaleDateString()}
 - Expected workout type for this day: ${expectedWorkoutType}
+${detailedAnalysis}
 
 Training Context:
 - Goal race pace: 8:01/mile
@@ -269,6 +314,8 @@ Training Context:
 - Tempo pace: 8:00-8:15/mile
 - Interval pace: 7:15-7:45/mile
 - Injury-prone athlete (focus on conservative progression)
+
+IMPORTANT: Use the detailed pace and heart rate analysis above to determine the actual workout type. Don't rely solely on average pace - look at pace range and HR zones to identify if this was intervals, tempo, or easy running.
 
 Provide insights in JSON format:
 {
@@ -290,7 +337,7 @@ Focus on: pace appropriateness for workout type, heart rate zones, injury preven
       model: 'gpt-3.5-turbo',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.7,
-      max_tokens: 500
+      max_tokens: 600
     })
   });
 
@@ -302,6 +349,12 @@ Focus on: pace appropriateness for workout type, heart rate zones, injury preven
   } catch (e) {
     return { summary: data.choices[0].message.content };
   }
+};
+
+const formatPaceFromMinutes = (paceMinutes) => {
+  const mins = Math.floor(paceMinutes);
+  const secs = Math.round((paceMinutes - mins) * 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}/mile`;
 };
 
 // Strava OAuth

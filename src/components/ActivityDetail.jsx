@@ -27,10 +27,10 @@ const ActivityDetail = ({ activityId, onBack }) => {
         setActivity(activityData);
         setStreams(streamData);
         
-        // Generate insights for this specific activity
+        // Generate insights for this specific activity with detailed data
         if (apiKey && activityData) {
           try {
-            const activityInsights = await generateInsights(apiKey, [activityData]);
+            const activityInsights = await generateInsights(apiKey, [activityData], streamData);
             setInsights(activityInsights);
           } catch (err) {
             console.error('Failed to generate insights:', err);
@@ -204,7 +204,7 @@ const HeartRateChart = ({ data }) => {
     const maxTime = Math.max(...timeData);
     
     // Draw axes
-    ctx.strokeStyle = '#ddd';
+    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--axis-color').trim();
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(padding, padding);
@@ -213,7 +213,7 @@ const HeartRateChart = ({ data }) => {
     ctx.stroke();
     
     // Draw horizontal grid lines for HR chart
-    ctx.strokeStyle = '#f0f0f0';
+    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--grid-color').trim();
     ctx.lineWidth = 1;
     const gridLines = 4;
     for (let i = 1; i < gridLines; i++) {
@@ -240,7 +240,7 @@ const HeartRateChart = ({ data }) => {
     ctx.stroke();
     
     // Labels
-    ctx.fillStyle = '#666';
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--label-color').trim();
     ctx.font = '12px Arial';
     ctx.textAlign = 'center';
     ctx.fillText('Time (min)', width / 2, height - 5);
@@ -251,15 +251,44 @@ const HeartRateChart = ({ data }) => {
     ctx.fillText('Heart Rate (bpm)', 0, 0);
     ctx.restore();
     
-    // Y-axis labels
+    // Y-axis labels and ticks
     ctx.textAlign = 'right';
     ctx.fillText(Math.round(maxHR), padding - 5, padding + 5);
     ctx.fillText(Math.round(minHR), padding - 5, height - padding + 5);
     
-    // X-axis labels
+    // Add intermediate Y-axis ticks
+    const hrRange = maxHR - minHR;
+    for (let i = 1; i < 4; i++) {
+      const hrValue = minHR + (hrRange * i / 4);
+      const y = padding + ((maxHR - hrValue) / hrRange) * (height - 2 * padding);
+      ctx.fillText(Math.round(hrValue), padding - 5, y + 5);
+      
+      // Draw tick marks
+      ctx.strokeStyle = '#ddd';
+      ctx.beginPath();
+      ctx.moveTo(padding - 3, y);
+      ctx.lineTo(padding, y);
+      ctx.stroke();
+    }
+    
+    // X-axis labels and ticks
     ctx.textAlign = 'center';
     ctx.fillText('0', padding, height - padding + 15);
     ctx.fillText(Math.round(maxTime / 60), width - padding, height - padding + 15);
+    
+    // Add intermediate X-axis ticks
+    for (let i = 1; i < 4; i++) {
+      const timeValue = (maxTime * i / 4) / 60; // Convert to minutes
+      const x = padding + (i * (width - 2 * padding) / 4);
+      ctx.fillText(Math.round(timeValue), x, height - padding + 15);
+      
+      // Draw tick marks
+      ctx.strokeStyle = '#ddd';
+      ctx.beginPath();
+      ctx.moveTo(x, height - padding);
+      ctx.lineTo(x, height - padding + 3);
+      ctx.stroke();
+    }
   }, [data]);
 
   if (!data.heartrate?.data) return null;
@@ -309,7 +338,7 @@ const PaceChart = ({ data }) => {
     if (velocityData.length === 0) return; // No valid pace data
     
     // Draw axes
-    ctx.strokeStyle = '#ddd';
+    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--axis-color').trim();
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(padding, padding);
@@ -318,7 +347,7 @@ const PaceChart = ({ data }) => {
     ctx.stroke();
     
     // Draw horizontal grid lines for pace chart
-    ctx.strokeStyle = '#f0f0f0';
+    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--grid-color').trim();
     ctx.lineWidth = 1;
     const gridLines = 4;
     for (let i = 1; i < gridLines; i++) {
@@ -356,7 +385,7 @@ const PaceChart = ({ data }) => {
     ctx.fillText('Pace (min/mile)', 0, 0);
     ctx.restore();
     
-    // Y-axis labels (pace)
+    // Y-axis labels (pace) and ticks
     ctx.textAlign = 'right';
     const formatPaceLabel = (pace) => {
       const mins = Math.floor(pace);
@@ -366,10 +395,39 @@ const PaceChart = ({ data }) => {
     ctx.fillText(formatPaceLabel(maxPace), padding - 5, padding + 5);
     ctx.fillText(formatPaceLabel(minPace), padding - 5, height - padding + 5);
     
-    // X-axis labels
+    // Add intermediate Y-axis ticks for pace
+    const paceRange = maxPace - minPace;
+    for (let i = 1; i < 4; i++) {
+      const paceValue = minPace + (paceRange * i / 4);
+      const y = padding + ((paceValue - minPace) / paceRange) * (height - 2 * padding);
+      ctx.fillText(formatPaceLabel(paceValue), padding - 5, y + 5);
+      
+      // Draw tick marks
+      ctx.strokeStyle = '#ddd';
+      ctx.beginPath();
+      ctx.moveTo(padding - 3, y);
+      ctx.lineTo(padding, y);
+      ctx.stroke();
+    }
+    
+    // X-axis labels and ticks
     ctx.textAlign = 'center';
     ctx.fillText('0', padding, height - padding + 15);
     ctx.fillText(Math.round(maxTime / 60), width - padding, height - padding + 15);
+    
+    // Add intermediate X-axis ticks
+    for (let i = 1; i < 4; i++) {
+      const timeValue = (maxTime * i / 4) / 60; // Convert to minutes
+      const x = padding + (i * (width - 2 * padding) / 4);
+      ctx.fillText(Math.round(timeValue), x, height - padding + 15);
+      
+      // Draw tick marks
+      ctx.strokeStyle = '#ddd';
+      ctx.beginPath();
+      ctx.moveTo(x, height - padding);
+      ctx.lineTo(x, height - padding + 3);
+      ctx.stroke();
+    }
   }, [data]);
 
   if (!data.velocity_smooth?.data) return null;

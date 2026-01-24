@@ -18,11 +18,18 @@ function App() {
   const [selectedActivityId, setSelectedActivityId] = useState(null);
   const [showPromptEditor, setShowPromptEditor] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
+  const [darkMode, setDarkMode] = useState(localStorage.getItem('darkMode') === 'true');
   const [apiKey, setApiKey] = useState(
     import.meta.env.VITE_OPENAI_API_KEY || 
     localStorage.getItem('openai_api_key') || 
     ''
   );
+
+  // Apply dark mode
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
+    localStorage.setItem('darkMode', darkMode);
+  }, [darkMode]);
 
   useEffect(() => {
     // Check if this is a Strava callback - handle both paths and URL params
@@ -222,6 +229,14 @@ function App() {
 
   return (
     <div className="app">
+      <button 
+        className="theme-toggle"
+        onClick={() => setDarkMode(!darkMode)}
+        title="Toggle dark mode"
+      >
+        {darkMode ? '☀️' : '🌙'}
+      </button>
+      
       <div className="header">
         <h1>🏃‍♂️ Running Coach</h1>
         <p>Your AI-powered running companion</p>
