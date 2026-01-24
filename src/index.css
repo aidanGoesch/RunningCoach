@@ -91,6 +91,10 @@ body {
   background-color: #7f8c8d;
 }
 
+.btn-strava:hover:not(:disabled) {
+  background-color: #fc4c02;
+}
+
 .workout-display {
   background: var(--card-bg);
   border-radius: 12px;

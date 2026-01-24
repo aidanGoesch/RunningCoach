@@ -340,7 +340,7 @@ function App() {
 
       <div className="buttons">
         <button 
-          className="btn btn-secondary" 
+          className="btn btn-secondary btn-strava" 
           onClick={handleStravaSync}
           disabled={loading}
         >

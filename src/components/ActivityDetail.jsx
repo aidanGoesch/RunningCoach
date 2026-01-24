@@ -58,22 +58,6 @@ const ActivityDetail = ({ activityId, onBack }) => {
   return (
     <div className="app">
       <div className="header">
-        <button 
-          onClick={() => {
-            setSelectedActivityId(null);
-            // Update browser history
-            window.history.pushState({ view: 'main' }, '', window.location.pathname);
-          }}
-          style={{ 
-            background: 'none', 
-            border: 'none', 
-            fontSize: '24px', 
-            cursor: 'pointer',
-            marginBottom: '10px'
-          }}
-        >
-          ← Back
-        </button>
         <h1>{activity.name}</h1>
         <p>{new Date(activity.start_date).toLocaleDateString()}</p>
       </div>
