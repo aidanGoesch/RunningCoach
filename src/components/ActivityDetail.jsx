@@ -196,6 +196,7 @@ const ActivityCharts = ({ streams }) => {
 const HeartRateChart = ({ data }) => {
   const canvasRef = useState(null);
   const [tooltip, setTooltip] = useState(null);
+  const [cursorX, setCursorX] = useState(null);
   
   const handleMouseMove = (e) => {
     const canvas = canvasRef.current;
@@ -227,11 +228,15 @@ const HeartRateChart = ({ data }) => {
         y: e.clientY - 50, // Position above thumb/cursor
         text: `${time}min: ${hr} bpm`
       });
+      
+      // Set cursor X position for vertical line
+      setCursorX(x);
     }
   };
   
   const handleMouseLeave = () => {
     setTooltip(null);
+    setCursorX(null);
   };
   
   useEffect(() => {
@@ -346,7 +351,19 @@ const HeartRateChart = ({ data }) => {
       ctx.lineTo(x, height - padding + 3);
       ctx.stroke();
     }
-  }, [data]);
+    
+    // Draw vertical cursor line if cursor is active (HR chart)
+    if (cursorX !== null) {
+      ctx.strokeStyle = '#ff6b6b';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      ctx.moveTo(cursorX, padding);
+      ctx.lineTo(cursorX, height - padding);
+      ctx.stroke();
+      ctx.setLineDash([]); // Reset line dash
+    }
+  }, [data, cursorX]);
 
   if (!data.heartrate?.data) return null;
 
@@ -394,6 +411,7 @@ const HeartRateChart = ({ data }) => {
 const PaceChart = ({ data }) => {
   const canvasRef = useState(null);
   const [tooltip, setTooltip] = useState(null);
+  const [cursorX, setCursorX] = useState(null);
   
   const handleMouseMove = (e) => {
     const canvas = canvasRef.current;
@@ -432,11 +450,15 @@ const PaceChart = ({ data }) => {
         y: e.clientY - 50, // Position above thumb/cursor
         text: `${time}min: ${mins}:${secs.toString().padStart(2, '0')}/mile`
       });
+      
+      // Set cursor X position for vertical line
+      setCursorX(x);
     }
   };
   
   const handleMouseLeave = () => {
     setTooltip(null);
+    setCursorX(null);
   };
   
   useEffect(() => {
@@ -560,7 +582,19 @@ const PaceChart = ({ data }) => {
       ctx.lineTo(x, height - padding + 3);
       ctx.stroke();
     }
-  }, [data]);
+    
+    // Draw vertical cursor line if cursor is active (Pace chart)
+    if (cursorX !== null) {
+      ctx.strokeStyle = '#ff6b6b';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      ctx.moveTo(cursorX, padding);
+      ctx.lineTo(cursorX, height - padding);
+      ctx.stroke();
+      ctx.setLineDash([]); // Reset line dash
+    }
+  }, [data, cursorX]);
 
   if (!data.velocity_smooth?.data) return null;
 
