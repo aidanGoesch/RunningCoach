@@ -25,10 +25,11 @@ function App() {
   );
 
   useEffect(() => {
-    // Check if this is a Strava callback - handle both paths
+    // Check if this is a Strava callback - handle both paths and URL params
+    const urlParams = new URLSearchParams(window.location.search);
     const isCallback = window.location.pathname === '/strava-callback' || 
                       window.location.pathname === '/RunningCoach/strava-callback' ||
-                      window.location.search.includes('code=');
+                      urlParams.has('code');
     
     if (isCallback) {
       setIsStravaCallback(true);

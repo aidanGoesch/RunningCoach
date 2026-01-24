@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Strava Callback</title>
+  <script>
+    // Redirect to main app with callback parameters
+    const params = new URLSearchParams(window.location.search);
+    const newUrl = '/RunningCoach/?' + params.toString();
+    window.location.replace(newUrl);
+  </script>
+</head>
+<body>
+  <p>Redirecting...</p>
+</body>
+</html>
