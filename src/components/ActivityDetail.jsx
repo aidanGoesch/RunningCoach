@@ -195,6 +195,42 @@ const ActivityCharts = ({ streams }) => {
 
 const HeartRateChart = ({ data }) => {
   const canvasRef = useState(null);
+  const [tooltip, setTooltip] = useState(null);
+  
+  const handleMouseMove = (e) => {
+    const canvas = canvasRef.current;
+    if (!canvas || !data.heartrate?.data || !data.time?.data) return;
+    
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const padding = 60;
+    const width = rect.width;
+    
+    if (x < padding || x > width - padding) {
+      setTooltip(null);
+      return;
+    }
+    
+    // Calculate which data point we're hovering over
+    const dataWidth = width - 2 * padding;
+    const progress = (x - padding) / dataWidth;
+    const dataIndex = Math.round(progress * (data.heartrate.data.length - 1));
+    
+    if (dataIndex >= 0 && dataIndex < data.heartrate.data.length) {
+      const hr = Math.round(data.heartrate.data[dataIndex]);
+      const time = Math.round(data.time.data[dataIndex] / 60); // Convert to minutes
+      
+      setTooltip({
+        x: e.clientX,
+        y: e.clientY - 10,
+        text: `${time}min: ${hr} bpm`
+      });
+    }
+  };
+  
+  const handleMouseLeave = () => {
+    setTooltip(null);
+  };
   
   useEffect(() => {
     if (!data.heartrate?.data || !data.time?.data) return;
@@ -315,16 +351,89 @@ const HeartRateChart = ({ data }) => {
   return (
     <div className="workout-display">
       <div className="workout-title">Heart Rate</div>
-      <canvas 
-        ref={canvasRef}
-        style={{ width: '100%', height: '200px', borderRadius: '8px' }}
-      />
+      <div style={{ position: 'relative' }}>
+        <canvas 
+          ref={canvasRef}
+          onMouseMove={handleMouseMove}
+          onMouseLeave={handleMouseLeave}
+          onTouchMove={(e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            handleMouseMove({ clientX: touch.clientX, clientY: touch.clientY });
+          }}
+          onTouchEnd={handleMouseLeave}
+          style={{ width: '100%', height: '200px', borderRadius: '8px', cursor: 'crosshair' }}
+        />
+        {tooltip && (
+          <div
+            style={{
+              position: 'fixed',
+              left: tooltip.x,
+              top: tooltip.y,
+              background: 'var(--card-bg)',
+              border: '1px solid var(--border-color)',
+              borderRadius: '4px',
+              padding: '4px 8px',
+              fontSize: '12px',
+              color: 'var(--text-color)',
+              pointerEvents: 'none',
+              zIndex: 1000,
+              boxShadow: '0 2px 8px var(--shadow)'
+            }}
+          >
+            {tooltip.text}
+          </div>
+        )}
+      </div>
     </div>
   );
 };
 
 const PaceChart = ({ data }) => {
   const canvasRef = useState(null);
+  const [tooltip, setTooltip] = useState(null);
+  
+  const handleMouseMove = (e) => {
+    const canvas = canvasRef.current;
+    if (!canvas || !data.velocity_smooth?.data || !data.time?.data) return;
+    
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const padding = 60;
+    const width = rect.width;
+    
+    if (x < padding || x > width - padding) {
+      setTooltip(null);
+      return;
+    }
+    
+    // Calculate which data point we're hovering over
+    const dataWidth = width - 2 * padding;
+    const progress = (x - padding) / dataWidth;
+    
+    const velocityData = data.velocity_smooth.data
+      .map(v => v > 0 ? 26.8224 / v : 0)
+      .filter(pace => pace > 0 && pace < 20);
+    
+    const dataIndex = Math.round(progress * (velocityData.length - 1));
+    
+    if (dataIndex >= 0 && dataIndex < velocityData.length) {
+      const pace = velocityData[dataIndex];
+      const mins = Math.floor(pace);
+      const secs = Math.round((pace - mins) * 60);
+      const time = Math.round(data.time.data[dataIndex] / 60); // Convert to minutes
+      
+      setTooltip({
+        x: e.clientX,
+        y: e.clientY - 10,
+        text: `${time}min: ${mins}:${secs.toString().padStart(2, '0')}/mile`
+      });
+    }
+  };
+  
+  const handleMouseLeave = () => {
+    setTooltip(null);
+  };
   
   useEffect(() => {
     if (!data.velocity_smooth?.data || !data.time?.data) return;
@@ -454,10 +563,40 @@ const PaceChart = ({ data }) => {
   return (
     <div className="workout-display">
       <div className="workout-title">Pace</div>
-      <canvas 
-        ref={canvasRef}
-        style={{ width: '100%', height: '200px', borderRadius: '8px' }}
-      />
+      <div style={{ position: 'relative' }}>
+        <canvas 
+          ref={canvasRef}
+          onMouseMove={handleMouseMove}
+          onMouseLeave={handleMouseLeave}
+          onTouchMove={(e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            handleMouseMove({ clientX: touch.clientX, clientY: touch.clientY });
+          }}
+          onTouchEnd={handleMouseLeave}
+          style={{ width: '100%', height: '200px', borderRadius: '8px', cursor: 'crosshair' }}
+        />
+        {tooltip && (
+          <div
+            style={{
+              position: 'fixed',
+              left: tooltip.x,
+              top: tooltip.y,
+              background: 'var(--card-bg)',
+              border: '1px solid var(--border-color)',
+              borderRadius: '4px',
+              padding: '4px 8px',
+              fontSize: '12px',
+              color: 'var(--text-color)',
+              pointerEvents: 'none',
+              zIndex: 1000,
+              boxShadow: '0 2px 8px var(--shadow)'
+            }}
+          >
+            {tooltip.text}
+          </div>
+        )}
+      </div>
     </div>
   );
 };
