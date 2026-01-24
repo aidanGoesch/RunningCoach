@@ -35,7 +35,7 @@ const ActivityDetail = ({ activityId, onBack }) => {
         // Generate insights for this specific activity with detailed data
         if (apiKey && activityData) {
           try {
-            const activityInsights = await generateInsights(apiKey, [activityData], streamData);
+            const activityInsights = await generateInsights(apiKey, [activityData], streamData, activityRating);
             setInsights(activityInsights);
           } catch (err) {
             console.error('Failed to generate insights:', err);
