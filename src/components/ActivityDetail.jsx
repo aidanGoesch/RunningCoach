@@ -206,14 +206,16 @@ const HeartRateChart = ({ data }) => {
     const padding = 60;
     const width = rect.width;
     
-    if (x < padding || x > width - padding) {
+    // Allow tooltip anywhere on the chart, not just within padding
+    if (x < 0 || x > width) {
       setTooltip(null);
       return;
     }
     
-    // Calculate which data point we're hovering over
+    // Calculate which data point based on X position
     const dataWidth = width - 2 * padding;
-    const progress = (x - padding) / dataWidth;
+    const adjustedX = Math.max(0, Math.min(x - padding, dataWidth));
+    const progress = adjustedX / dataWidth;
     const dataIndex = Math.round(progress * (data.heartrate.data.length - 1));
     
     if (dataIndex >= 0 && dataIndex < data.heartrate.data.length) {
@@ -222,7 +224,7 @@ const HeartRateChart = ({ data }) => {
       
       setTooltip({
         x: e.clientX,
-        y: e.clientY - 10,
+        y: e.clientY - 50, // Position above thumb/cursor
         text: `${time}min: ${hr} bpm`
       });
     }
@@ -402,14 +404,16 @@ const PaceChart = ({ data }) => {
     const padding = 60;
     const width = rect.width;
     
-    if (x < padding || x > width - padding) {
+    // Allow tooltip anywhere on the chart, not just within padding
+    if (x < 0 || x > width) {
       setTooltip(null);
       return;
     }
     
-    // Calculate which data point we're hovering over
+    // Calculate which data point based on X position
     const dataWidth = width - 2 * padding;
-    const progress = (x - padding) / dataWidth;
+    const adjustedX = Math.max(0, Math.min(x - padding, dataWidth));
+    const progress = adjustedX / dataWidth;
     
     const velocityData = data.velocity_smooth.data
       .map(v => v > 0 ? 26.8224 / v : 0)
@@ -425,7 +429,7 @@ const PaceChart = ({ data }) => {
       
       setTooltip({
         x: e.clientX,
-        y: e.clientY - 10,
+        y: e.clientY - 50, // Position above thumb/cursor
         text: `${time}min: ${mins}:${secs.toString().padStart(2, '0')}/mile`
       });
     }
