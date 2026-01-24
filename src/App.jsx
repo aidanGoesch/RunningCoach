@@ -48,7 +48,10 @@ function App() {
   }, []);
 
   const handleGenerateWorkout = async () => {
-    if (!apiKey) {
+    // Check for API key in environment variables first, then localStorage
+    const availableApiKey = import.meta.env.VITE_OPENAI_API_KEY || apiKey;
+    
+    if (!availableApiKey) {
       setError('Please enter your OpenAI API key first');
       return;
     }
@@ -58,12 +61,12 @@ function App() {
     
     try {
       // Pass recent activities to the workout generator
-      const newWorkout = await generateWorkout(apiKey, activities);
+      const newWorkout = await generateWorkout(availableApiKey, activities);
       setWorkout(newWorkout);
       
       // Save workout to localStorage for persistence
       localStorage.setItem('current_workout', JSON.stringify(newWorkout));
-      localStorage.setItem('openai_api_key', apiKey);
+      if (apiKey) localStorage.setItem('openai_api_key', apiKey);
     } catch (err) {
       setError(`Failed to generate workout: ${err.message}`);
     } finally {
@@ -235,7 +238,7 @@ function App() {
         <button 
           className="btn btn-primary" 
           onClick={handleGenerateWorkout}
-          disabled={loading || !apiKey}
+          disabled={loading || (!apiKey && !import.meta.env.VITE_OPENAI_API_KEY)}
         >
           {loading ? '⏳ Generating...' : '🎯 Generate Workout'}
         </button>

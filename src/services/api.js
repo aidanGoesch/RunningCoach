@@ -263,7 +263,7 @@ Provide insights in JSON format:
 // Strava OAuth
 export const initiateStravaAuth = () => {
   if (!STRAVA_CLIENT_ID) {
-    throw new Error('Strava Client ID not configured');
+    throw new Error('Strava Client ID not configured. Please check your environment variables.');
   }
   
   // Clear any existing tokens to force fresh auth
