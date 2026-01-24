@@ -400,7 +400,7 @@ const PaceChart = ({ data }) => {
     
     velocityData.forEach((pace, i) => {
       const x = padding + ((timeData[i] / maxTime) * (width - 2 * padding));
-      const y = padding + ((maxPace - pace) / (maxPace - minPace)) * (height - 2 * padding); // Inverted Y for pace
+      const y = padding + ((pace - minPace) / (maxPace - minPace)) * (height - 2 * padding); // Normal Y for pace (faster at top)
       
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
@@ -420,20 +420,20 @@ const PaceChart = ({ data }) => {
     ctx.fillText('Pace (min/mile)', 0, 0);
     ctx.restore();
     
-    // Y-axis labels (pace) and ticks - slowest at top, fastest at bottom
+    // Y-axis labels (pace) and ticks - fastest at top, slowest at bottom
     ctx.textAlign = 'right';
     const formatPaceLabel = (pace) => {
       const mins = Math.floor(pace);
       const secs = Math.round((pace - mins) * 60);
       return `${mins}:${secs.toString().padStart(2, '0')}`;
     };
-    ctx.fillText(formatPaceLabel(maxPace), padding - 5, padding + 5); // Slowest at top
-    ctx.fillText(formatPaceLabel(minPace), padding - 5, height - padding + 5); // Fastest at bottom
+    ctx.fillText(formatPaceLabel(minPace), padding - 5, padding + 5); // Fastest at top
+    ctx.fillText(formatPaceLabel(maxPace), padding - 5, height - padding + 5); // Slowest at bottom
     
     // Add intermediate Y-axis ticks for pace
     const paceRange = maxPace - minPace;
     for (let i = 1; i < 4; i++) {
-      const paceValue = maxPace - (paceRange * i / 4); // Calculate from slowest down
+      const paceValue = minPace + (paceRange * i / 4); // Calculate from fastest up
       const y = padding + (i * (height - 2 * padding) / 4);
       ctx.fillText(formatPaceLabel(paceValue), padding - 5, y + 5);
       
@@ -522,15 +522,6 @@ const ActivityInsights = ({ insights }) => {
           </div>
         )}
       </div>
-
-      {insights.nextWorkout && (
-        <div className="workout-block">
-          <div className="block-title">🎯 Next Workout Recommendation</div>
-          <div style={{ fontSize: '14px', lineHeight: '1.5' }}>
-            {insights.nextWorkout}
-          </div>
-        </div>
-      )}
     </div>
   );
 };
