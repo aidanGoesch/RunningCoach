@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { getActivityDetails, getActivityStreams, generateInsights } from '../services/api';
+import { getActivityDetails, getActivityStreams, generateInsights, getActivityRating } from '../services/api';
 
 const ActivityDetail = ({ activityId, onBack }) => {
   const [activity, setActivity] = useState(null);
   const [streams, setStreams] = useState(null);
   const [insights, setInsights] = useState(null);
+  const [rating, setRating] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -26,6 +27,10 @@ const ActivityDetail = ({ activityId, onBack }) => {
         
         setActivity(activityData);
         setStreams(streamData);
+        
+        // Get rating for this activity
+        const activityRating = getActivityRating(activityId);
+        setRating(activityRating);
         
         // Generate insights for this specific activity with detailed data
         if (apiKey && activityData) {
@@ -114,6 +119,36 @@ const ActivityDetail = ({ activityId, onBack }) => {
         <ActivityInsights insights={insights} />
       </div>
 
+      {/* Workout Rating */}
+      {rating && (
+        <div className="workout-display" style={{ marginBottom: '20px' }}>
+          <div className="workout-title">📝 Your Rating</div>
+          <div className="workout-block">
+            <div className="block-details">
+              <div className="detail-item">
+                <span className="detail-label">Rating</span>
+                <span className="detail-value">{'⭐'.repeat(rating.rating)} ({rating.rating}/5)</span>
+              </div>
+              <div className="detail-item">
+                <span className="detail-label">Workout</span>
+                <span className="detail-value">{rating.workoutTitle}</span>
+              </div>
+              {rating.isInjured && (
+                <div className="detail-item">
+                  <span className="detail-label">Injury</span>
+                  <span className="detail-value">⚠️ {rating.injuryDetails}</span>
+                </div>
+              )}
+            </div>
+            {rating.notes && (
+              <div style={{ marginTop: '10px', fontSize: '14px', color: 'var(--label-color)' }}>
+                <strong>Notes:</strong> {rating.notes}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Charts */}
       <ActivityCharts streams={streams} />
     </div>
@@ -193,7 +228,7 @@ const HeartRateChart = ({ data }) => {
     
     const width = rect.width;
     const height = 200;
-    const padding = 40;
+    const padding = 60; // Increased padding for HR labels
     
     ctx.clearRect(0, 0, width, height);
     
@@ -323,7 +358,7 @@ const PaceChart = ({ data }) => {
     
     const width = rect.width;
     const height = 200;
-    const padding = 40;
+    const padding = 60; // Increased padding for pace labels
     
     ctx.clearRect(0, 0, width, height);
     

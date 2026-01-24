@@ -19,6 +19,7 @@ function App() {
   const [showPromptEditor, setShowPromptEditor] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
   const [darkMode, setDarkMode] = useState(localStorage.getItem('darkMode') === 'true');
+  const [isInjured, setIsInjured] = useState(localStorage.getItem('isInjured') === 'true');
   const [apiKey, setApiKey] = useState(
     import.meta.env.VITE_OPENAI_API_KEY || 
     localStorage.getItem('openai_api_key') || 
@@ -30,6 +31,11 @@ function App() {
     document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
     localStorage.setItem('darkMode', darkMode);
   }, [darkMode]);
+
+  // Save injury status
+  useEffect(() => {
+    localStorage.setItem('isInjured', isInjured);
+  }, [isInjured]);
 
   useEffect(() => {
     // Check if this is a Strava callback - handle both paths and URL params
@@ -90,7 +96,7 @@ function App() {
     };
   }, []);
 
-  const handleGenerateWorkout = async () => {
+  const handleGenerateWorkout = async (repeatLast = false) => {
     // Check for API key in environment variables first, then localStorage
     const availableApiKey = import.meta.env.VITE_OPENAI_API_KEY || apiKey;
     
@@ -103,8 +109,15 @@ function App() {
     setError(null);
     
     try {
-      // Pass recent activities to the workout generator
-      const newWorkout = await generateWorkout(availableApiKey, activities);
+      let newWorkout;
+      if (repeatLast && workout) {
+        // Use the same workout as last time
+        newWorkout = { ...workout, title: `${workout.title} (Repeat)` };
+      } else {
+        // Pass recent activities and injury status to the workout generator
+        newWorkout = await generateWorkout(availableApiKey, activities, isInjured);
+      }
+      
       setWorkout(newWorkout);
       
       // Save workout to localStorage for persistence
@@ -125,7 +138,17 @@ function App() {
   };
 
   const handleWorkoutFeedback = (feedback) => {
-    // Save feedback to localStorage
+    // Add to rating queue instead of direct feedback storage
+    const ratingQueue = JSON.parse(localStorage.getItem('rating_queue') || '[]');
+    const queueItem = {
+      ...feedback,
+      timestamp: new Date().toISOString(),
+      matched: false
+    };
+    ratingQueue.push(queueItem);
+    localStorage.setItem('rating_queue', JSON.stringify(ratingQueue));
+    
+    // Also keep in workout_feedback for AI training purposes
     const existingFeedback = JSON.parse(localStorage.getItem('workout_feedback') || '[]');
     existingFeedback.push(feedback);
     localStorage.setItem('workout_feedback', JSON.stringify(existingFeedback));
@@ -137,7 +160,7 @@ function App() {
     // Show confirmation
     setError(null);
     setTimeout(() => {
-      setError('Feedback saved! Future workouts will be adjusted based on your input.');
+      setError('Rating saved! It will be matched with your Strava activity when you sync.');
       setTimeout(() => setError(null), 3000);
     }, 100);
   };
@@ -292,10 +315,29 @@ function App() {
         
         <button 
           className="btn btn-primary" 
-          onClick={handleGenerateWorkout}
+          onClick={() => handleGenerateWorkout(false)}
           disabled={loading || (!apiKey && !import.meta.env.VITE_OPENAI_API_KEY)}
         >
           {loading ? '⏳ Generating...' : '🎯 Generate Workout'}
+        </button>
+        
+        {workout && (
+          <button 
+            className="btn btn-secondary" 
+            onClick={() => handleGenerateWorkout(true)}
+            disabled={loading}
+            style={{ fontSize: '14px', padding: '10px 15px' }}
+          >
+            🔁 Same Run Tomorrow
+          </button>
+        )}
+        
+        <button 
+          className={`btn ${isInjured ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={() => setIsInjured(!isInjured)}
+          style={{ fontSize: '14px', padding: '10px 15px' }}
+        >
+          {isInjured ? '🩹 I\'m Injured' : '💪 I\'m Healthy'}
         </button>
         
         <button 

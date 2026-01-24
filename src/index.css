@@ -112,6 +112,15 @@ body {
   padding: 15px;
   margin-bottom: 15px;
   border-left: 4px solid #3498db;
+  transition: background-color 0.2s;
+}
+
+.workout-block.clickable {
+  cursor: pointer;
+}
+
+.workout-block.clickable:hover {
+  background: var(--border-color);
 }
 
 .workout-block:last-child {

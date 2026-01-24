@@ -14,11 +14,8 @@ const ActivityCard = ({ activity, onClick }) => {
 
   return (
     <div 
-      className="workout-block" 
+      className="workout-block clickable" 
       onClick={() => onClick(activity.id)}
-      style={{ cursor: 'pointer', transition: 'background-color 0.2s' }}
-      onMouseEnter={(e) => e.target.style.backgroundColor = '#f0f0f0'}
-      onMouseLeave={(e) => e.target.style.backgroundColor = '#f8f9fa'}
     >
       <div className="block-title">{activity.name}</div>
       <div className="block-details">

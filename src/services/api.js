@@ -92,9 +92,10 @@ Please generate a workout appropriate for today (${today.toLocaleDateString()}) 
   return updatedPrompt;
 };
 
-export const generateWorkout = async (apiKey, activities = []) => {
+export const generateWorkout = async (apiKey, activities = [], isInjured = false) => {
   console.log('generateWorkout called with apiKey:', apiKey ? 'provided' : 'missing');
   console.log('Environment OPENAI key:', import.meta.env.VITE_OPENAI_API_KEY ? 'set' : 'missing');
+  console.log('Injury status:', isInjured ? 'injured' : 'healthy');
   
   // Get saved coaching prompt and update with current data
   const savedPrompt = localStorage.getItem('coaching_prompt');
@@ -103,6 +104,24 @@ export const generateWorkout = async (apiKey, activities = []) => {
   // Update prompt with current training data if it contains placeholders
   if (basePrompt.includes('[Week X of 14]') || basePrompt.includes('[X days]')) {
     basePrompt = updatePromptWithCurrentData(basePrompt, activities);
+  }
+  
+  // Add injury status to prompt
+  if (isInjured) {
+    basePrompt += `\n\nIMPORTANT INJURY STATUS: The athlete is currently injured or experiencing discomfort. 
+    
+PRIORITY: Focus on recovery and injury prevention over training progression.
+
+Recommendations:
+- Suggest easy recovery runs at very conservative paces (11:00-12:00/mile)
+- Reduce volume significantly (50-70% of normal)
+- Consider cross-training alternatives (pool running, cycling, walking)
+- Include rest days if appropriate
+- Avoid speed work and high-intensity efforts
+- Emphasize proper warm-up and cool-down protocols
+- Suggest when to seek medical attention if pain persists
+
+If the scheduled workout is high-intensity (speed/tempo), modify it to be recovery-focused or suggest alternative activities.`;
   }
   
   // Get workout feedback history
@@ -469,6 +488,64 @@ export const getStravaActivities = async (accessToken, limit = 5) => {
   return runningActivities.slice(0, limit);
 };
 
+export const matchRatingsWithActivities = (activities) => {
+  const ratingQueue = JSON.parse(localStorage.getItem('rating_queue') || '[]');
+  const activityRatings = JSON.parse(localStorage.getItem('activity_ratings') || '{}');
+  
+  let matchedCount = 0;
+  const remainingQueue = [];
+  
+  // Process each unmatched rating in the queue
+  ratingQueue.forEach(rating => {
+    if (rating.matched) {
+      return; // Skip already matched ratings
+    }
+    
+    const ratingDate = new Date(rating.timestamp);
+    
+    // Find matching activity within 24 hours of the rating
+    const matchingActivity = activities.find(activity => {
+      const activityDate = new Date(activity.start_date);
+      const timeDiff = Math.abs(activityDate - ratingDate);
+      const hoursDiff = timeDiff / (1000 * 60 * 60);
+      
+      // Match if within 24 hours and not already rated
+      return hoursDiff <= 24 && !activityRatings[activity.id];
+    });
+    
+    if (matchingActivity) {
+      // Match found - store the rating with the activity
+      activityRatings[matchingActivity.id] = {
+        rating: rating.rating,
+        isInjured: rating.isInjured,
+        injuryDetails: rating.injuryDetails,
+        notes: rating.notes,
+        workoutTitle: rating.workoutTitle,
+        ratingTimestamp: rating.timestamp,
+        activityDate: matchingActivity.start_date
+      };
+      
+      rating.matched = true;
+      matchedCount++;
+      console.log(`Matched rating for "${rating.workoutTitle}" with activity "${matchingActivity.name}"`);
+    } else {
+      // No match found, keep in queue
+      remainingQueue.push(rating);
+    }
+  });
+  
+  // Update storage
+  localStorage.setItem('activity_ratings', JSON.stringify(activityRatings));
+  localStorage.setItem('rating_queue', JSON.stringify(remainingQueue));
+  
+  return matchedCount;
+};
+
+export const getActivityRating = (activityId) => {
+  const activityRatings = JSON.parse(localStorage.getItem('activity_ratings') || '{}');
+  return activityRatings[activityId] || null;
+};
+
 export const syncWithStrava = async () => {
   console.log('syncWithStrava called');
   const token = localStorage.getItem('strava_access_token');
@@ -487,6 +564,12 @@ export const syncWithStrava = async () => {
     
     // Always use fresh data from Strava, don't merge with old stored data
     localStorage.setItem('strava_activities', JSON.stringify(activities));
+    
+    // Match ratings with activities
+    const matchedCount = matchRatingsWithActivities(activities);
+    if (matchedCount > 0) {
+      console.log(`Matched ${matchedCount} workout ratings with Strava activities`);
+    }
     
     return activities;
   } catch (error) {
