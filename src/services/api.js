@@ -93,6 +93,9 @@ Please generate a workout appropriate for today (${today.toLocaleDateString()}) 
 };
 
 export const generateWorkout = async (apiKey, activities = []) => {
+  console.log('generateWorkout called with apiKey:', apiKey ? 'provided' : 'missing');
+  console.log('Environment OPENAI key:', import.meta.env.VITE_OPENAI_API_KEY ? 'set' : 'missing');
+  
   // Get saved coaching prompt and update with current data
   const savedPrompt = localStorage.getItem('coaching_prompt');
   let basePrompt = savedPrompt || `You are an expert running coach. Create a personalized running workout based on the provided activity data.`;
@@ -189,8 +192,12 @@ Create a varied workout with warm-up, main work, and cool-down that's appropriat
     })
   });
 
+  console.log('OpenAI API response status:', response.status);
+  
   if (!response.ok) {
-    throw new Error(`OpenAI API error: ${response.status}`);
+    const errorText = await response.text();
+    console.error('OpenAI API error response:', errorText);
+    throw new Error(`OpenAI API error: ${response.status} - ${errorText}`);
   }
 
   const data = await response.json();
