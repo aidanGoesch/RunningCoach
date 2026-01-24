@@ -27,8 +27,8 @@ jobs:
         run: npm run build
         env:
           VITE_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          VITE_STRAVA_CLIENT_ID: ${{ secrets.STRAVA_CLIENT_ID }}
-          VITE_STRAVA_CLIENT_SECRET: ${{ secrets.STRAVA_CLIENT_SECRET }}
+          VITE_STRAVA_CLIENT_ID: ${{ secrets.VITE_STRAVA_CLIENT_ID }}
+          VITE_STRAVA_CLIENT_SECRET: ${{ secrets.VITE_STRAVA_CLIENT_SECRET }}
           
       - name: Setup Pages
         uses: actions/configure-pages@v4

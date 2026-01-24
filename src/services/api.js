@@ -4,6 +4,12 @@ const STRAVA_REDIRECT_URI = window.location.hostname === 'localhost'
   ? 'http://localhost:5173/strava-callback'
   : `${window.location.origin}${import.meta.env.BASE_URL || '/'}strava-callback`;
 
+console.log('Environment check:', {
+  STRAVA_CLIENT_ID: STRAVA_CLIENT_ID ? 'set' : 'missing',
+  OPENAI_KEY: import.meta.env.VITE_OPENAI_API_KEY ? 'set' : 'missing',
+  STRAVA_SECRET: import.meta.env.VITE_STRAVA_CLIENT_SECRET ? 'set' : 'missing'
+});
+
 export const updatePromptWithCurrentData = (basePrompt, activities = []) => {
   // Race date and calculations
   const raceDate = new Date('2026-05-02');
