@@ -31,15 +31,6 @@ const InsightsDisplay = ({ insights }) => {
           </div>
         </div>
       )}
-
-      {insights.nextWorkout && (
-        <div className="workout-block">
-          <div className="block-title">🎯 Next Workout Recommendation</div>
-          <div style={{ fontSize: '14px', lineHeight: '1.5' }}>
-            {insights.nextWorkout}
-          </div>
-        </div>
-      )}
     </div>
   );
 };

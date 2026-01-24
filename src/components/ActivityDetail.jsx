@@ -400,7 +400,7 @@ const PaceChart = ({ data }) => {
     
     velocityData.forEach((pace, i) => {
       const x = padding + ((timeData[i] / maxTime) * (width - 2 * padding));
-      const y = padding + ((pace - minPace) / (maxPace - minPace)) * (height - 2 * padding);
+      const y = padding + ((maxPace - pace) / (maxPace - minPace)) * (height - 2 * padding); // Inverted Y for pace
       
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
@@ -420,21 +420,21 @@ const PaceChart = ({ data }) => {
     ctx.fillText('Pace (min/mile)', 0, 0);
     ctx.restore();
     
-    // Y-axis labels (pace) and ticks
+    // Y-axis labels (pace) and ticks - slowest at top, fastest at bottom
     ctx.textAlign = 'right';
     const formatPaceLabel = (pace) => {
       const mins = Math.floor(pace);
       const secs = Math.round((pace - mins) * 60);
       return `${mins}:${secs.toString().padStart(2, '0')}`;
     };
-    ctx.fillText(formatPaceLabel(maxPace), padding - 5, padding + 5);
-    ctx.fillText(formatPaceLabel(minPace), padding - 5, height - padding + 5);
+    ctx.fillText(formatPaceLabel(maxPace), padding - 5, padding + 5); // Slowest at top
+    ctx.fillText(formatPaceLabel(minPace), padding - 5, height - padding + 5); // Fastest at bottom
     
     // Add intermediate Y-axis ticks for pace
     const paceRange = maxPace - minPace;
     for (let i = 1; i < 4; i++) {
-      const paceValue = minPace + (paceRange * i / 4);
-      const y = padding + ((paceValue - minPace) / paceRange) * (height - 2 * padding);
+      const paceValue = maxPace - (paceRange * i / 4); // Calculate from slowest down
+      const y = padding + (i * (height - 2 * padding) / 4);
       ctx.fillText(formatPaceLabel(paceValue), padding - 5, y + 5);
       
       // Draw tick marks
