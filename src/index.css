@@ -103,8 +103,8 @@ body {
 
 .block-details {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 15px;
 }
 
 .detail-item {
@@ -123,6 +123,7 @@ body {
   font-size: 16px;
   font-weight: 600;
   color: #2c3e50;
+  word-break: break-word;
 }
 
 .loading {
