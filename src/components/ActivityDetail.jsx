@@ -225,8 +225,8 @@ const HeartRateChart = ({ data }) => {
       
       setTooltip({
         x: e.clientX,
-        y: e.clientY - 50, // Position above thumb/cursor
-        text: `${time}min: ${hr} bpm`
+        y: e.clientY - 80, // Position higher above thumb/cursor
+        text: `${hr} bpm`
       });
       
       // Set cursor X position for vertical line
@@ -447,8 +447,8 @@ const PaceChart = ({ data }) => {
       
       setTooltip({
         x: e.clientX,
-        y: e.clientY - 50, // Position above thumb/cursor
-        text: `${time}min: ${mins}:${secs.toString().padStart(2, '0')}/mile`
+        y: e.clientY - 80, // Position higher above thumb/cursor
+        text: `${mins}:${secs.toString().padStart(2, '0')}/mile`
       });
       
       // Set cursor X position for vertical line
