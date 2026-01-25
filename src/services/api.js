@@ -18,17 +18,18 @@ export const updatePromptWithCurrentData = (basePrompt, activities = []) => {
   const weeksUntilRace = Math.ceil(daysUntilRace / 7);
   const currentWeek = Math.max(1, 15 - weeksUntilRace); // Assuming 14-week plan
   
-  // Determine workout type based on day of week
+  // Determine workout type based on day of week - STRICT 3-day schedule
   const dayOfWeek = today.getDay(); // 0=Sunday, 1=Monday, etc.
   let recommendedWorkoutType;
   if (dayOfWeek === 2) { // Tuesday
-    recommendedWorkoutType = "Easy Run (recovery pace, conversational effort)";
+    recommendedWorkoutType = "Easy Run (recovery pace, conversational effort, HR 150-160 bpm)";
   } else if (dayOfWeek === 4) { // Thursday  
-    recommendedWorkoutType = "Speed Work (intervals, tempo, or track workout)";
-  } else if (dayOfWeek === 0 || dayOfWeek === 6) { // Weekend
-    recommendedWorkoutType = "Long Run (steady aerobic pace, build endurance)";
+    recommendedWorkoutType = "Speed Work (intervals, tempo, or track workout as specified in training plan)";
+  } else if (dayOfWeek === 0) { // Sunday - Long Run
+    recommendedWorkoutType = "Long Run (steady aerobic pace, build endurance as specified in training plan)";
   } else {
-    recommendedWorkoutType = "Flexible (easy run, cross-training, or rest day)";
+    // Monday, Wednesday, Friday (gym days), Saturday (rest/recovery)
+    recommendedWorkoutType = "Recovery Day (stretching, physical therapy exercises, foam rolling, or complete rest - NO RUNNING)";
   }
   
   // Calculate training phase based on your periodization
@@ -69,16 +70,19 @@ export const updatePromptWithCurrentData = (basePrompt, activities = []) => {
   // Update the prompt with current data
   let updatedPrompt = basePrompt;
   
-  // Add workout type recommendation
-  updatedPrompt += `\n\nTODAY'S RECOMMENDED WORKOUT TYPE: ${recommendedWorkoutType}
+  // Add workout type recommendation with strict schedule enforcement
+  updatedPrompt += `\n\nTODAY'S WORKOUT TYPE: ${recommendedWorkoutType}
   
-Weekly Schedule:
-- Tuesday: Easy runs (recovery pace)
-- Thursday: Speed work (intervals/tempo)  
-- Weekend: Long runs (endurance building)
-- Other days: Flexible (easy/cross-training/rest)
+STRICT WEEKLY SCHEDULE (3 runs per week):
+- Sunday: Long Run ONLY
+- Tuesday: Easy Run ONLY  
+- Thursday: Speed Work ONLY
+- Monday/Wednesday/Friday: Recovery Day (gym days - stretching, PT exercises, foam rolling)
+- Saturday: Recovery Day (complete rest or light stretching)
 
-Please generate a workout appropriate for today (${today.toLocaleDateString()}) following this schedule.`;
+IMPORTANT: If today is NOT Sunday, Tuesday, or Thursday, DO NOT recommend running. Instead, provide recovery activities like stretching routines, physical therapy exercises, foam rolling, or rest guidance.
+
+Today is ${today.toLocaleDateString()} (${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dayOfWeek]}).`;
   
   // Replace placeholders
   updatedPrompt = updatedPrompt.replace(/\[Week X of 14\]/g, `Week ${currentWeek} of 14`);
