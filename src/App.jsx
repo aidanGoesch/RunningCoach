@@ -6,6 +6,7 @@ import StravaCallback from './components/StravaCallback';
 import ActivityDetail from './components/ActivityDetail';
 import CoachingPromptEditor from './components/CoachingPromptEditor';
 import WorkoutFeedback from './components/WorkoutFeedback';
+import WeeklyProgress from './components/WeeklyProgress';
 import { generateWorkout, syncWithStrava, generateInsights } from './services/api';
 
 function App() {
@@ -357,6 +358,8 @@ function App() {
           {error}
         </div>
       )}
+
+      <WeeklyProgress activities={activities} />
 
       <div className="buttons">
         <button 
