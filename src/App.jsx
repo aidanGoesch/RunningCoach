@@ -44,7 +44,7 @@ function App() {
     return (
       <div className="app">
         <div className="header">
-          <h1>🔒 Access Required</h1>
+          <h1>Access Required</h1>
         </div>
         <div className="workout-display">
           <div className="workout-title">Enter Password</div>
@@ -67,7 +67,7 @@ function App() {
               placeholder="Enter password"
             />
             <button className="btn btn-primary" onClick={handleLogin} style={{ width: '100%' }}>
-              🔓 Access App
+              Access App
             </button>
             {error && <div className="error" style={{ marginTop: '15px' }}>{error}</div>}
           </div>
@@ -327,11 +327,11 @@ function App() {
         onClick={() => setDarkMode(!darkMode)}
         title="Toggle dark mode"
       >
-        {darkMode ? '☀️' : '🌙'}
+        {darkMode ? '☀' : '☾'}
       </button>
       
       <div className="header">
-        <h1>🏃‍♂️ Running Coach</h1>
+        <h1>Running Coach</h1>
         <p>Your AI-powered running companion</p>
       </div>
 
@@ -367,7 +367,7 @@ function App() {
           onClick={handleStravaSync}
           disabled={loading}
         >
-          {loading ? '⏳ Syncing...' : '🔗 Sync with Strava'}
+          {loading ? 'Syncing...' : 'Sync with Strava'}
         </button>
         
         <button 
@@ -380,9 +380,9 @@ function App() {
             setInsights(null);
             handleStravaSync();
           }}
-          style={{ fontSize: '14px', padding: '10px 15px' }}
+          style={{ fontSize: '14px', padding: '12px 20px' }}
         >
-          🔄 Re-authorize Strava
+          Re-authorize Strava
         </button>
         
         <button 
@@ -390,7 +390,7 @@ function App() {
           onClick={() => handleGenerateWorkout(false)}
           disabled={loading || (!apiKey && !import.meta.env.VITE_OPENAI_API_KEY)}
         >
-          {loading ? '⏳ Generating...' : '🎯 Generate Workout'}
+          {loading ? 'Generating...' : 'Generate Workout'}
         </button>
         
         {workout && (
@@ -398,18 +398,18 @@ function App() {
             className="btn btn-secondary" 
             onClick={() => handleGenerateWorkout(true)}
             disabled={loading}
-            style={{ fontSize: '14px', padding: '10px 15px' }}
+            style={{ fontSize: '14px', padding: '12px 20px' }}
           >
-            🔁 Same Run Tomorrow
+            Same Run Tomorrow
           </button>
         )}
         
         <button 
           className={`btn ${isInjured ? 'btn-primary' : 'btn-secondary'}`}
           onClick={() => setIsInjured(!isInjured)}
-          style={{ fontSize: '14px', padding: '10px 15px' }}
+          style={{ fontSize: '14px', padding: '12px 20px' }}
         >
-          {isInjured ? '🩹 I\'m Injured' : '💪 I\'m Healthy'}
+          {isInjured ? 'I\'m Injured' : 'I\'m Healthy'}
         </button>
         
         <button 
@@ -419,9 +419,9 @@ function App() {
             // Add to browser history
             window.history.pushState({ view: 'promptEditor' }, '', window.location.pathname);
           }}
-          style={{ fontSize: '14px', padding: '10px 15px' }}
+          style={{ fontSize: '14px', padding: '12px 20px' }}
         >
-          ⚙️ Coaching Settings
+          Coaching Settings
         </button>
       </div>
 
@@ -444,7 +444,7 @@ function App() {
             }}
             style={{ width: '100%' }}
           >
-            📝 Rate This Workout
+            Rate This Workout
           </button>
         </div>
       )}
