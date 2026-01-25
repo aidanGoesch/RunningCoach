@@ -73,7 +73,7 @@ const WeeklyProgress = ({ activities }) => {
     return (
       <div className="workout-display" style={{ marginBottom: '20px' }}>
         <div className="workout-title">
-          {weeklyData.weekStart ? 
+          {weeklyData?.weekStart ? 
             `Week of ${weeklyData.weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : 
             'This Week\'s Progress'
           }
