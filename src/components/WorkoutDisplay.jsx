@@ -31,15 +31,76 @@ const WorkoutBlock = ({ block }) => {
   );
 };
 
-const WorkoutDisplay = ({ workout }) => {
+const WorkoutDisplay = ({ workout, onWorkoutClick }) => {
   if (!workout) return null;
+
+  // Calculate workout summary
+  const totalDistance = workout.blocks?.reduce((sum, block) => {
+    if (block.distance) {
+      const distance = parseFloat(block.distance.replace(/[^\d.]/g, ''));
+      return sum + (isNaN(distance) ? 0 : distance);
+    }
+    return sum;
+  }, 0) || 0;
+
+  const totalDuration = workout.blocks?.reduce((sum, block) => {
+    if (block.duration) {
+      const duration = parseFloat(block.duration.replace(/[^\d.]/g, ''));
+      return sum + (isNaN(duration) ? 0 : duration);
+    }
+    return sum;
+  }, 0) || 0;
+
+  const workoutType = workout.blocks?.[0]?.title?.includes('Warm') ? 
+    (workout.blocks.find(b => b.title?.includes('Interval') || b.title?.includes('Tempo')) ? 'Speed Work' :
+     workout.blocks.find(b => b.title?.includes('Long') || b.title?.includes('Steady')) ? 'Long Run' : 'Easy Run') :
+    'Easy Run';
 
   return (
     <div className="workout-display">
       <div className="workout-title">{workout.title}</div>
-      {workout.blocks?.map((block, index) => (
-        <WorkoutBlock key={index} block={block} />
-      ))}
+      
+      <div 
+        className="workout-block clickable"
+        onClick={() => onWorkoutClick && onWorkoutClick()}
+        style={{ cursor: 'pointer' }}
+      >
+        <div className="block-title">Workout Overview</div>
+        <div className="block-details">
+          <div className="detail-item">
+            <span className="detail-label">Type</span>
+            <span className="detail-value">{workoutType}</span>
+          </div>
+          {totalDistance > 0 && (
+            <div className="detail-item">
+              <span className="detail-label">Total Distance</span>
+              <span className="detail-value">{totalDistance.toFixed(1)} mi</span>
+            </div>
+          )}
+          {totalDuration > 0 && (
+            <div className="detail-item">
+              <span className="detail-label">Est. Duration</span>
+              <span className="detail-value">{Math.round(totalDuration)} min</span>
+            </div>
+          )}
+          <div className="detail-item">
+            <span className="detail-label">Blocks</span>
+            <span className="detail-value">{workout.blocks?.length || 0}</span>
+          </div>
+        </div>
+        
+        <div style={{ 
+          marginTop: '15px',
+          padding: '12px',
+          backgroundColor: 'var(--grid-color)',
+          borderRadius: '8px',
+          fontSize: '14px',
+          color: 'var(--text-secondary)',
+          textAlign: 'center'
+        }}>
+          Click to view detailed workout instructions →
+        </div>
+      </div>
     </div>
   );
 };

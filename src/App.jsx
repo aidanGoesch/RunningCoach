@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import WorkoutDisplay from './components/WorkoutDisplay';
+import WorkoutDetail from './components/WorkoutDetail';
 import ActivitiesDisplay from './components/ActivitiesDisplay';
 import InsightsDisplay from './components/InsightsDisplay';
 import StravaCallback from './components/StravaCallback';
@@ -18,6 +19,7 @@ function App() {
   const [error, setError] = useState(null);
   const [isStravaCallback, setIsStravaCallback] = useState(false);
   const [selectedActivityId, setSelectedActivityId] = useState(null);
+  const [showWorkoutDetail, setShowWorkoutDetail] = useState(false);
   const [showPromptEditor, setShowPromptEditor] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
   const [showPostpone, setShowPostpone] = useState(false);
@@ -128,26 +130,39 @@ function App() {
           setSelectedActivityId(event.state.activityId);
           setShowPromptEditor(false);
           setShowFeedback(false);
+          setShowPostpone(false);
+          setShowWorkoutDetail(false);
+        } else if (event.state.view === 'workoutDetail') {
+          setShowWorkoutDetail(true);
+          setSelectedActivityId(null);
+          setShowPromptEditor(false);
+          setShowFeedback(false);
+          setShowPostpone(false);
         } else if (event.state.view === 'promptEditor') {
           setShowPromptEditor(true);
           setSelectedActivityId(null);
           setShowFeedback(false);
+          setShowPostpone(false);
+          setShowWorkoutDetail(false);
         } else if (event.state.view === 'feedback') {
           setShowFeedback(true);
           setSelectedActivityId(null);
           setShowPromptEditor(false);
           setShowPostpone(false);
+          setShowWorkoutDetail(false);
         } else if (event.state.view === 'postpone') {
           setShowPostpone(true);
           setSelectedActivityId(null);
           setShowPromptEditor(false);
           setShowFeedback(false);
+          setShowWorkoutDetail(false);
         } else {
           // Main view
           setSelectedActivityId(null);
           setShowPromptEditor(false);
           setShowFeedback(false);
           setShowPostpone(false);
+          setShowWorkoutDetail(false);
         }
       } else {
         // No state, go to main view
@@ -155,6 +170,7 @@ function App() {
         setShowPromptEditor(false);
         setShowFeedback(false);
         setShowPostpone(false);
+        setShowWorkoutDetail(false);
       }
     };
 
@@ -355,6 +371,15 @@ function App() {
     }
   };
 
+  if (showWorkoutDetail && workout) {
+    return (
+      <WorkoutDetail 
+        workout={workout}
+        onBack={() => setShowWorkoutDetail(false)}
+      />
+    );
+  }
+
   if (showPostpone && workout) {
     return (
       <PostponeWorkout 
@@ -450,17 +475,6 @@ function App() {
         {workout && (
           <button 
             className="btn btn-secondary" 
-            onClick={() => handleGenerateWorkout(true)}
-            disabled={loading}
-            style={{ fontSize: '14px', padding: '12px 20px' }}
-          >
-            Same Run Tomorrow
-          </button>
-        )}
-        
-        {workout && (
-          <button 
-            className="btn btn-secondary" 
             onClick={() => {
               setShowPostpone(true);
               // Add to browser history
@@ -500,7 +514,14 @@ function App() {
         </div>
       )}
 
-      <WorkoutDisplay workout={workout} />
+      <WorkoutDisplay 
+        workout={workout} 
+        onWorkoutClick={() => {
+          setShowWorkoutDetail(true);
+          // Add to browser history
+          window.history.pushState({ view: 'workoutDetail' }, '', window.location.pathname);
+        }}
+      />
       
       {workout && (
         <div style={{ marginBottom: '20px' }}>
