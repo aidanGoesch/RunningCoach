@@ -1,10 +1,18 @@
 import { useState, useEffect } from 'react';
 
-const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan }) => {
+const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey }) => {
   const [weeklyPlan, setWeeklyPlan] = useState(null);
   const [currentWeek, setCurrentWeek] = useState(null);
 
   useEffect(() => {
+    if (!currentWeek) return;
+    
+    // Listen for plan updates
+    const storedPlan = localStorage.getItem(`weekly_plan_${currentWeek.key}`);
+    if (storedPlan) {
+      setWeeklyPlan(JSON.parse(storedPlan));
+    }
+  }, [currentWeek?.key]);
     // Get current week (Monday-Sunday)
     const today = new Date();
     const monday = new Date(today);
@@ -18,11 +26,21 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan }) => {
     const storedPlan = localStorage.getItem(`weekly_plan_${weekKey}`);
     if (storedPlan) {
       setWeeklyPlan(JSON.parse(storedPlan));
-    } else {
-      // Auto-generate plan if none exists
+    } else if (apiKey || import.meta.env.VITE_OPENAI_API_KEY) {
+      // Auto-generate plan if none exists and we have an API key
       onGenerateWeeklyPlan();
     }
-  }, []);
+  }, [apiKey]);
+
+  useEffect(() => {
+    if (!currentWeek) return;
+    
+    // Listen for plan updates
+    const storedPlan = localStorage.getItem(`weekly_plan_${currentWeek.key}`);
+    if (storedPlan) {
+      setWeeklyPlan(JSON.parse(storedPlan));
+    }
+  }, [currentWeek?.key]);
 
   const getDayInfo = (dayOffset) => {
     if (!currentWeek) return null;

@@ -520,19 +520,12 @@ function App() {
         activities={activities}
         onWorkoutClick={handlePlannedWorkoutClick}
         onGenerateWeeklyPlan={handleGenerateWeeklyPlan}
+        apiKey={apiKey}
       />
 
       <WeeklyProgress activities={activities} />
 
       <div className="buttons">
-        <button 
-          className="btn btn-primary" 
-          onClick={() => handleGenerateWorkout(false)}
-          disabled={loading || (!apiKey && !import.meta.env.VITE_OPENAI_API_KEY)}
-        >
-          {loading ? 'Generating...' : 'Generate Workout'}
-        </button>
-        
         <button 
           className="btn btn-secondary" 
           onClick={() => handleGenerateWorkout(false, { reason: 'Recovery day', adjustment: 'recovery' })}
