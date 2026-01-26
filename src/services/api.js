@@ -485,9 +485,8 @@ Return the adjusted plan in the same JSON format, updating only the remaining da
   }
 };
 
-export const generateWorkout = async (apiKey, activities = [], isInjured = false, postponeData = null) => {
-  console.log('generateWorkout called with apiKey:', apiKey ? 'provided' : 'missing');
-  console.log('Environment OPENAI key:', import.meta.env.VITE_OPENAI_API_KEY ? 'set' : 'missing');
+export const syncWithStrava = async () => {
+  console.log('syncWithStrava called');
   console.log('Injury status:', isInjured ? 'injured' : 'healthy');
   
   // Get saved coaching prompt and update with current data
