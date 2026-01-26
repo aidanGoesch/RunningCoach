@@ -485,13 +485,7 @@ Return the adjusted plan in the same JSON format, updating only the remaining da
   }
 };
 
-export const syncWithStrava = async () => {
-  console.log('syncWithStrava called');
-  console.log('Injury status:', isInjured ? 'injured' : 'healthy');
-  
-  // Get saved coaching prompt and update with current data
-  const savedPrompt = localStorage.getItem('coaching_prompt');
-  let basePrompt = savedPrompt || `You are an expert running coach. Create a personalized running workout based on the provided activity data.`;
+export const refreshStravaToken = async () => {
   
   // Update prompt with current training data if it contains placeholders
   if (basePrompt.includes('[Week X of 14]') || basePrompt.includes('[X days]')) {
