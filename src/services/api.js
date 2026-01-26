@@ -269,6 +269,37 @@ const initiateStravaAuth = () => {
   window.location.href = authUrl;
 };
 
+export const exchangeStravaCode = async (code) => {
+  const clientSecret = import.meta.env.VITE_STRAVA_CLIENT_SECRET;
+  
+  if (!clientSecret) {
+    throw new Error('Strava client secret not configured');
+  }
+
+  const response = await fetch('https://www.strava.com/oauth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      client_id: STRAVA_CLIENT_ID,
+      client_secret: clientSecret,
+      code: code,
+      grant_type: 'authorization_code'
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to exchange Strava code');
+  }
+
+  const data = await response.json();
+  
+  // Store tokens
+  localStorage.setItem('strava_access_token', data.access_token);
+  localStorage.setItem('strava_refresh_token', data.refresh_token);
+  
+  return data;
+};
+
 const getStravaActivities = async (token, perPage = 30) => {
   const response = await fetch(`https://www.strava.com/api/v3/athlete/activities?per_page=${perPage}`, {
     headers: { 'Authorization': `Bearer ${token}` }
