@@ -20,16 +20,41 @@ export const updatePromptWithCurrentData = (basePrompt, activities = []) => {
   
   // Determine workout type based on day of week - STRICT 3-day schedule
   const dayOfWeek = today.getDay(); // 0=Sunday, 1=Monday, etc.
+  
+  // Check if user has already run today
+  const todayActivities = activities.filter(activity => {
+    const activityDate = new Date(activity.start_date);
+    const todayStart = new Date(today);
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(today);
+    todayEnd.setHours(23, 59, 59, 999);
+    return activityDate >= todayStart && activityDate <= todayEnd && activity.type === 'Run';
+  });
+  
+  const hasRunToday = todayActivities.length > 0;
+  
   let recommendedWorkoutType;
   if (dayOfWeek === 2) { // Tuesday
-    recommendedWorkoutType = "Easy Run (recovery pace, conversational effort, HR 150-160 bpm)";
+    if (hasRunToday) {
+      recommendedWorkoutType = "Recovery Exercises (post-run PT routine: hip bridges, clamshells, calf stretches, foam rolling)";
+    } else {
+      recommendedWorkoutType = "Easy Run (recovery pace, conversational effort, HR 150-160 bpm)";
+    }
   } else if (dayOfWeek === 4) { // Thursday  
-    recommendedWorkoutType = "Speed Work (intervals, tempo, or track workout as specified in training plan)";
+    if (hasRunToday) {
+      recommendedWorkoutType = "Recovery Exercises (post-speed work routine: dynamic stretching, hip flexor stretches, IT band work)";
+    } else {
+      recommendedWorkoutType = "Speed Work (intervals, tempo, or track workout as specified in training plan)";
+    }
   } else if (dayOfWeek === 0) { // Sunday - Long Run
-    recommendedWorkoutType = "Long Run (steady aerobic pace, build endurance as specified in training plan)";
+    if (hasRunToday) {
+      recommendedWorkoutType = "Recovery Exercises (post-long run routine: gentle stretching, elevation, hydration focus)";
+    } else {
+      recommendedWorkoutType = "Long Run (steady aerobic pace, build endurance as specified in training plan)";
+    }
   } else {
     // Monday, Wednesday, Friday (gym days), Saturday (rest/recovery)
-    recommendedWorkoutType = "Recovery Day (stretching, physical therapy exercises, foam rolling, or complete rest - NO RUNNING)";
+    recommendedWorkoutType = "Recovery Exercises (optional PT routine: clamshells, hip bridges, bird dogs, planks, calf raises, ankle mobility, foam rolling for joint health and injury prevention)";
   }
   
   // Calculate training phase based on your periodization
@@ -74,15 +99,28 @@ export const updatePromptWithCurrentData = (basePrompt, activities = []) => {
   updatedPrompt += `\n\nTODAY'S WORKOUT TYPE: ${recommendedWorkoutType}
   
 STRICT WEEKLY SCHEDULE (3 runs per week):
-- Sunday: Long Run ONLY
-- Tuesday: Easy Run ONLY  
-- Thursday: Speed Work ONLY
-- Monday/Wednesday/Friday: Recovery Day (gym days - stretching, PT exercises, foam rolling)
-- Saturday: Recovery Day (complete rest or light stretching)
+- Sunday: Long Run ONLY (or recovery exercises if already completed)
+- Tuesday: Easy Run ONLY (or recovery exercises if already completed)
+- Thursday: Speed Work ONLY (or recovery exercises if already completed)
+- Monday/Wednesday/Friday: Recovery Exercises (optional PT routine for joint health)
+- Saturday: Recovery Exercises (optional mobility and injury prevention work)
 
-IMPORTANT: If today is NOT Sunday, Tuesday, or Thursday, DO NOT recommend running. Instead, provide recovery activities like stretching routines, physical therapy exercises, foam rolling, or rest guidance.
+RECOVERY EXERCISE RECOMMENDATIONS:
+- Clamshells (hip stability)
+- Hip bridges (glute activation)
+- Bird dogs (core stability)
+- Planks (core strength)
+- Calf raises (lower leg strength)
+- Ankle mobility circles
+- IT band stretches
+- Hip flexor stretches
+- Foam rolling routine
+- Dynamic warm-up movements
 
-Today is ${today.toLocaleDateString()} (${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dayOfWeek]}).`;
+IMPORTANT: If today is NOT a running day OR if the athlete has already run today, provide a structured recovery exercise routine. Focus on injury prevention, joint mobility, and muscle activation exercises that support running performance.
+
+Today is ${today.toLocaleDateString()} (${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dayOfWeek]}).
+${hasRunToday ? 'The athlete has already completed a run today.' : 'No run completed today yet.'}`;
   
   // Replace placeholders
   updatedPrompt = updatedPrompt.replace(/\[Week X of 14\]/g, `Week ${currentWeek} of 14`);
