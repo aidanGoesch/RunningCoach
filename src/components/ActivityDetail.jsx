@@ -141,6 +141,12 @@ const ActivityDetail = ({ activityId, onBack }) => {
                 <span className="detail-value">{Math.round(activity.average_heartrate)} bpm</span>
               </div>
             )}
+            {activity.average_cadence && (
+              <div className="detail-item">
+                <span className="detail-label">Avg Cadence</span>
+                <span className="detail-value">{Math.round(activity.average_cadence * 2)} spm</span>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -182,6 +188,18 @@ const ActivityDetail = ({ activityId, onBack }) => {
 
       {/* Charts */}
       <ActivityCharts streams={streams} />
+      
+      {/* AI Insights */}
+      {insights && (
+        <div className="workout-display" style={{ marginBottom: '20px' }}>
+          <div className="workout-title">AI Insights</div>
+          <div className="workout-block">
+            <div style={{ fontSize: '14px', lineHeight: '1.6', whiteSpace: 'pre-line' }}>
+              {insights.insights}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -263,15 +281,16 @@ const HeartRateChart = ({ data }) => {
     const padding = 60;
     const width = rect.width;
     
-    // Allow tooltip anywhere on the chart, not just within padding
-    if (x < 0 || x > width) {
+    // Only show tooltip and cursor within the graph area
+    if (x < padding || x > width - padding) {
       setTooltip(null);
+      setCursorX(null);
       return;
     }
     
     // Calculate which data point based on X position
     const dataWidth = width - 2 * padding;
-    const adjustedX = Math.max(0, Math.min(x - padding, dataWidth));
+    const adjustedX = x - padding;
     const progress = adjustedX / dataWidth;
     const dataIndex = Math.round(progress * (data.heartrate.data.length - 1));
     
@@ -478,15 +497,16 @@ const PaceChart = ({ data }) => {
     const padding = 60;
     const width = rect.width;
     
-    // Allow tooltip anywhere on the chart, not just within padding
-    if (x < 0 || x > width) {
+    // Only show tooltip and cursor within the graph area
+    if (x < padding || x > width - padding) {
       setTooltip(null);
+      setCursorX(null);
       return;
     }
     
     // Calculate which data point based on X position
     const dataWidth = width - 2 * padding;
-    const adjustedX = Math.max(0, Math.min(x - padding, dataWidth));
+    const adjustedX = x - padding;
     const progress = adjustedX / dataWidth;
     
     const velocityData = data.velocity_smooth.data
@@ -764,13 +784,15 @@ const CadenceChart = ({ data }) => {
     const padding = 60;
     const width = rect.width;
     
-    if (x < 0 || x > width) {
+    // Only show tooltip and cursor within the graph area
+    if (x < padding || x > width - padding) {
       setTooltip(null);
+      setCursorX(null);
       return;
     }
     
     const dataWidth = width - 2 * padding;
-    const adjustedX = Math.max(0, Math.min(x - padding, dataWidth));
+    const adjustedX = x - padding;
     const progress = adjustedX / dataWidth;
     const dataIndex = Math.round(progress * (data.cadence.data.length - 1));
     
@@ -911,7 +933,14 @@ const CadenceChart = ({ data }) => {
       <div style={{ position: 'relative' }}>
         <canvas
           ref={canvasRef}
-          style={{ width: '100%', height: '200px', cursor: 'crosshair' }}
+          style={{ 
+            width: '100%', 
+            height: '200px', 
+            cursor: 'crosshair',
+            backgroundColor: 'var(--card-bg)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '8px'
+          }}
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}
         />
