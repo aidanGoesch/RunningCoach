@@ -166,16 +166,51 @@ export const generateWorkout = async (apiKey, activities = [], isInjured = false
   
   // If this is a recovery exercise request, override the workout type
   if (postponeData && postponeData.adjustment === 'recovery') {
-    basePrompt += `\n\nSPECIFIC REQUEST: Generate a structured recovery exercise routine only. Do not recommend running. Focus on:
+    basePrompt = `You are an expert running coach. Generate a structured recovery exercise routine.
 
-RECOVERY EXERCISE PROTOCOLS:
-- Hip stability exercises (clamshells, hip bridges, side-lying leg lifts)
-- Core stability work (planks, bird dogs, dead bugs, side planks)
-- Lower leg strength (calf raises, ankle mobility)
-- Mobility and stretching (hip flexors, IT band, calves, pigeon pose)
-- Foam rolling routine (IT band, calves, quads, glutes, hamstrings)
+CRITICAL: Return the response in this exact JSON format:
+{
+  "title": "Recovery Exercise Routine",
+  "blocks": [
+    {
+      "title": "Hip Stability",
+      "distance": "",
+      "pace": "",
+      "duration": "10-12 minutes",
+      "notes": "Clamshells: 2 sets of 15 each side. Hip bridges: 2 sets of 20 reps. Side-lying leg lifts: 2 sets of 12 each side."
+    },
+    {
+      "title": "Core Stability", 
+      "distance": "",
+      "pace": "",
+      "duration": "8-10 minutes",
+      "notes": "Planks: 3 sets of 30-45 seconds. Bird dogs: 2 sets of 10 each side (hold 5 seconds). Dead bugs: 2 sets of 10 each side."
+    },
+    {
+      "title": "Lower Leg Strength",
+      "distance": "",
+      "pace": "",
+      "duration": "5-7 minutes", 
+      "notes": "Calf raises: 3 sets of 15 reps. Single-leg calf raises: 2 sets of 10 each leg. Ankle circles: 10 each direction."
+    },
+    {
+      "title": "Mobility & Stretching",
+      "distance": "",
+      "pace": "",
+      "duration": "10-15 minutes",
+      "notes": "Hip flexor stretch: 30 seconds each leg. IT band stretch: 30 seconds each leg. Calf stretch: 30 seconds each leg. Pigeon pose: 45 seconds each side."
+    },
+    {
+      "title": "Foam Rolling",
+      "distance": "",
+      "pace": "",
+      "duration": "8-10 minutes",
+      "notes": "IT band: 60 seconds each leg. Calves: 45 seconds each leg. Quads: 60 seconds each leg. Glutes: 45 seconds each side."
+    }
+  ]
+}
 
-Provide specific sets, reps, and durations for each exercise. Structure as workout blocks for easy following.`;
+Do NOT include any conversational text. Return ONLY the JSON structure above with specific exercises, sets, reps, and durations.`;
   }
   
   const response = await fetch(OPENAI_API_URL, {
@@ -195,7 +230,20 @@ Provide specific sets, reps, and durations for each exercise. Structure as worko
   if (!response.ok) throw new Error(`OpenAI API error: ${response.status}`);
   
   const data = await response.json();
-  return parseWorkoutFromText(data.choices[0].message.content);
+  const content = data.choices[0].message.content;
+  
+  // Try to parse JSON response first
+  try {
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      return parsed;
+    }
+  } catch (parseError) {
+    console.log('Could not parse JSON, using text format');
+  }
+  
+  return parseWorkoutFromText(content);
 };
 
 export const generateWeeklyPlan = async (apiKey, activities = [], isInjured = false) => {
@@ -445,8 +493,65 @@ export const getActivityStreams = async (token, activityId) => {
 };
 
 export const generateInsights = async (apiKey, activities, streamData = null, rating = null) => {
-  // Simplified insights generation
-  return { insights: "Activity completed successfully!" };
+  if (!activities || activities.length === 0) return null;
+  
+  const activity = activities[0]; // Most recent activity
+  const savedPrompt = localStorage.getItem('coaching_prompt') || 'You are an expert running coach.';
+  
+  let basePrompt = `${savedPrompt}
+
+ACTIVITY ANALYSIS REQUEST:
+
+Analyze this running activity and provide coaching insights:
+
+Activity: ${activity.name}
+Distance: ${(activity.distance / 1609.34).toFixed(2)} miles
+Duration: ${Math.floor(activity.moving_time / 60)} minutes
+Average Pace: ${formatPace(activity.average_speed)}
+Average Heart Rate: ${activity.average_heartrate || 'N/A'} bpm
+Max Heart Rate: ${activity.max_heartrate || 'N/A'} bpm
+
+${rating ? `Athlete Rating: ${rating.rating}/5 stars
+Feedback: ${rating.feedback || 'No feedback provided'}
+${rating.isInjured ? `Injury Status: ${rating.injuryDetails}` : 'No injuries reported'}` : ''}
+
+Provide specific coaching insights about:
+1. Pace and effort analysis
+2. Heart rate zones and efficiency
+3. Training adaptations and progress
+4. Recovery recommendations
+5. Areas for improvement
+
+Keep insights concise and actionable.`;
+
+  const response = await fetch(OPENAI_API_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: 'gpt-4',
+      messages: [
+        { role: 'system', content: basePrompt },
+        { role: 'user', content: 'Analyze this activity and provide coaching insights.' }
+      ],
+      temperature: 0.7,
+      max_tokens: 800
+    })
+  });
+
+  if (!response.ok) throw new Error(`OpenAI API error: ${response.status}`);
+  
+  const data = await response.json();
+  return { insights: data.choices[0].message.content };
+};
+
+const formatPace = (speedMs) => {
+  const paceMinPerMile = 26.8224 / speedMs;
+  const minutes = Math.floor(paceMinPerMile);
+  const seconds = Math.round((paceMinPerMile - minutes) * 60);
+  return `${minutes}:${seconds.toString().padStart(2, '0')}/mile`;
 };
 
 export const getActivityRating = (activityId) => {
