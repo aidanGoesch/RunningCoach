@@ -168,15 +168,25 @@ Please provide progressive, injury-conscious workouts that will safely bridge th
 
           <button 
             className="btn btn-secondary"
-            onClick={() => {
-              localStorage.removeItem('strava_access_token');
-              localStorage.removeItem('strava_refresh_token');
-              localStorage.removeItem('strava_activities');
-              window.location.reload();
+            onClick={async () => {
+              try {
+                // Try to sync first
+                const { syncWithStrava } = await import('../services/api');
+                await syncWithStrava();
+                // If successful, close settings and refresh page to show new data
+                onCancel();
+                window.location.reload();
+              } catch (error) {
+                // If sync fails, clear tokens and redirect to auth
+                localStorage.removeItem('strava_access_token');
+                localStorage.removeItem('strava_refresh_token');
+                localStorage.removeItem('strava_activities');
+                window.location.reload();
+              }
             }}
             style={{ fontSize: '14px', padding: '8px 12px' }}
           >
-            Re-authorize Strava
+            Sync with Strava
           </button>
         </div>
         

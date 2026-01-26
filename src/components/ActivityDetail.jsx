@@ -19,11 +19,58 @@ const ActivityDetail = ({ activityId, onBack }) => {
         return;
       }
 
+      // Check cache first
+      const cacheKey = `activity_detail_${activityId}`;
+      const cachedData = localStorage.getItem(cacheKey);
+      
+      if (cachedData) {
+        try {
+          const { activity: activityData, streams: streamData, timestamp } = JSON.parse(cachedData);
+          
+          // Use cached data if it's less than 1 hour old
+          const oneHour = 60 * 60 * 1000;
+          if (Date.now() - timestamp < oneHour) {
+            console.log('Using cached activity data for', activityId);
+            setActivity(activityData);
+            setStreams(streamData);
+            
+            // Get rating for this activity
+            const activityRating = getActivityRating(activityId);
+            setRating(activityRating);
+            
+            // Generate insights for this specific activity with cached data
+            if (apiKey && activityData) {
+              try {
+                const activityInsights = await generateInsights(apiKey, [activityData], streamData, activityRating);
+                setInsights(activityInsights);
+              } catch (err) {
+                console.error('Failed to generate insights:', err);
+              }
+            }
+            
+            setLoading(false);
+            return;
+          }
+        } catch (err) {
+          console.error('Error parsing cached data:', err);
+        }
+      }
+
+      // Fetch fresh data if no cache or cache expired
       try {
+        console.log('Fetching fresh activity data for', activityId);
         const [activityData, streamData] = await Promise.all([
           getActivityDetails(token, activityId),
           getActivityStreams(token, activityId)
         ]);
+        
+        // Cache the data
+        const cacheData = {
+          activity: activityData,
+          streams: streamData,
+          timestamp: Date.now()
+        };
+        localStorage.setItem(cacheKey, JSON.stringify(cacheData));
         
         setActivity(activityData);
         setStreams(streamData);

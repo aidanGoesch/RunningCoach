@@ -373,14 +373,6 @@ function App() {
 
       <div className="buttons">
         <button 
-          className="btn btn-secondary btn-strava" 
-          onClick={handleStravaSync}
-          disabled={loading}
-        >
-          {loading ? 'Syncing...' : 'Sync with Strava'}
-        </button>
-        
-        <button 
           className="btn btn-primary" 
           onClick={() => handleGenerateWorkout(false)}
           disabled={loading || (!apiKey && !import.meta.env.VITE_OPENAI_API_KEY)}
