@@ -273,6 +273,8 @@ function App() {
       setTimeout(() => setError(null), 3000);
     }, 100);
   };
+
+  const handleWorkoutFeedback = (feedback) => {
     // Add to rating queue instead of direct feedback storage
     const ratingQueue = JSON.parse(localStorage.getItem('rating_queue') || '[]');
     const queueItem = {
