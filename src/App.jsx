@@ -533,6 +533,15 @@ function App() {
           {loading ? 'Generating...' : 'Generate Workout'}
         </button>
         
+        <button 
+          className="btn btn-secondary" 
+          onClick={() => handleGenerateWorkout(false, { reason: 'Recovery day', adjustment: 'recovery' })}
+          disabled={loading || (!apiKey && !import.meta.env.VITE_OPENAI_API_KEY)}
+          style={{ fontSize: '14px', padding: '12px 20px' }}
+        >
+          Generate Recovery Exercises
+        </button>
+        
         {workout && (
           <button 
             className="btn btn-secondary" 

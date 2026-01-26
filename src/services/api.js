@@ -164,6 +164,20 @@ export const generateWorkout = async (apiKey, activities = [], isInjured = false
   const savedPrompt = localStorage.getItem('coaching_prompt') || 'You are an expert running coach.';
   let basePrompt = updatePromptWithCurrentData(savedPrompt, activities);
   
+  // If this is a recovery exercise request, override the workout type
+  if (postponeData && postponeData.adjustment === 'recovery') {
+    basePrompt += `\n\nSPECIFIC REQUEST: Generate a structured recovery exercise routine only. Do not recommend running. Focus on:
+
+RECOVERY EXERCISE PROTOCOLS:
+- Hip stability exercises (clamshells, hip bridges, side-lying leg lifts)
+- Core stability work (planks, bird dogs, dead bugs, side planks)
+- Lower leg strength (calf raises, ankle mobility)
+- Mobility and stretching (hip flexors, IT band, calves, pigeon pose)
+- Foam rolling routine (IT band, calves, quads, glutes, hamstrings)
+
+Provide specific sets, reps, and durations for each exercise. Structure as workout blocks for easy following.`;
+  }
+  
   const response = await fetch(OPENAI_API_URL, {
     method: 'POST',
     headers: {

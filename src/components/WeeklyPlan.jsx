@@ -18,6 +18,9 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan }) => {
     const storedPlan = localStorage.getItem(`weekly_plan_${weekKey}`);
     if (storedPlan) {
       setWeeklyPlan(JSON.parse(storedPlan));
+    } else {
+      // Auto-generate plan if none exists
+      onGenerateWeeklyPlan();
     }
   }, []);
 
@@ -64,13 +67,8 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan }) => {
   };
 
   const shouldShowGenerateButton = () => {
-    if (!currentWeek) return false;
-    const today = new Date();
-    const sunday = new Date(currentWeek.start);
-    sunday.setDate(sunday.getDate() + 6); // Get Sunday
-    
-    // Show if it's Sunday and no plan exists
-    return today.getDay() === 0 && !weeklyPlan;
+    // Never show the manual generate button since we auto-generate
+    return false;
   };
 
   return (
