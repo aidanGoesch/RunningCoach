@@ -272,6 +272,8 @@ function App() {
     setShowWorkoutDetail(true);
     window.history.pushState({ view: 'plannedWorkout', dayName }, '', window.location.pathname);
   };
+
+  const handleGenerateWorkout = async (repeatLast = false, postponeData = null) => {
     // Check for API key in environment variables first, then localStorage
     const availableApiKey = import.meta.env.VITE_OPENAI_API_KEY || apiKey;
     
