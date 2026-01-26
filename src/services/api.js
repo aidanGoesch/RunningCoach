@@ -512,6 +512,13 @@ Average Heart Rate: ${activity.average_heartrate || 'N/A'} bpm
 Max Heart Rate: ${activity.max_heartrate || 'N/A'} bpm
 Average Cadence: ${activity.average_cadence ? Math.round(activity.average_cadence * 2) : 'N/A'} spm
 
+${streamData && streamData.cadence ? `
+DETAILED CADENCE ANALYSIS:
+Cadence Range: ${Math.round(Math.min(...streamData.cadence.data) * 2)} - ${Math.round(Math.max(...streamData.cadence.data) * 2)} spm
+Cadence Variability: ${streamData.cadence.data.length > 1 ? 'Available for analysis' : 'Limited data'}
+Target Cadence: 170-180 spm (optimal efficiency range)
+` : ''}
+
 ${rating ? `Athlete Rating: ${rating.rating}/5 stars
 Feedback: ${rating.feedback || 'No feedback provided'}
 ${rating.isInjured ? `Injury Status: ${rating.injuryDetails}` : 'No injuries reported'}` : ''}
@@ -520,6 +527,10 @@ Provide specific coaching insights about:
 1. Pace and effort analysis
 2. Heart rate zones and efficiency
 3. Cadence analysis (target: 170-180 spm for optimal efficiency)
+   - Analyze cadence consistency throughout the run
+   - Compare average cadence to target range
+   - Identify periods of cadence drop-off or spikes
+   - Provide specific recommendations for cadence improvement
 4. Training adaptations and progress
 5. Recovery recommendations
 6. Areas for improvement
