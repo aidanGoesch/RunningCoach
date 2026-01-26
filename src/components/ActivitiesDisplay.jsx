@@ -41,6 +41,12 @@ const ActivityCard = ({ activity, onClick }) => {
             <span className="detail-value">{Math.round(activity.average_heartrate)} bpm</span>
           </div>
         )}
+        {activity.average_cadence && (
+          <div className="detail-item">
+            <span className="detail-label">Avg Cadence</span>
+            <span className="detail-value">{Math.round(activity.average_cadence * 2)} spm</span>
+          </div>
+        )}
       </div>
     </div>
   );

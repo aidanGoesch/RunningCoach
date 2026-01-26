@@ -152,9 +152,16 @@ const ActivityDetail = ({ activityId, onBack }) => {
       </div>
 
       {/* AI Insights */}
-      <div style={{ marginBottom: '20px' }}>
-        <ActivityInsights insights={insights} />
-      </div>
+      {insights && (
+        <div className="workout-display" style={{ marginBottom: '20px' }}>
+          <div className="workout-title">AI Insights</div>
+          <div className="workout-block">
+            <div style={{ fontSize: '14px', lineHeight: '1.6', whiteSpace: 'pre-line' }}>
+              {insights.insights}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Workout Rating */}
       {rating && (
@@ -188,18 +195,6 @@ const ActivityDetail = ({ activityId, onBack }) => {
 
       {/* Charts */}
       <ActivityCharts streams={streams} />
-      
-      {/* AI Insights */}
-      {insights && (
-        <div className="workout-display" style={{ marginBottom: '20px' }}>
-          <div className="workout-title">AI Insights</div>
-          <div className="workout-block">
-            <div style={{ fontSize: '14px', lineHeight: '1.6', whiteSpace: 'pre-line' }}>
-              {insights.insights}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
