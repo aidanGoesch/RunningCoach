@@ -484,6 +484,8 @@ Return the adjusted plan in the same JSON format, updating only the remaining da
     throw new Error('Failed to parse adjusted plan from AI response');
   }
 };
+
+export const generateWorkout = async (apiKey, activities = [], isInjured = false, postponeData = null) => {
   console.log('generateWorkout called with apiKey:', apiKey ? 'provided' : 'missing');
   console.log('Environment OPENAI key:', import.meta.env.VITE_OPENAI_API_KEY ? 'set' : 'missing');
   console.log('Injury status:', isInjured ? 'injured' : 'healthy');
