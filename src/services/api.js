@@ -199,21 +199,124 @@ Provide specific sets, reps, and durations for each exercise. Structure as worko
 };
 
 export const generateWeeklyPlan = async (apiKey, activities = [], isInjured = false) => {
-  // Simplified weekly plan generation
-  const today = new Date();
-  const monday = new Date(today);
-  monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+  const savedPrompt = localStorage.getItem('coaching_prompt') || 'You are an expert running coach.';
+  let basePrompt = updatePromptWithCurrentData(savedPrompt, activities);
   
-  return {
-    weekTitle: `Week Training Plan - ${monday.toLocaleDateString()}`,
-    monday: null,
-    tuesday: { title: "Easy Run", type: "easy", blocks: [{ title: "Easy 4-5 miles", notes: "Conversational pace" }] },
-    wednesday: null,
-    thursday: { title: "Speed Work", type: "speed", blocks: [{ title: "Track Intervals", notes: "4x400m with rest" }] },
-    friday: null,
-    saturday: null,
-    sunday: { title: "Long Run", type: "long", blocks: [{ title: "Long 8-9 miles", notes: "Steady aerobic pace" }] }
-  };
+  // Add weekly plan specific instructions
+  basePrompt += `\n\nWEEKLY PLAN GENERATION:
+
+Generate a complete weekly training plan for Monday through Sunday. The week follows this structure:
+- Monday: Recovery exercises (optional)
+- Tuesday: Easy Run
+- Wednesday: Recovery exercises (optional) 
+- Thursday: Speed/Tempo Work
+- Friday: Recovery exercises (optional)
+- Saturday: Recovery exercises (optional)
+- Sunday: Long Run
+
+IMPORTANT: Only generate detailed workouts for the 3 running days (Tuesday, Thursday, Sunday). For recovery days, just note "Recovery exercises - generate day-of with workout button".
+
+Each running workout should have detailed blocks with:
+- Warm-up protocol (distance, pace, HR guidance)
+- Main set with precise distances, target paces, rest intervals
+- Cool-down protocol
+- Estimated total distance and time
+- Key coaching cues for execution
+
+Return the response in this exact JSON format:
+{
+  "weekTitle": "Week [X] Training Plan - [Date Range]",
+  "monday": null,
+  "tuesday": {
+    "title": "Easy Run",
+    "type": "easy",
+    "blocks": [
+      {
+        "title": "Warm-up",
+        "distance": "1.5 miles",
+        "pace": "10:30-11:00/mile",
+        "duration": "15-17 minutes",
+        "notes": "Easy conversational pace, focus on form"
+      },
+      {
+        "title": "Main Set",
+        "distance": "3-4 miles", 
+        "pace": "10:00-10:30/mile",
+        "duration": "30-40 minutes",
+        "heartRate": "150-160 bpm",
+        "notes": "Maintain conversational effort, HR in Zone 2-3"
+      },
+      {
+        "title": "Cool-down",
+        "distance": "0.5 miles",
+        "pace": "11:00+/mile",
+        "duration": "5-6 minutes",
+        "notes": "Easy walking/jogging, light stretching"
+      }
+    ]
+  },
+  "wednesday": null,
+  "thursday": {
+    "title": "Speed Work",
+    "type": "speed",
+    "blocks": [...]
+  },
+  "friday": null,
+  "saturday": null,
+  "sunday": {
+    "title": "Long Run",
+    "type": "long",
+    "blocks": [...]
+  }
+}`;
+
+  const response = await fetch(OPENAI_API_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: 'gpt-4',
+      messages: [
+        { role: 'system', content: basePrompt }, 
+        { role: 'user', content: 'Generate this week\'s complete training plan with detailed workouts for Tuesday, Thursday, and Sunday.' }
+      ],
+      temperature: 0.7,
+      max_tokens: 2000
+    })
+  });
+
+  if (!response.ok) throw new Error(`OpenAI API error: ${response.status}`);
+  
+  const data = await response.json();
+  const content = data.choices[0].message.content;
+  
+  try {
+    // Try to parse JSON response
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]);
+    }
+    throw new Error('No JSON found in response');
+  } catch (parseError) {
+    console.error('Failed to parse weekly plan JSON:', parseError);
+    // Fallback to simple structure if JSON parsing fails
+    const today = new Date();
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+    
+    return {
+      weekTitle: `Week Training Plan - ${monday.toLocaleDateString()}`,
+      monday: null,
+      tuesday: { title: "Easy Run", type: "easy", blocks: [{ title: "Easy 4-5 miles", notes: "Conversational pace, HR 150-160 bpm" }] },
+      wednesday: null,
+      thursday: { title: "Speed Work", type: "speed", blocks: [{ title: "Track Intervals", notes: "4x400m with 90s rest, warm-up and cool-down" }] },
+      friday: null,
+      saturday: null,
+      sunday: { title: "Long Run", type: "long", blocks: [{ title: "Long 8-9 miles", notes: "Steady aerobic pace, build endurance" }] }
+    };
+  }
 };
 
 // Strava functions (keeping existing ones)
