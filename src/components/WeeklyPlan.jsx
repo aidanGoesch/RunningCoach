@@ -12,7 +12,7 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey }
     if (storedPlan) {
       setWeeklyPlan(JSON.parse(storedPlan));
     }
-  }, [currentWeek?.key]);
+  useEffect(() => {
     // Get current week (Monday-Sunday)
     const today = new Date();
     const monday = new Date(today);
@@ -30,17 +30,7 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey }
       // Auto-generate plan if none exists and we have an API key
       onGenerateWeeklyPlan();
     }
-  }, [apiKey]);
-
-  useEffect(() => {
-    if (!currentWeek) return;
-    
-    // Listen for plan updates
-    const storedPlan = localStorage.getItem(`weekly_plan_${currentWeek.key}`);
-    if (storedPlan) {
-      setWeeklyPlan(JSON.parse(storedPlan));
-    }
-  }, [currentWeek?.key]);
+  }, [apiKey, onGenerateWeeklyPlan]);
 
   const getDayInfo = (dayOffset) => {
     if (!currentWeek) return null;
