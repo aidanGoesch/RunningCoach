@@ -116,6 +116,7 @@ function App() {
     
     if (isCallback) {
       setIsStravaCallback(true);
+      return; // Don't auto-sync if we're handling callback
     }
     
     // Handle browser back/forward navigation
@@ -159,6 +160,15 @@ function App() {
     const savedWorkout = localStorage.getItem('current_workout');
     if (savedWorkout) {
       setWorkout(JSON.parse(savedWorkout));
+    }
+
+    // Auto-sync with Strava on page load if we have tokens
+    const hasTokens = localStorage.getItem('strava_access_token') && localStorage.getItem('strava_refresh_token');
+    if (hasTokens) {
+      // Small delay to let the page load first
+      setTimeout(() => {
+        handleStravaSync();
+      }, 1000);
     }
 
     return () => {
@@ -368,21 +378,6 @@ function App() {
           disabled={loading}
         >
           {loading ? 'Syncing...' : 'Sync with Strava'}
-        </button>
-        
-        <button 
-          className="btn btn-secondary" 
-          onClick={() => {
-            localStorage.removeItem('strava_access_token');
-            localStorage.removeItem('strava_refresh_token');
-            localStorage.removeItem('strava_activities');
-            setActivities([]);
-            setInsights(null);
-            handleStravaSync();
-          }}
-          style={{ fontSize: '14px', padding: '12px 20px' }}
-        >
-          Re-authorize Strava
         </button>
         
         <button 

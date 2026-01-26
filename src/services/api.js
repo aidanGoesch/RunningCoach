@@ -587,8 +587,31 @@ export const syncWithStrava = async () => {
     return activities;
   } catch (error) {
     console.error('Sync error:', error);
-    // Token might be expired, re-auth
-    localStorage.removeItem('strava_access_token');
+    
+    // If it's an auth error, try to refresh token first
+    if (error.message.includes('401') || error.message.includes('Unauthorized')) {
+      try {
+        console.log('Token expired, attempting refresh...');
+        await refreshStravaToken();
+        // Retry with new token
+        const newToken = localStorage.getItem('strava_access_token');
+        const activities = await getStravaActivities(newToken, 30);
+        localStorage.setItem('strava_activities', JSON.stringify(activities));
+        const matchedCount = matchRatingsWithActivities(activities);
+        if (matchedCount > 0) {
+          console.log(`Matched ${matchedCount} workout ratings with Strava activities`);
+        }
+        return activities;
+      } catch (refreshError) {
+        console.error('Token refresh failed:', refreshError);
+        // Clear tokens and redirect to auth
+        localStorage.removeItem('strava_access_token');
+        localStorage.removeItem('strava_refresh_token');
+        initiateStravaAuth();
+        return null;
+      }
+    }
+    
     throw error;
   }
 };

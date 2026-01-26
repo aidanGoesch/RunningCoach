@@ -153,11 +153,11 @@ Please provide progressive, injury-conscious workouts that will safely bridge th
             onClick={handleSaveToFile}
             style={{ fontSize: '14px', padding: '8px 12px' }}
           >
-            💾 Save to File
+            Save to File
           </button>
           
           <label className="btn btn-secondary" style={{ fontSize: '14px', padding: '8px 12px', cursor: 'pointer' }}>
-            📁 Load from File
+            Load from File
             <input
               type="file"
               accept=".txt"
@@ -165,6 +165,19 @@ Please provide progressive, injury-conscious workouts that will safely bridge th
               style={{ display: 'none' }}
             />
           </label>
+
+          <button 
+            className="btn btn-secondary"
+            onClick={() => {
+              localStorage.removeItem('strava_access_token');
+              localStorage.removeItem('strava_refresh_token');
+              localStorage.removeItem('strava_activities');
+              window.location.reload();
+            }}
+            style={{ fontSize: '14px', padding: '8px 12px' }}
+          >
+            Re-authorize Strava
+          </button>
         </div>
         
         <textarea
@@ -190,14 +203,14 @@ Please provide progressive, injury-conscious workouts that will safely bridge th
             onClick={() => onSave(prompt)}
             style={{ flex: 1 }}
           >
-            💾 Save Prompt
+            Save Prompt
           </button>
           <button 
             className="btn btn-secondary"
             onClick={onCancel}
             style={{ flex: 1 }}
           >
-            ❌ Cancel
+            Cancel
           </button>
         </div>
       </div>
