@@ -180,7 +180,7 @@ Adjustment needed based on postpone reason:`;
         break;
       case 'recovery':
         basePrompt += `
-- Convert to easy recovery run or cross-training
+- Convert to easy recovery run or specific recovery exercises
 - Focus on injury prevention and gentle movement
 - Avoid any high-intensity work`;
         break;
@@ -191,6 +191,52 @@ Adjustment needed based on postpone reason:`;
         break;
     }
   }
+
+  // Add specific recovery exercise guidance
+  basePrompt += `\n\nSPECIFIC RECOVERY EXERCISE PROTOCOLS:
+
+When recommending recovery exercises, provide structured routines with specific sets/reps/duration:
+
+HIP STABILITY ROUTINE:
+- Clamshells: 2 sets of 15 each side
+- Hip bridges: 2 sets of 20 reps
+- Side-lying leg lifts: 2 sets of 12 each side
+- Monster walks (with band): 2 sets of 10 steps each direction
+
+CORE STABILITY ROUTINE:
+- Planks: 3 sets of 30-45 seconds
+- Bird dogs: 2 sets of 10 each side (hold 5 seconds)
+- Dead bugs: 2 sets of 10 each side
+- Side planks: 2 sets of 20-30 seconds each side
+
+LOWER LEG STRENGTH:
+- Calf raises: 3 sets of 15 reps
+- Single-leg calf raises: 2 sets of 10 each leg
+- Ankle circles: 10 each direction, both feet
+- Toe walks: 30 seconds forward, 30 seconds backward
+
+MOBILITY & STRETCHING:
+- Hip flexor stretch: 30 seconds each leg
+- IT band stretch: 30 seconds each leg
+- Calf stretch: 30 seconds each leg
+- Pigeon pose: 45 seconds each side
+- Cat-cow stretches: 10 slow repetitions
+
+FOAM ROLLING ROUTINE:
+- IT band: 60 seconds each leg
+- Calves: 45 seconds each leg
+- Quads: 60 seconds each leg
+- Glutes: 45 seconds each side
+- Hamstrings: 60 seconds each leg
+
+POST-RUN RECOVERY (if already ran today):
+- 5-10 minutes easy walking
+- Dynamic stretching routine (leg swings, hip circles)
+- Targeted foam rolling based on workout type
+- Hydration and nutrition guidance
+- Elevation for legs (10-15 minutes)
+
+Always provide specific exercise names, sets, reps, and durations rather than generic "cross-training" recommendations.`;
   
   // Add injury status to prompt
   if (isInjured) {

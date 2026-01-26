@@ -45,7 +45,18 @@ const WorkoutDisplay = ({ workout, onWorkoutClick }) => {
 
   const totalDuration = workout.blocks?.reduce((sum, block) => {
     if (block.duration) {
-      const duration = parseFloat(block.duration.replace(/[^\d.]/g, ''));
+      // Handle ranges like "30-45 mins" by taking the average
+      const durationStr = block.duration.toLowerCase();
+      if (durationStr.includes('-')) {
+        const range = durationStr.match(/(\d+)-(\d+)/);
+        if (range) {
+          const min = parseFloat(range[1]);
+          const max = parseFloat(range[2]);
+          return sum + ((min + max) / 2);
+        }
+      }
+      // Handle single numbers
+      const duration = parseFloat(durationStr.replace(/[^\d.]/g, ''));
       return sum + (isNaN(duration) ? 0 : duration);
     }
     return sum;
