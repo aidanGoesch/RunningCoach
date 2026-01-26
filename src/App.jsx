@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import WorkoutDisplay from './components/WorkoutDisplay';
 import WorkoutDetail from './components/WorkoutDetail';
+import WeeklyPlan from './components/WeeklyPlan';
 import ActivitiesDisplay from './components/ActivitiesDisplay';
 import InsightsDisplay from './components/InsightsDisplay';
 import StravaCallback from './components/StravaCallback';
@@ -9,7 +10,7 @@ import CoachingPromptEditor from './components/CoachingPromptEditor';
 import WorkoutFeedback from './components/WorkoutFeedback';
 import PostponeWorkout from './components/PostponeWorkout';
 import WeeklyProgress from './components/WeeklyProgress';
-import { generateWorkout, syncWithStrava, generateInsights } from './services/api';
+import { generateWorkout, generateWeeklyPlan, adjustWeeklyPlanForPostponement, syncWithStrava, generateInsights } from './services/api';
 
 function App() {
   const [workout, setWorkout] = useState(null);
@@ -20,6 +21,7 @@ function App() {
   const [isStravaCallback, setIsStravaCallback] = useState(false);
   const [selectedActivityId, setSelectedActivityId] = useState(null);
   const [showWorkoutDetail, setShowWorkoutDetail] = useState(false);
+  const [selectedPlannedWorkout, setSelectedPlannedWorkout] = useState(null);
   const [showPromptEditor, setShowPromptEditor] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
   const [showPostpone, setShowPostpone] = useState(false);
@@ -224,7 +226,52 @@ function App() {
     };
   }, []);
 
-  const handleGenerateWorkout = async (repeatLast = false, postponeData = null) => {
+  const handleGenerateWeeklyPlan = async () => {
+    const availableApiKey = import.meta.env.VITE_OPENAI_API_KEY || apiKey;
+    
+    if (!availableApiKey) {
+      setError('Please enter your OpenAI API key first');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    
+    try {
+      const weeklyPlan = await generateWeeklyPlan(availableApiKey, activities, isInjured);
+      
+      // Store weekly plan
+      const today = new Date();
+      const monday = new Date(today);
+      monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+      monday.setHours(0, 0, 0, 0);
+      const weekKey = `${monday.getFullYear()}-${monday.getMonth()}-${monday.getDate()}`;
+      
+      localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(weeklyPlan));
+      
+      // Set today's workout if it exists
+      const today_day = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][today.getDay()];
+      const todaysWorkout = weeklyPlan[today_day];
+      
+      if (todaysWorkout) {
+        setWorkout(todaysWorkout);
+        localStorage.setItem('current_workout', JSON.stringify(todaysWorkout));
+      }
+      
+      setError('Weekly plan generated successfully!');
+      setTimeout(() => setError(null), 3000);
+    } catch (err) {
+      setError(`Failed to generate weekly plan: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePlannedWorkoutClick = (plannedWorkout, dayName) => {
+    setSelectedPlannedWorkout({ workout: plannedWorkout, dayName });
+    setShowWorkoutDetail(true);
+    window.history.pushState({ view: 'plannedWorkout', dayName }, '', window.location.pathname);
+  };
     // Check for API key in environment variables first, then localStorage
     const availableApiKey = import.meta.env.VITE_OPENAI_API_KEY || apiKey;
     
@@ -268,6 +315,45 @@ function App() {
     setShowPromptEditor(false);
     // Update browser history
     window.history.pushState({ view: 'main' }, '', window.location.pathname);
+  };
+
+  const handleGenerateWorkout = async (repeatLast = false, postponeData = null) => {
+    // Check for API key in environment variables first, then localStorage
+    const availableApiKey = import.meta.env.VITE_OPENAI_API_KEY || apiKey;
+    
+    if (!availableApiKey) {
+      setError('Please enter your OpenAI API key first');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    
+    try {
+      let newWorkout;
+      if (repeatLast && workout && !postponeData) {
+        // Use the same workout as last time
+        newWorkout = { ...workout, title: `${workout.title} (Repeat)` };
+      } else {
+        // Pass recent activities, injury status, and postpone data to the workout generator
+        newWorkout = await generateWorkout(availableApiKey, activities, isInjured, postponeData);
+      }
+      
+      setWorkout(newWorkout);
+      
+      // Save workout to localStorage for persistence
+      localStorage.setItem('current_workout', JSON.stringify(newWorkout));
+      if (apiKey) localStorage.setItem('openai_api_key', apiKey);
+      
+      // Clear postpone data after generating workout
+      if (postponeData) {
+        localStorage.removeItem('postponed_workout');
+      }
+    } catch (err) {
+      setError(`Failed to generate workout: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handlePostponeWorkout = (postponeData) => {
@@ -371,11 +457,17 @@ function App() {
     }
   };
 
-  if (showWorkoutDetail && workout) {
+  if (showWorkoutDetail) {
+    const workoutToShow = selectedPlannedWorkout ? selectedPlannedWorkout.workout : workout;
+    const title = selectedPlannedWorkout ? `${selectedPlannedWorkout.dayName} - ${workoutToShow.title}` : workoutToShow.title;
+    
     return (
       <WorkoutDetail 
-        workout={workout}
-        onBack={() => setShowWorkoutDetail(false)}
+        workout={{ ...workoutToShow, title }}
+        onBack={() => {
+          setShowWorkoutDetail(false);
+          setSelectedPlannedWorkout(null);
+        }}
       />
     );
   }
@@ -460,6 +552,12 @@ function App() {
           {error}
         </div>
       )}
+
+      <WeeklyPlan 
+        activities={activities}
+        onWorkoutClick={handlePlannedWorkoutClick}
+        onGenerateWeeklyPlan={handleGenerateWeeklyPlan}
+      />
 
       <WeeklyProgress activities={activities} />
 

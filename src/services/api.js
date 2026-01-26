@@ -237,6 +237,355 @@ POST-RUN RECOVERY (if already ran today):
 - Elevation for legs (10-15 minutes)
 
 Always provide specific exercise names, sets, reps, and durations rather than generic "cross-training" recommendations.`;
+
+  // Add injury status to prompt
+  if (isInjured) {
+    basePrompt += `\n\nIMPORTANT INJURY STATUS: The athlete is currently injured or experiencing discomfort. 
+    
+PRIORITY: Focus on recovery and injury prevention over training progression.
+
+Recommendations:
+- Suggest easy recovery runs at very conservative paces (11:00-12:00/mile)
+- Reduce volume significantly (50-70% of normal)
+- Consider cross-training alternatives (pool running, cycling, walking)
+- Include rest days if appropriate
+- Avoid speed work and high-intensity efforts
+- Emphasize proper warm-up and cool-down protocols
+- Suggest when to seek medical attention if pain persists
+
+If the scheduled workout is high-intensity (speed/tempo), modify it to be recovery-focused or suggest alternative activities.`;
+  }
+  
+  // Get workout feedback history
+  const feedbackHistory = JSON.parse(localStorage.getItem('workout_feedback') || '[]');
+  const recentFeedback = feedbackHistory.slice(-5); // Last 5 feedback entries
+  
+  // Check for current injury status
+  const currentInjury = recentFeedback.find(f => f.isInjured && 
+    new Date(f.timestamp) > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) // Within last 7 days
+  );
+  
+  // Analyze recent ratings
+  const recentRatings = recentFeedback.filter(f => f.rating).map(f => f.rating);
+  const avgRating = recentRatings.length > 0 ? recentRatings.reduce((a, b) => a + b) / recentRatings.length : 3;
+  
+  // Add injury/recovery context
+  if (currentInjury) {
+    basePrompt += `\n\nIMPORTANT: The athlete is currently dealing with: ${currentInjury.injuryDetails}. 
+    Focus on recovery-oriented workouts with reduced intensity and volume. Prioritize easy runs, cross-training alternatives, and injury prevention exercises.`;
+  }
+  
+  // Add difficulty adjustment based on ratings
+  if (avgRating < 2.5) {
+    basePrompt += `\n\nRecent workout feedback indicates the athlete has been finding workouts too challenging (average rating: ${avgRating.toFixed(1)}/5). 
+    Consider reducing intensity and volume by 10-15% to build confidence and prevent burnout.`;
+  } else if (avgRating > 4) {
+    basePrompt += `\n\nRecent workout feedback indicates the athlete has been finding workouts manageable (average rating: ${avgRating.toFixed(1)}/5). 
+    The current training load appears appropriate, maintain progression as planned.`;
+  }
+
+  const response = await fetch(OPENAI_API_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: 'gpt-4',
+      messages: [
+        {
+          role: 'system',
+          content: basePrompt
+        },
+        {
+          role: 'user', 
+          content: 'Generate today\'s workout based on my training plan and current status.'
+        }
+      ],
+      temperature: 0.7,
+      max_tokens: 1500
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`OpenAI API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices[0].message.content;
+  
+  // Try to parse structured workout format
+  try {
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]);
+    }
+  } catch (parseError) {
+    console.log('Could not parse JSON, using text format');
+  }
+  
+  // Fallback to parsing text format
+  return parseWorkoutFromText(content);
+};
+
+export const generateWeeklyPlan = async (apiKey, activities = [], isInjured = false) => {
+  
+  // Get saved coaching prompt and update with current data
+  const savedPrompt = localStorage.getItem('coaching_prompt');
+  let basePrompt = savedPrompt || `You are an expert running coach. Create a personalized weekly training plan.`;
+  
+  // Update prompt with current training data
+  if (basePrompt.includes('[Week X of 14]') || basePrompt.includes('[X days]')) {
+    basePrompt = updatePromptWithCurrentData(basePrompt, activities);
+  }
+  
+  // Add weekly plan specific instructions
+  basePrompt += `\n\nWEEKLY PLAN GENERATION:
+
+Generate a complete weekly training plan for Monday through Sunday. The week follows this structure:
+- Monday: Recovery exercises (optional)
+- Tuesday: Easy Run
+- Wednesday: Recovery exercises (optional) 
+- Thursday: Speed/Tempo Work
+- Friday: Recovery exercises (optional)
+- Saturday: Recovery exercises (optional)
+- Sunday: Long Run
+
+IMPORTANT: Only generate detailed workouts for the 3 running days (Tuesday, Thursday, Sunday). For recovery days, just note "Recovery exercises - generate day-of with workout button".
+
+Return the response in this exact JSON format:
+{
+  "weekTitle": "Week [X] Training Plan - [Date Range]",
+  "monday": null,
+  "tuesday": {
+    "title": "Easy Run",
+    "type": "easy",
+    "blocks": [...]
+  },
+  "wednesday": null,
+  "thursday": {
+    "title": "Speed Work",
+    "type": "speed", 
+    "blocks": [...]
+  },
+  "friday": null,
+  "saturday": null,
+  "sunday": {
+    "title": "Long Run",
+    "type": "long",
+    "blocks": [...]
+  }
+}
+
+Each running workout should have detailed blocks with warm-up, main set, and cool-down as usual.`;
+
+  const response = await fetch(OPENAI_API_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: 'gpt-4',
+      messages: [
+        {
+          role: 'system',
+          content: basePrompt
+        },
+        {
+          role: 'user', 
+          content: 'Generate this week\'s complete training plan with detailed workouts for Tuesday, Thursday, and Sunday.'
+        }
+      ],
+      temperature: 0.7,
+      max_tokens: 2000
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`OpenAI API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices[0].message.content;
+  
+  try {
+    // Try to parse JSON response
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]);
+    }
+    throw new Error('No JSON found in response');
+  } catch (parseError) {
+    console.error('Failed to parse weekly plan JSON:', parseError);
+    throw new Error('Failed to parse weekly plan from AI response');
+  }
+};
+
+export const adjustWeeklyPlanForPostponement = async (apiKey, currentPlan, postponedDay, postponeReason, activities = []) => {
+  console.log('adjustWeeklyPlanForPostponement called');
+  
+  const savedPrompt = localStorage.getItem('coaching_prompt');
+  let basePrompt = savedPrompt || `You are an expert running coach.`;
+  
+  basePrompt += `\n\nWEEKLY PLAN ADJUSTMENT:
+
+The athlete postponed their ${postponedDay} workout with reason: "${postponeReason}"
+
+Current weekly plan:
+${JSON.stringify(currentPlan, null, 2)}
+
+Please adjust the remaining workouts for this week (Monday-Sunday) to account for this postponement. Consider:
+1. The reason for postponement (busy vs tired vs injury concern)
+2. Maintaining weekly training load when possible
+3. Not pushing workouts to next week
+4. Keeping the 3-run structure within the week
+
+Return the adjusted plan in the same JSON format, updating only the remaining days in the week.`;
+
+  const response = await fetch(OPENAI_API_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: 'gpt-4',
+      messages: [
+        {
+          role: 'system',
+          content: basePrompt
+        },
+        {
+          role: 'user',
+          content: 'Adjust the weekly plan for the postponement.'
+        }
+      ],
+      temperature: 0.7,
+      max_tokens: 2000
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`OpenAI API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices[0].message.content;
+  
+  try {
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]);
+    }
+    throw new Error('No JSON found in response');
+  } catch (parseError) {
+    console.error('Failed to parse adjusted plan JSON:', parseError);
+    throw new Error('Failed to parse adjusted plan from AI response');
+  }
+};
+  console.log('generateWorkout called with apiKey:', apiKey ? 'provided' : 'missing');
+  console.log('Environment OPENAI key:', import.meta.env.VITE_OPENAI_API_KEY ? 'set' : 'missing');
+  console.log('Injury status:', isInjured ? 'injured' : 'healthy');
+  
+  // Get saved coaching prompt and update with current data
+  const savedPrompt = localStorage.getItem('coaching_prompt');
+  let basePrompt = savedPrompt || `You are an expert running coach. Create a personalized running workout based on the provided activity data.`;
+  
+  // Update prompt with current training data if it contains placeholders
+  if (basePrompt.includes('[Week X of 14]') || basePrompt.includes('[X days]')) {
+    basePrompt = updatePromptWithCurrentData(basePrompt, activities);
+  }
+  
+  // Add postpone context if provided
+  if (postponeData) {
+    const { reason, adjustment, originalWorkout } = postponeData;
+    
+    basePrompt += `\n\nPOSTPONED WORKOUT CONTEXT:
+    
+The athlete postponed yesterday's workout with reason: "${reason}"
+
+Original workout was: ${originalWorkout.title}
+
+Adjustment needed based on postpone reason:`;
+
+    switch (adjustment) {
+      case 'same':
+        basePrompt += `
+- Give the EXACT same workout as yesterday since the postpone was due to external factors (busy, weather, etc.)
+- No modifications needed to intensity or volume`;
+        break;
+      case 'easier':
+        basePrompt += `
+- Reduce intensity by 10-15% due to fatigue/soreness
+- Consider shorter duration or easier pace
+- Focus on recovery and getting back into rhythm`;
+        break;
+      case 'reduce':
+        basePrompt += `
+- Significantly reduce volume (20-30% less distance/time)
+- Lower intensity to build confidence
+- The athlete felt the original workout was too challenging`;
+        break;
+      case 'recovery':
+        basePrompt += `
+- Convert to easy recovery run or specific recovery exercises
+- Focus on injury prevention and gentle movement
+- Avoid any high-intensity work`;
+        break;
+      case 'custom':
+        basePrompt += `
+- Consider the specific reason provided and adjust accordingly
+- Use coaching judgment based on the athlete's feedback`;
+        break;
+    }
+  }
+
+  // Add specific recovery exercise guidance
+  basePrompt += `\n\nSPECIFIC RECOVERY EXERCISE PROTOCOLS:
+
+When recommending recovery exercises, provide structured routines with specific sets/reps/duration:
+
+HIP STABILITY ROUTINE:
+- Clamshells: 2 sets of 15 each side
+- Hip bridges: 2 sets of 20 reps
+- Side-lying leg lifts: 2 sets of 12 each side
+- Monster walks (with band): 2 sets of 10 steps each direction
+
+CORE STABILITY ROUTINE:
+- Planks: 3 sets of 30-45 seconds
+- Bird dogs: 2 sets of 10 each side (hold 5 seconds)
+- Dead bugs: 2 sets of 10 each side
+- Side planks: 2 sets of 20-30 seconds each side
+
+LOWER LEG STRENGTH:
+- Calf raises: 3 sets of 15 reps
+- Single-leg calf raises: 2 sets of 10 each leg
+- Ankle circles: 10 each direction, both feet
+- Toe walks: 30 seconds forward, 30 seconds backward
+
+MOBILITY & STRETCHING:
+- Hip flexor stretch: 30 seconds each leg
+- IT band stretch: 30 seconds each leg
+- Calf stretch: 30 seconds each leg
+- Pigeon pose: 45 seconds each side
+- Cat-cow stretches: 10 slow repetitions
+
+FOAM ROLLING ROUTINE:
+- IT band: 60 seconds each leg
+- Calves: 45 seconds each leg
+- Quads: 60 seconds each leg
+- Glutes: 45 seconds each side
+- Hamstrings: 60 seconds each leg
+
+POST-RUN RECOVERY (if already ran today):
+- 5-10 minutes easy walking
+- Dynamic stretching routine (leg swings, hip circles)
+- Targeted foam rolling based on workout type
+- Hydration and nutrition guidance
+- Elevation for legs (10-15 minutes)
+
+Always provide specific exercise names, sets, reps, and durations rather than generic "cross-training" recommendations.`;
   
   // Add injury status to prompt
   if (isInjured) {
