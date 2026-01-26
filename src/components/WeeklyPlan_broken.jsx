@@ -5,6 +5,14 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey }
   const [currentWeek, setCurrentWeek] = useState(null);
 
   useEffect(() => {
+    if (!currentWeek) return;
+    
+    // Listen for plan updates
+    const storedPlan = localStorage.getItem(`weekly_plan_${currentWeek.key}`);
+    if (storedPlan) {
+      setWeeklyPlan(JSON.parse(storedPlan));
+    }
+  useEffect(() => {
     // Get current week (Monday-Sunday)
     const today = new Date();
     const monday = new Date(today);
@@ -66,12 +74,29 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey }
     return [1, 3, 6].includes(dayOffset); // Tuesday, Thursday, Sunday
   };
 
+  const shouldShowGenerateButton = () => {
+    // Never show the manual generate button since we auto-generate
+    return false;
+  };
+
   return (
     <div className="workout-display" style={{ marginBottom: '20px' }}>
       <div className="workout-title">
         Weekly Training Plan
         {currentWeek && ` - Week of ${currentWeek.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
       </div>
+      
+      {shouldShowGenerateButton() && (
+        <div className="workout-block" style={{ textAlign: 'center', marginBottom: '15px' }}>
+          <button 
+            className="btn btn-primary"
+            onClick={onGenerateWeeklyPlan}
+            style={{ width: '100%' }}
+          >
+            Generate This Week's Training Plan
+          </button>
+        </div>
+      )}
       
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '8px' }}>
         {[0, 1, 2, 3, 4, 5, 6].map(dayOffset => {
