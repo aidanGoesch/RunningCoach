@@ -9,7 +9,6 @@ import ActivityDetail from './components/ActivityDetail';
 import CoachingPromptEditor from './components/CoachingPromptEditor';
 import WorkoutFeedback from './components/WorkoutFeedback';
 import PostponeWorkout from './components/PostponeWorkout';
-import WeeklyProgress from './components/WeeklyProgress';
 import { generateWorkout, generateWeeklyPlan, adjustWeeklyPlanForPostponement, syncWithStrava, generateInsights } from './services/api';
 
 function App() {
@@ -522,8 +521,6 @@ function App() {
         onGenerateWeeklyPlan={handleGenerateWeeklyPlan}
         apiKey={apiKey}
       />
-
-      <WeeklyProgress activities={activities} />
 
       <div className="buttons">
         <button 

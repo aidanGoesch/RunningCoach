@@ -62,9 +62,38 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey }
     return weeklyPlan[dayName];
   };
 
+  const getWeeklyStats = () => {
+    if (!currentWeek || !activities) return { totalMiles: 0, totalTime: 0, runCount: 0 };
+
+    const startOfWeek = new Date(currentWeek.start);
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 7);
+
+    const weekActivities = activities.filter(activity => {
+      const activityDate = new Date(activity.start_date);
+      return activityDate >= startOfWeek && activityDate < endOfWeek && activity.type === 'Run';
+    });
+
+    const totalMiles = weekActivities.reduce((sum, activity) => 
+      sum + (activity.distance / 1609.34), 0
+    );
+
+    const totalTime = weekActivities.reduce((sum, activity) => 
+      sum + activity.moving_time, 0
+    );
+
+    return {
+      totalMiles: totalMiles.toFixed(1),
+      totalTime: Math.floor(totalTime / 60),
+      runCount: weekActivities.length
+    };
+  };
+
   const isRunningDay = (dayOffset) => {
     return [1, 3, 6].includes(dayOffset); // Tuesday, Thursday, Sunday
   };
+
+  const weeklyStats = getWeeklyStats();
 
   return (
     <div className="workout-display" style={{ marginBottom: '20px' }}>
@@ -73,7 +102,36 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey }
         {currentWeek && ` - Week of ${currentWeek.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
       </div>
       
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '8px' }}>
+      <div className="workout-block">
+        <div className="block-details">
+          <div className="detail-item">
+            <span className="detail-label">Total Miles</span>
+            <span className="detail-value">{weeklyStats.totalMiles} mi</span>
+          </div>
+          <div className="detail-item">
+            <span className="detail-label">Total Time</span>
+            <span className="detail-value">{weeklyStats.totalTime} min</span>
+          </div>
+          <div className="detail-item">
+            <span className="detail-label">Runs</span>
+            <span className="detail-value">{weeklyStats.runCount}/3</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="workout-block">
+        <div className="block-title">Weekly Schedule</div>
+        <div style={{ 
+          overflowX: 'auto', 
+          paddingBottom: '10px',
+          marginTop: '10px'
+        }}>
+          <div style={{ 
+            display: 'grid', 
+            gridTemplateColumns: 'repeat(7, minmax(80px, 1fr))', 
+            gap: '8px',
+            minWidth: '560px' // Ensures 7 days * 80px minimum
+          }}>
         {[0, 1, 2, 3, 4, 5, 6].map(dayOffset => {
           const dayInfo = getDayInfo(dayOffset);
           const plannedWorkout = getPlannedWorkout(dayOffset);
@@ -127,6 +185,8 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey }
             </div>
           );
         })}
+          </div>
+        </div>
       </div>
       
       {weeklyPlan && (
