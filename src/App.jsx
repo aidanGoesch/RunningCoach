@@ -319,45 +319,6 @@ function App() {
     window.history.pushState({ view: 'main' }, '', window.location.pathname);
   };
 
-  const handleGenerateWorkout = async (repeatLast = false, postponeData = null) => {
-    // Check for API key in environment variables first, then localStorage
-    const availableApiKey = import.meta.env.VITE_OPENAI_API_KEY || apiKey;
-    
-    if (!availableApiKey) {
-      setError('Please enter your OpenAI API key first');
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-    
-    try {
-      let newWorkout;
-      if (repeatLast && workout && !postponeData) {
-        // Use the same workout as last time
-        newWorkout = { ...workout, title: `${workout.title} (Repeat)` };
-      } else {
-        // Pass recent activities, injury status, and postpone data to the workout generator
-        newWorkout = await generateWorkout(availableApiKey, activities, isInjured, postponeData);
-      }
-      
-      setWorkout(newWorkout);
-      
-      // Save workout to localStorage for persistence
-      localStorage.setItem('current_workout', JSON.stringify(newWorkout));
-      if (apiKey) localStorage.setItem('openai_api_key', apiKey);
-      
-      // Clear postpone data after generating workout
-      if (postponeData) {
-        localStorage.removeItem('postponed_workout');
-      }
-    } catch (err) {
-      setError(`Failed to generate workout: ${err.message}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handlePostponeWorkout = (postponeData) => {
     // Store postpone data
     localStorage.setItem('postponed_workout', JSON.stringify(postponeData));
