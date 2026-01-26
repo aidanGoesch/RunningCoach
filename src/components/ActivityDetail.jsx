@@ -235,7 +235,16 @@ const ActivityCharts = ({ streams }) => {
           <HeartRateChart data={streams} />
         </div>
       )}
-      {streams.velocity_smooth && <PaceChart data={streams} />}
+      {streams.velocity_smooth && (
+        <div style={{ marginBottom: '20px' }}>
+          <PaceChart data={streams} />
+        </div>
+      )}
+      {streams.cadence && (
+        <div style={{ marginBottom: '20px' }}>
+          <CadenceChart data={streams} />
+        </div>
+      )}
     </>
   );
 };
@@ -739,6 +748,194 @@ const formatPace = (speedMs) => {
   const minutes = Math.floor(paceMinPerMile);
   const seconds = Math.round((paceMinPerMile - minutes) * 60);
   return `${minutes}:${seconds.toString().padStart(2, '0')}/mile`;
+};
+
+const CadenceChart = ({ data }) => {
+  const canvasRef = useState(null);
+  const [tooltip, setTooltip] = useState(null);
+  const [cursorX, setCursorX] = useState(null);
+  
+  const handleMouseMove = (e) => {
+    const canvas = canvasRef.current;
+    if (!canvas || !data.cadence?.data || !data.time?.data) return;
+    
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const padding = 60;
+    const width = rect.width;
+    
+    if (x < 0 || x > width) {
+      setTooltip(null);
+      return;
+    }
+    
+    const dataWidth = width - 2 * padding;
+    const adjustedX = Math.max(0, Math.min(x - padding, dataWidth));
+    const progress = adjustedX / dataWidth;
+    const dataIndex = Math.round(progress * (data.cadence.data.length - 1));
+    
+    if (dataIndex >= 0 && dataIndex < data.cadence.data.length) {
+      const cadence = Math.round(data.cadence.data[dataIndex] * 2); // Convert to steps per minute
+      
+      setTooltip({
+        x: e.clientX,
+        y: e.clientY - 80,
+        text: `${cadence} spm`
+      });
+      
+      setCursorX(x);
+    }
+  };
+  
+  const handleMouseLeave = () => {
+    setTooltip(null);
+    setCursorX(null);
+  };
+  
+  useEffect(() => {
+    if (!data.cadence?.data || !data.time?.data) return;
+    
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    const ctx = canvas.getContext('2d');
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    
+    canvas.width = rect.width * dpr;
+    canvas.height = 200 * dpr;
+    ctx.scale(dpr, dpr);
+    
+    const width = rect.width;
+    const height = 200;
+    const padding = 60;
+    
+    ctx.clearRect(0, 0, width, height);
+    
+    const cadenceData = data.cadence.data.map(c => c * 2); // Convert to steps per minute
+    const timeData = data.time.data;
+    const maxCadence = Math.max(...cadenceData);
+    const minCadence = Math.min(...cadenceData);
+    const maxTime = Math.max(...timeData);
+    
+    // Draw axes
+    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--axis-color').trim();
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(padding, padding);
+    ctx.lineTo(padding, height - padding);
+    ctx.lineTo(width - padding, height - padding);
+    ctx.stroke();
+    
+    // Draw horizontal grid lines
+    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--grid-color').trim();
+    ctx.lineWidth = 1;
+    const gridLines = 4;
+    for (let i = 1; i < gridLines; i++) {
+      const y = padding + (i * (height - 2 * padding) / gridLines);
+      ctx.beginPath();
+      ctx.moveTo(padding, y);
+      ctx.lineTo(width - padding, y);
+      ctx.stroke();
+    }
+    
+    // Draw 170 spm target line
+    const targetCadence = 170;
+    if (targetCadence >= minCadence && targetCadence <= maxCadence) {
+      const targetY = padding + ((maxCadence - targetCadence) / (maxCadence - minCadence)) * (height - 2 * padding);
+      ctx.strokeStyle = '#f39c12';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      ctx.moveTo(padding, targetY);
+      ctx.lineTo(width - padding, targetY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      
+      // Label for target line
+      ctx.fillStyle = '#f39c12';
+      ctx.font = '12px sans-serif';
+      ctx.fillText('170 spm target', width - padding - 80, targetY - 5);
+    }
+    
+    // Draw cadence line
+    ctx.strokeStyle = '#9b59b6';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    
+    cadenceData.forEach((cadence, i) => {
+      const x = padding + ((timeData[i] / maxTime) * (width - 2 * padding));
+      const y = padding + ((maxCadence - cadence) / (maxCadence - minCadence)) * (height - 2 * padding);
+      
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    
+    ctx.stroke();
+    
+    // Draw Y-axis labels
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--label-color').trim();
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'right';
+    
+    for (let i = 0; i <= 4; i++) {
+      const cadence = Math.round(minCadence + (i * (maxCadence - minCadence) / 4));
+      const y = height - padding - (i * (height - 2 * padding) / 4);
+      ctx.fillText(`${cadence}`, padding - 10, y + 4);
+    }
+    
+    // Draw vertical cursor line
+    if (cursorX !== null) {
+      ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-color').trim();
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 2]);
+      ctx.beginPath();
+      ctx.moveTo(cursorX, padding);
+      ctx.lineTo(cursorX, height - padding);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }, [data, cursorX]);
+  
+  if (!data.cadence?.data) {
+    return (
+      <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+        No cadence data available
+      </div>
+    );
+  }
+  
+  return (
+    <div style={{ position: 'relative' }}>
+      <h3 style={{ marginBottom: '10px', color: 'var(--text-color)' }}>Cadence</h3>
+      <div style={{ position: 'relative' }}>
+        <canvas
+          ref={canvasRef}
+          style={{ width: '100%', height: '200px', cursor: 'crosshair' }}
+          onMouseMove={handleMouseMove}
+          onMouseLeave={handleMouseLeave}
+        />
+        {tooltip && (
+          <div style={{
+            position: 'fixed',
+            left: tooltip.x,
+            top: tooltip.y,
+            background: 'var(--card-bg)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '4px',
+            padding: '4px 8px',
+            fontSize: '12px',
+            color: 'var(--text-color)',
+            pointerEvents: 'none',
+            zIndex: 1000,
+            transform: 'translateX(-50%)'
+          }}>
+            {tooltip.text}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 };
 
 export default ActivityDetail;

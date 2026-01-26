@@ -510,6 +510,7 @@ Duration: ${Math.floor(activity.moving_time / 60)} minutes
 Average Pace: ${formatPace(activity.average_speed)}
 Average Heart Rate: ${activity.average_heartrate || 'N/A'} bpm
 Max Heart Rate: ${activity.max_heartrate || 'N/A'} bpm
+Average Cadence: ${activity.average_cadence ? Math.round(activity.average_cadence * 2) : 'N/A'} spm
 
 ${rating ? `Athlete Rating: ${rating.rating}/5 stars
 Feedback: ${rating.feedback || 'No feedback provided'}
@@ -518,9 +519,10 @@ ${rating.isInjured ? `Injury Status: ${rating.injuryDetails}` : 'No injuries rep
 Provide specific coaching insights about:
 1. Pace and effort analysis
 2. Heart rate zones and efficiency
-3. Training adaptations and progress
-4. Recovery recommendations
-5. Areas for improvement
+3. Cadence analysis (target: 170-180 spm for optimal efficiency)
+4. Training adaptations and progress
+5. Recovery recommendations
+6. Areas for improvement
 
 Keep insights concise and actionable.`;
 
