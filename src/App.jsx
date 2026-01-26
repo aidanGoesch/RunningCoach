@@ -6,6 +6,7 @@ import StravaCallback from './components/StravaCallback';
 import ActivityDetail from './components/ActivityDetail';
 import CoachingPromptEditor from './components/CoachingPromptEditor';
 import WorkoutFeedback from './components/WorkoutFeedback';
+import PostponeWorkout from './components/PostponeWorkout';
 import WeeklyProgress from './components/WeeklyProgress';
 import { generateWorkout, syncWithStrava, generateInsights } from './services/api';
 
@@ -19,6 +20,7 @@ function App() {
   const [selectedActivityId, setSelectedActivityId] = useState(null);
   const [showPromptEditor, setShowPromptEditor] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
+  const [showPostpone, setShowPostpone] = useState(false);
   const [darkMode, setDarkMode] = useState(localStorage.getItem('darkMode') === 'true');
   const [isInjured, setIsInjured] = useState(localStorage.getItem('isInjured') === 'true');
   const [isAuthenticated, setIsAuthenticated] = useState(localStorage.getItem('authenticated') === 'true');
@@ -134,17 +136,25 @@ function App() {
           setShowFeedback(true);
           setSelectedActivityId(null);
           setShowPromptEditor(false);
+          setShowPostpone(false);
+        } else if (event.state.view === 'postpone') {
+          setShowPostpone(true);
+          setSelectedActivityId(null);
+          setShowPromptEditor(false);
+          setShowFeedback(false);
         } else {
           // Main view
           setSelectedActivityId(null);
           setShowPromptEditor(false);
           setShowFeedback(false);
+          setShowPostpone(false);
         }
       } else {
         // No state, go to main view
         setSelectedActivityId(null);
         setShowPromptEditor(false);
         setShowFeedback(false);
+        setShowPostpone(false);
       }
     };
 
@@ -156,10 +166,32 @@ function App() {
       setActivities(JSON.parse(stored));
     }
     
-    // Load saved workout
+  // Load saved workout and check for postponed workout
     const savedWorkout = localStorage.getItem('current_workout');
     if (savedWorkout) {
       setWorkout(JSON.parse(savedWorkout));
+    }
+    
+    // Check for postponed workout on page load
+    const postponedWorkout = localStorage.getItem('postponed_workout');
+    if (postponedWorkout && !savedWorkout) {
+      // If there's a postponed workout but no current workout, show option to generate adjusted workout
+      const postponeData = JSON.parse(postponedWorkout);
+      const postponeDate = new Date(postponeData.postponedDate);
+      const now = new Date();
+      
+      // Only show if postponed within last 2 days
+      if (now - postponeDate < 2 * 24 * 60 * 60 * 1000) {
+        setTimeout(() => {
+          if (confirm(`You postponed a workout: "${postponeData.reason}". Generate an adjusted workout now?`)) {
+            handleGenerateWorkout(false, postponeData);
+          } else {
+            localStorage.removeItem('postponed_workout');
+          }
+        }, 1000);
+      } else {
+        localStorage.removeItem('postponed_workout');
+      }
     }
 
     // Auto-sync with Strava on page load if we have tokens
@@ -176,7 +208,7 @@ function App() {
     };
   }, []);
 
-  const handleGenerateWorkout = async (repeatLast = false) => {
+  const handleGenerateWorkout = async (repeatLast = false, postponeData = null) => {
     // Check for API key in environment variables first, then localStorage
     const availableApiKey = import.meta.env.VITE_OPENAI_API_KEY || apiKey;
     
@@ -190,12 +222,12 @@ function App() {
     
     try {
       let newWorkout;
-      if (repeatLast && workout) {
+      if (repeatLast && workout && !postponeData) {
         // Use the same workout as last time
         newWorkout = { ...workout, title: `${workout.title} (Repeat)` };
       } else {
-        // Pass recent activities and injury status to the workout generator
-        newWorkout = await generateWorkout(availableApiKey, activities, isInjured);
+        // Pass recent activities, injury status, and postpone data to the workout generator
+        newWorkout = await generateWorkout(availableApiKey, activities, isInjured, postponeData);
       }
       
       setWorkout(newWorkout);
@@ -203,6 +235,11 @@ function App() {
       // Save workout to localStorage for persistence
       localStorage.setItem('current_workout', JSON.stringify(newWorkout));
       if (apiKey) localStorage.setItem('openai_api_key', apiKey);
+      
+      // Clear postpone data after generating workout
+      if (postponeData) {
+        localStorage.removeItem('postponed_workout');
+      }
     } catch (err) {
       setError(`Failed to generate workout: ${err.message}`);
     } finally {
@@ -217,7 +254,25 @@ function App() {
     window.history.pushState({ view: 'main' }, '', window.location.pathname);
   };
 
-  const handleWorkoutFeedback = (feedback) => {
+  const handlePostponeWorkout = (postponeData) => {
+    // Store postpone data
+    localStorage.setItem('postponed_workout', JSON.stringify(postponeData));
+    
+    // Clear current workout
+    setWorkout(null);
+    localStorage.removeItem('current_workout');
+    
+    setShowPostpone(false);
+    // Update browser history
+    window.history.pushState({ view: 'main' }, '', window.location.pathname);
+    
+    // Show confirmation
+    setError(null);
+    setTimeout(() => {
+      setError('Workout postponed. Generate a new workout when you\'re ready!');
+      setTimeout(() => setError(null), 3000);
+    }, 100);
+  };
     // Add to rating queue instead of direct feedback storage
     const ratingQueue = JSON.parse(localStorage.getItem('rating_queue') || '[]');
     const queueItem = {
@@ -297,6 +352,16 @@ function App() {
       localStorage.setItem('openai_api_key', e.target.value);
     }
   };
+
+  if (showPostpone && workout) {
+    return (
+      <PostponeWorkout 
+        workout={workout}
+        onPostpone={handlePostponeWorkout}
+        onCancel={() => setShowPostpone(false)}
+      />
+    );
+  }
 
   if (showFeedback && workout) {
     return (
@@ -388,6 +453,21 @@ function App() {
             style={{ fontSize: '14px', padding: '12px 20px' }}
           >
             Same Run Tomorrow
+          </button>
+        )}
+        
+        {workout && (
+          <button 
+            className="btn btn-secondary" 
+            onClick={() => {
+              setShowPostpone(true);
+              // Add to browser history
+              window.history.pushState({ view: 'postpone' }, '', window.location.pathname);
+            }}
+            disabled={loading}
+            style={{ fontSize: '14px', padding: '12px 20px' }}
+          >
+            Postpone Workout
           </button>
         )}
         

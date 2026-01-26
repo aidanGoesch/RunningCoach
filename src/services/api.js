@@ -96,7 +96,7 @@ Today is ${today.toLocaleDateString()} (${['Sunday', 'Monday', 'Tuesday', 'Wedne
   return updatedPrompt;
 };
 
-export const generateWorkout = async (apiKey, activities = [], isInjured = false) => {
+export const generateWorkout = async (apiKey, activities = [], isInjured = false, postponeData = null) => {
   console.log('generateWorkout called with apiKey:', apiKey ? 'provided' : 'missing');
   console.log('Environment OPENAI key:', import.meta.env.VITE_OPENAI_API_KEY ? 'set' : 'missing');
   console.log('Injury status:', isInjured ? 'injured' : 'healthy');
@@ -108,6 +108,50 @@ export const generateWorkout = async (apiKey, activities = [], isInjured = false
   // Update prompt with current training data if it contains placeholders
   if (basePrompt.includes('[Week X of 14]') || basePrompt.includes('[X days]')) {
     basePrompt = updatePromptWithCurrentData(basePrompt, activities);
+  }
+  
+  // Add postpone context if provided
+  if (postponeData) {
+    const { reason, adjustment, originalWorkout } = postponeData;
+    
+    basePrompt += `\n\nPOSTPONED WORKOUT CONTEXT:
+    
+The athlete postponed yesterday's workout with reason: "${reason}"
+
+Original workout was: ${originalWorkout.title}
+
+Adjustment needed based on postpone reason:`;
+
+    switch (adjustment) {
+      case 'same':
+        basePrompt += `
+- Give the EXACT same workout as yesterday since the postpone was due to external factors (busy, weather, etc.)
+- No modifications needed to intensity or volume`;
+        break;
+      case 'easier':
+        basePrompt += `
+- Reduce intensity by 10-15% due to fatigue/soreness
+- Consider shorter duration or easier pace
+- Focus on recovery and getting back into rhythm`;
+        break;
+      case 'reduce':
+        basePrompt += `
+- Significantly reduce volume (20-30% less distance/time)
+- Lower intensity to build confidence
+- The athlete felt the original workout was too challenging`;
+        break;
+      case 'recovery':
+        basePrompt += `
+- Convert to easy recovery run or cross-training
+- Focus on injury prevention and gentle movement
+- Avoid any high-intensity work`;
+        break;
+      case 'custom':
+        basePrompt += `
+- Consider the specific reason provided and adjust accordingly
+- Use coaching judgment based on the athlete's feedback`;
+        break;
+    }
   }
   
   // Add injury status to prompt
