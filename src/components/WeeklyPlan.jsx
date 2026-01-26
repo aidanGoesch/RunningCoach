@@ -97,10 +97,6 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey }
           </button>
         </div>
       )}
-            Generate This Week's Training Plan
-          </button>
-        </div>
-      )}
       
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '8px' }}>
         {[0, 1, 2, 3, 4, 5, 6].map(dayOffset => {
