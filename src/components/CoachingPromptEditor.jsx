@@ -118,17 +118,27 @@ const CoachingPromptEditor = ({ onSave, onCancel, currentPrompt }) => {
                   const reader = new FileReader();
                   reader.onload = async (e) => {
                     try {
+                      console.log('Starting migration...');
                       const exportedData = JSON.parse(e.target.result);
+                      console.log('Parsed data:', exportedData);
+                      
                       const { migrateToSupabase } = await import('../services/supabase');
+                      console.log('Calling migrateToSupabase...');
+                      
                       await migrateToSupabase(exportedData);
+                      console.log('Migration completed successfully');
+                      
                       alert('Data migrated to Supabase successfully!');
                       window.location.reload();
                     } catch (error) {
+                      console.error('Migration error:', error);
                       alert('Migration failed: ' + error.message);
                     }
                   };
                   reader.readAsText(file);
                 }
+                // Reset the input so the same file can be selected again
+                event.target.value = '';
               }}
               style={{ display: 'none' }}
             />
