@@ -26,9 +26,12 @@ const CoachingPromptEditor = ({ onSave, onCancel, currentPrompt }) => {
     // Add all weekly plans and activity cache
     const weeklyPlans = {};
     const activityInsights = {};
+    console.log('Exporting localStorage keys:');
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
+      console.log('Found key:', key);
       if (key.startsWith('weekly_plan_')) {
+        console.log('Adding weekly plan:', key, localStorage.getItem(key));
         weeklyPlans[key] = localStorage.getItem(key);
       }
       if (key.startsWith('activity_detail_')) {
@@ -38,6 +41,7 @@ const CoachingPromptEditor = ({ onSave, onCancel, currentPrompt }) => {
         activityInsights[key] = localStorage.getItem(key);
       }
     }
+    console.log('Final weekly plans object:', weeklyPlans);
     exportData.data.weekly_plans = weeklyPlans;
     exportData.data.activity_insights = activityInsights;
 
