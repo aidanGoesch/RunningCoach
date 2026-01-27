@@ -123,9 +123,9 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey }
   console.log('WeeklyPlan render - currentWeek:', currentWeek);
 
   return (
-    <div className="workout-display" style={{ marginBottom: '20px', border: '2px solid red' }}>
-      <div className="workout-title" style={{ backgroundColor: 'yellow', color: 'black' }}>
-        Weekly Training Plan - DEBUG MODE
+    <div className="workout-display" style={{ marginBottom: '20px' }}>
+      <div className="workout-title">
+        Weekly Training Plan
         {currentWeek && ` - Week of ${currentWeek.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
       </div>
       
@@ -184,6 +184,7 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey }
           
           const handleClick = () => {
             if (isRunDay && plannedWorkout && !dayInfo.hasRun && onWorkoutClick) {
+              console.log('Clicking on planned workout:', plannedWorkout);
               onWorkoutClick(plannedWorkout, dayInfo.fullDayName);
             }
           };

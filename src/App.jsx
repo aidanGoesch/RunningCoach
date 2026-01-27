@@ -301,6 +301,7 @@ function App() {
       const weekKey = `${monday.getFullYear()}-${monday.getMonth()}-${monday.getDate()}`;
       
       localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(weeklyPlan));
+      console.log('Saving weekly plan to Supabase:', weekKey, weeklyPlan);
       await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(weeklyPlan));
       
       // Set today's workout if it exists
@@ -645,6 +646,32 @@ function App() {
             >
               <span style={{ fontSize: '18px' }}>⚙️</span>
               <span>Coaching Settings</span>
+            </button>
+            
+            <button
+              onClick={() => {
+                handleGenerateWeeklyPlan();
+                setShowMenu(false);
+              }}
+              style={{
+                width: '100%',
+                padding: '16px 20px',
+                background: 'none',
+                border: 'none',
+                textAlign: 'left',
+                cursor: 'pointer',
+                color: 'var(--text-color)',
+                fontSize: '16px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                borderBottom: '1px solid var(--grid-color)'
+              }}
+              onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--grid-color)'}
+              onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+            >
+              <span style={{ fontSize: '18px' }}>📅</span>
+              <span>Generate Weekly Plan</span>
             </button>
           </div>
         </div>
