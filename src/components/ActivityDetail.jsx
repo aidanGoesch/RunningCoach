@@ -1,21 +1,30 @@
 import { useState, useEffect } from 'react';
 import { getActivityDetails, getActivityStreams, generateInsights, getActivityRating } from '../services/api';
+import { getActivityInsights, saveActivityInsights } from '../services/supabase';
 
 const ActivityDetail = ({ activityId, onBack }) => {
   const [activity, setActivity] = useState(null);
   const [streams, setStreams] = useState(null);
   const [insights, setInsights] = useState(null);
+  const [generatingInsights, setGeneratingInsights] = useState(false);
   const [rating, setRating] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   useEffect(() => {
     const fetchActivityData = async () => {
+      console.log('=== Starting fetchActivityData for activityId:', activityId, '===');
+      
       const token = localStorage.getItem('strava_access_token');
       const apiKey = import.meta.env.VITE_OPENAI_API_KEY || localStorage.getItem('openai_api_key');
       
+      console.log('Token exists:', !!token);
+      console.log('API key exists:', !!apiKey);
+      
       if (!token) {
-        setError('No Strava token found');
+        console.error('No Strava token found - this is expected in local development');
+        setError('Connect to Strava to view activity details');
+        setLoading(false);
         return;
       }
 
@@ -38,14 +47,14 @@ const ActivityDetail = ({ activityId, onBack }) => {
             const activityRating = getActivityRating(activityId);
             setRating(activityRating);
             
-            // Generate insights for this specific activity with cached data
-            if (apiKey && activityData) {
-              try {
-                const activityInsights = await generateInsights(apiKey, [activityData], streamData, activityRating);
-                setInsights(activityInsights);
-              } catch (err) {
-                console.error('Failed to generate insights:', err);
-              }
+            // Only check for cached insights, don't generate new ones
+            console.log('Checking for cached insights for', activityId);
+            const cachedInsights = await getActivityInsights(activityId);
+            if (cachedInsights) {
+              console.log('Found cached insights for', activityId);
+              setInsights(cachedInsights);
+            } else {
+              console.log('No cached insights found for', activityId);
             }
             
             setLoading(false);
@@ -79,14 +88,14 @@ const ActivityDetail = ({ activityId, onBack }) => {
         const activityRating = getActivityRating(activityId);
         setRating(activityRating);
         
-        // Generate insights for this specific activity with detailed data
-        if (apiKey && activityData) {
-          try {
-            const activityInsights = await generateInsights(apiKey, [activityData], streamData, activityRating);
-            setInsights(activityInsights);
-          } catch (err) {
-            console.error('Failed to generate insights:', err);
-          }
+        // Only check for cached insights, don't generate new ones
+        console.log('Checking for cached insights for', activityId);
+        const cachedInsights = await getActivityInsights(activityId);
+        if (cachedInsights) {
+          console.log('Found cached insights for', activityId);
+          setInsights(cachedInsights);
+        } else {
+          console.log('No cached insights found for', activityId);
         }
       } catch (err) {
         setError(err.message);
@@ -97,6 +106,31 @@ const ActivityDetail = ({ activityId, onBack }) => {
 
     fetchActivityData();
   }, [activityId]);
+
+  const handleGenerateInsights = async () => {
+    if (!apiKey || !activity) return;
+    
+    setGeneratingInsights(true);
+    try {
+      console.log('Manually generating insights for', activityId);
+      const activityRating = getActivityRating(activityId);
+      
+      const insightsPromise = generateInsights(apiKey, [activity], streams, activityRating);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Insights timeout')), 15000)
+      );
+      
+      const activityInsights = await Promise.race([insightsPromise, timeoutPromise]);
+      setInsights(activityInsights);
+      await saveActivityInsights(activityId, activityInsights);
+      console.log('Insights generated and saved');
+    } catch (err) {
+      console.error('Failed to generate insights:', err);
+      setError('Failed to generate insights: ' + err.message);
+    } finally {
+      setGeneratingInsights(false);
+    }
+  };
 
   if (loading) return <div className="loading">Loading activity details...</div>;
   if (error) return <div className="error">Error: {error}</div>;
@@ -152,16 +186,33 @@ const ActivityDetail = ({ activityId, onBack }) => {
       </div>
 
       {/* AI Insights */}
-      {insights && (
-        <div className="workout-display" style={{ marginBottom: '20px' }}>
-          <div className="workout-title">AI Insights</div>
+      <div className="workout-display" style={{ marginBottom: '20px' }}>
+        <div className="workout-title">AI Insights</div>
+        {insights ? (
           <div className="workout-block">
-            <div style={{ fontSize: '14px', lineHeight: '1.6', whiteSpace: 'pre-line' }}>
-              {insights.insights}
+            <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.6' }}>
+              {insights}
             </div>
           </div>
-        </div>
-      )}
+        ) : (
+          <div className="workout-block">
+            <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>
+              {apiKey ? (
+                <button 
+                  className="btn btn-primary"
+                  onClick={handleGenerateInsights}
+                  disabled={generatingInsights}
+                  style={{ fontSize: '14px', padding: '10px 20px' }}
+                >
+                  {generatingInsights ? 'Generating Insights...' : 'Generate AI Insights'}
+                </button>
+              ) : (
+                'Add OpenAI API key to generate insights'
+              )}
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Workout Rating */}
       {rating && (

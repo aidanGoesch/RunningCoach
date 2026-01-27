@@ -44,39 +44,104 @@ export class DataService {
       return localStorage.getItem(key)
     }
 
-    const user = await ensureUser()
-    
-    // Map localStorage keys to Supabase tables
-    switch (key) {
-      case 'coaching_prompt':
-        const { data } = await supabase
-          .from('coaching_prompts')
-          .select('prompt_text')
-          .eq('user_id', user.id)
-          .eq('is_active', true)
-          .single()
-        return data?.prompt_text || null
+    try {
+      // Add timeout to prevent hanging
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Supabase timeout')), 5000)
+      );
 
-      case 'strava_activities':
-        const { data: activities } = await supabase
-          .from('strava_activities')
-          .select('activity_data')
-          .eq('user_id', user.id)
-          .order('synced_at', { ascending: false })
-        return JSON.stringify(activities?.map(a => a.activity_data) || [])
-
-      default:
-        if (key.startsWith('weekly_plan_')) {
-          const weekStart = key.replace('weekly_plan_', '')
-          const { data: plan } = await supabase
-            .from('weekly_plans')
-            .select('plan_data')
+      const user = await ensureUser()
+      
+      // Map localStorage keys to Supabase tables
+      let dataPromise;
+      switch (key) {
+        case 'coaching_prompt':
+          dataPromise = supabase
+            .from('coaching_prompts')
+            .select('prompt_text')
             .eq('user_id', user.id)
-            .eq('week_start_date', weekStart)
+            .eq('is_active', true)
             .single()
-          return plan ? JSON.stringify(plan.plan_data) : null
-        }
-        return localStorage.getItem(key)
+          break;
+
+        case 'strava_activities':
+          dataPromise = supabase
+            .from('strava_activities')
+            .select('activity_data')
+            .eq('user_id', user.id)
+            .order('synced_at', { ascending: false })
+          break;
+
+        case 'activity_ratings':
+          dataPromise = supabase
+            .from('workout_ratings')
+            .select('strava_activity_id, rating, feedback, is_injured, injury_details')
+            .eq('user_id', user.id)
+          break;
+
+        case 'current_workout':
+          dataPromise = supabase
+            .from('current_workouts')
+            .select('workout_data')
+            .eq('user_id', user.id)
+            .eq('workout_date', new Date().toISOString().split('T')[0])
+            .single()
+          break;
+
+        default:
+          if (key.startsWith('weekly_plan_')) {
+            const weekStart = key.replace('weekly_plan_', '')
+            dataPromise = supabase
+              .from('weekly_plans')
+              .select('plan_data')
+              .eq('user_id', user.id)
+              .eq('week_start_date', weekStart)
+              .single()
+          } else if (key.startsWith('activity_insights_')) {
+            const activityId = key.replace('activity_insights_', '')
+            dataPromise = supabase
+              .from('activity_insights')
+              .select('insights_text')
+              .eq('strava_activity_id', parseInt(activityId))
+              .single()
+          } else {
+            return localStorage.getItem(key)
+          }
+      }
+
+      const { data } = await Promise.race([dataPromise, timeoutPromise]);
+
+      // Process the response based on key type
+      switch (key) {
+        case 'coaching_prompt':
+          return data?.prompt_text || null;
+        case 'strava_activities':
+          return JSON.stringify(data?.map(a => a.activity_data) || []);
+        case 'activity_ratings':
+          const ratingsObj = {}
+          data?.forEach(r => {
+            ratingsObj[r.strava_activity_id] = {
+              rating: r.rating,
+              feedback: r.feedback,
+              isInjured: r.is_injured,
+              injuryDetails: r.injury_details
+            }
+          })
+          return JSON.stringify(ratingsObj);
+        case 'current_workout':
+          return data ? JSON.stringify(data.workout_data) : null;
+        default:
+          if (key.startsWith('weekly_plan_')) {
+            return data ? JSON.stringify(data.plan_data) : null;
+          } else if (key.startsWith('activity_insights_')) {
+            return data?.insights_text || null;
+          }
+          return null;
+      }
+    } catch (error) {
+      console.error(`Supabase get error for ${key}:`, error);
+      // Fallback to localStorage on error
+      return localStorage.getItem(key);
     }
   }
 
@@ -112,6 +177,16 @@ export class DataService {
         }
         break
 
+      case 'current_workout':
+        await supabase
+          .from('current_workouts')
+          .upsert({
+            user_id: user.id,
+            workout_date: new Date().toISOString().split('T')[0],
+            workout_data: JSON.parse(value)
+          })
+        break
+
       default:
         if (key.startsWith('weekly_plan_')) {
           const weekStart = key.replace('weekly_plan_', '')
@@ -121,6 +196,15 @@ export class DataService {
               user_id: user.id,
               week_start_date: weekStart,
               plan_data: JSON.parse(value)
+            })
+        } else if (key.startsWith('activity_insights_')) {
+          const activityId = key.replace('activity_insights_', '')
+          await supabase
+            .from('activity_insights')
+            .upsert({
+              user_id: user.id,
+              strava_activity_id: parseInt(activityId),
+              insights_text: value
             })
         } else {
           localStorage.setItem(key, value)
@@ -474,7 +558,59 @@ export const enableSupabase = () => {
   localStorage.setItem('use_supabase', 'true')
 }
 
-// Initialize on load
+// Helper functions for specific operations
+export const getActivityInsights = async (activityId) => {
+  if (!dataService.useSupabase) {
+    return localStorage.getItem(`activity_insights_${activityId}`)
+  }
+  
+  const { data } = await supabase
+    .from('activity_insights')
+    .select('insights_text')
+    .eq('strava_activity_id', activityId)
+    .single()
+  
+  return data?.insights_text || null
+}
+
+export const saveActivityInsights = async (activityId, insights) => {
+  if (!dataService.useSupabase) {
+    localStorage.setItem(`activity_insights_${activityId}`, insights)
+    return
+  }
+  
+  const user = await ensureUser()
+  await supabase
+    .from('activity_insights')
+    .upsert({
+      user_id: user.id,
+      strava_activity_id: activityId,
+      insights_text: insights
+    })
+}
+
+export const saveActivityRating = async (activityId, rating, feedback, isInjured, injuryDetails) => {
+  if (!dataService.useSupabase) {
+    const ratings = JSON.parse(localStorage.getItem('activity_ratings') || '{}')
+    ratings[activityId] = { rating, feedback, isInjured, injuryDetails }
+    localStorage.setItem('activity_ratings', JSON.stringify(ratings))
+    return
+  }
+  
+  const user = await ensureUser()
+  await supabase
+    .from('workout_ratings')
+    .upsert({
+      user_id: user.id,
+      strava_activity_id: activityId,
+      rating,
+      feedback,
+      is_injured: isInjured,
+      injury_details: injuryDetails
+    })
+}
+
+// Initialize on load - check if migration completed
 if (localStorage.getItem('use_supabase') === 'true') {
   dataService.useSupabase = true
 }

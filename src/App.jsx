@@ -10,6 +10,7 @@ import CoachingPromptEditor from './components/CoachingPromptEditor';
 import WorkoutFeedback from './components/WorkoutFeedback';
 import PostponeWorkout from './components/PostponeWorkout';
 import { generateWorkout, generateWeeklyPlan, syncWithStrava, generateInsights } from './services/api';
+import { dataService } from './services/supabase';
 
 function App() {
   const [workout, setWorkout] = useState(null);
@@ -197,17 +198,48 @@ function App() {
 
     window.addEventListener('popstate', handlePopState);
     
-    // Load stored activities
-    const stored = localStorage.getItem('strava_activities');
-    if (stored) {
-      setActivities(JSON.parse(stored));
-    }
-    
-  // Load saved workout and check for postponed workout
-    const savedWorkout = localStorage.getItem('current_workout');
-    if (savedWorkout) {
-      setWorkout(JSON.parse(savedWorkout));
-    }
+    // Load data asynchronously
+    const loadData = async () => {
+      try {
+        console.log('Loading data from Supabase...');
+        
+        // Load stored activities first (most important)
+        console.log('Loading activities...');
+        const stored = await dataService.get('strava_activities');
+        if (stored) {
+          console.log('Activities loaded:', JSON.parse(stored).length);
+          setActivities(JSON.parse(stored));
+        } else {
+          console.log('No activities found, checking localStorage fallback...');
+          const localStored = localStorage.getItem('strava_activities');
+          if (localStored) {
+            setActivities(JSON.parse(localStored));
+          }
+        }
+        
+        // Load saved workout (skip for now due to 406 error)
+        console.log('Skipping current workout load due to Supabase query issues...');
+        const localWorkout = localStorage.getItem('current_workout');
+        if (localWorkout) {
+          setWorkout(JSON.parse(localWorkout));
+        }
+        
+        console.log('Data loading completed');
+      } catch (error) {
+        console.error('Error loading data from Supabase, falling back to localStorage:', error);
+        // Fallback to localStorage if Supabase fails
+        const localStored = localStorage.getItem('strava_activities');
+        if (localStored) {
+          setActivities(JSON.parse(localStored));
+        }
+        const localWorkout = localStorage.getItem('current_workout');
+        if (localWorkout) {
+          setWorkout(JSON.parse(localWorkout));
+        }
+      }
+    };
+
+    loadData();
     
     // Check for postponed workout on page load
     const postponedWorkout = localStorage.getItem('postponed_workout');
