@@ -243,7 +243,8 @@ function App() {
     
     // Check for postponed workout on page load
     const postponedWorkout = localStorage.getItem('postponed_workout');
-    if (postponedWorkout && !savedWorkout) {
+    const currentWorkout = localStorage.getItem('current_workout');
+    if (postponedWorkout && !currentWorkout) {
       // If there's a postponed workout but no current workout, show option to generate adjusted workout
       const postponeData = JSON.parse(postponedWorkout);
       const postponeDate = new Date(postponeData.postponedDate);
@@ -265,7 +266,7 @@ function App() {
 
     // Auto-sync with Strava on page load if we have tokens
     const hasTokens = localStorage.getItem('strava_access_token') && localStorage.getItem('strava_refresh_token');
-    if (hasTokens && !savedWorkout) {
+    if (hasTokens && !currentWorkout) {
       // Only auto-sync if there's no current workout
       // Small delay to let the page load first
       setTimeout(() => {
