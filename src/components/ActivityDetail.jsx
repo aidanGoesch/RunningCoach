@@ -108,6 +108,8 @@ const ActivityDetail = ({ activityId, onBack }) => {
   }, [activityId]);
 
   const handleGenerateInsights = async () => {
+    const apiKey = import.meta.env.VITE_OPENAI_API_KEY || localStorage.getItem('openai_api_key');
+    
     if (!apiKey || !activity) return;
     
     setGeneratingInsights(true);
@@ -197,7 +199,7 @@ const ActivityDetail = ({ activityId, onBack }) => {
         ) : (
           <div className="workout-block">
             <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>
-              {apiKey ? (
+              {(import.meta.env.VITE_OPENAI_API_KEY || localStorage.getItem('openai_api_key')) ? (
                 <button 
                   className="btn btn-primary"
                   onClick={handleGenerateInsights}
