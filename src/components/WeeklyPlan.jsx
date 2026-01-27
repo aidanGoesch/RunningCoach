@@ -17,18 +17,25 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey }
     
     // Load weekly plan
     const loadWeeklyPlan = async () => {
+      console.log('Loading weekly plan for key:', weekKey);
       try {
         const storedPlan = await dataService.get(`weekly_plan_${weekKey}`);
+        console.log('Supabase weekly plan result:', storedPlan);
         if (storedPlan) {
-          setWeeklyPlan(JSON.parse(storedPlan));
+          const parsedPlan = JSON.parse(storedPlan);
+          console.log('Parsed weekly plan:', parsedPlan);
+          setWeeklyPlan(parsedPlan);
         } else if (apiKey || import.meta.env.VITE_OPENAI_API_KEY) {
+          console.log('No weekly plan found, auto-generating...');
           // Auto-generate plan if none exists and we have an API key
           onGenerateWeeklyPlan();
         }
       } catch (error) {
-        console.error('Error loading weekly plan:', error);
+        console.error('Error loading weekly plan from Supabase:', error);
         // Fallback to localStorage
+        console.log('Falling back to localStorage...');
         const localPlan = localStorage.getItem(`weekly_plan_${weekKey}`);
+        console.log('localStorage weekly plan:', localPlan);
         if (localPlan) {
           setWeeklyPlan(JSON.parse(localPlan));
         } else if (apiKey || import.meta.env.VITE_OPENAI_API_KEY) {

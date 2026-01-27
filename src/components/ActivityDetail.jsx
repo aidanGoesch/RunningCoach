@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { getActivityDetails, getActivityStreams, generateInsights, getActivityRating } from '../services/api';
 import { getActivityInsights, saveActivityInsights } from '../services/supabase';
 
@@ -206,9 +207,31 @@ const ActivityDetail = ({ activityId, onBack }) => {
         <div className="workout-title">AI Insights</div>
         {insights ? (
           <div className="workout-block">
-            <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.6' }}>
-              {insights}
-            </div>
+            {insights === '[object Object]' || insights.includes('[object Object]') ? (
+              <div style={{ textAlign: 'center', padding: '20px' }}>
+                <div style={{ color: 'var(--text-secondary)', marginBottom: '15px' }}>
+                  Insights data corrupted. Click to regenerate:
+                </div>
+                <button 
+                  className="btn btn-primary"
+                  onClick={handleGenerateInsights}
+                  disabled={generatingInsights}
+                  style={{ fontSize: '14px', padding: '10px 20px' }}
+                >
+                  {generatingInsights ? 'Generating Insights...' : 'Regenerate Insights'}
+                </button>
+              </div>
+            ) : (
+              <ReactMarkdown 
+                style={{ 
+                  whiteSpace: 'normal', 
+                  lineHeight: '1.6',
+                  color: 'var(--text-color)'
+                }}
+              >
+                {insights}
+              </ReactMarkdown>
+            )}
           </div>
         ) : (
           <div className="workout-block" style={{ 
