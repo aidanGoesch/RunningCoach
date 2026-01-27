@@ -221,7 +221,7 @@ Do NOT include any conversational text. Return ONLY the JSON structure above wit
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      model: 'gpt-4',
+      model: 'gpt-5-mini',
       messages: [{ role: 'system', content: basePrompt }, { role: 'user', content: 'Generate today\'s workout.' }],
       temperature: 0.7,
       max_tokens: 1500
@@ -326,7 +326,7 @@ Return the response in this exact JSON format:
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      model: 'gpt-4',
+      model: 'gpt-5-mini',
       messages: [
         { role: 'system', content: basePrompt }, 
         { role: 'user', content: 'Generate this week\'s complete training plan with detailed workouts for Tuesday, Thursday, and Sunday.' }
