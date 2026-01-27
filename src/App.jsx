@@ -301,6 +301,7 @@ function App() {
       const weekKey = `${monday.getFullYear()}-${monday.getMonth()}-${monday.getDate()}`;
       
       localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(weeklyPlan));
+      await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(weeklyPlan));
       
       // Set today's workout if it exists
       const today_day = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][today.getDay()];

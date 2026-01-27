@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { dataService } from '../services/supabase';
 
 const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey }) => {
   const [weeklyPlan, setWeeklyPlan] = useState(null);
@@ -15,13 +16,28 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey }
     setCurrentWeek({ start: monday, key: weekKey });
     
     // Load weekly plan
-    const storedPlan = localStorage.getItem(`weekly_plan_${weekKey}`);
-    if (storedPlan) {
-      setWeeklyPlan(JSON.parse(storedPlan));
-    } else if (apiKey || import.meta.env.VITE_OPENAI_API_KEY) {
-      // Auto-generate plan if none exists and we have an API key
-      onGenerateWeeklyPlan();
-    }
+    const loadWeeklyPlan = async () => {
+      try {
+        const storedPlan = await dataService.get(`weekly_plan_${weekKey}`);
+        if (storedPlan) {
+          setWeeklyPlan(JSON.parse(storedPlan));
+        } else if (apiKey || import.meta.env.VITE_OPENAI_API_KEY) {
+          // Auto-generate plan if none exists and we have an API key
+          onGenerateWeeklyPlan();
+        }
+      } catch (error) {
+        console.error('Error loading weekly plan:', error);
+        // Fallback to localStorage
+        const localPlan = localStorage.getItem(`weekly_plan_${weekKey}`);
+        if (localPlan) {
+          setWeeklyPlan(JSON.parse(localPlan));
+        } else if (apiKey || import.meta.env.VITE_OPENAI_API_KEY) {
+          onGenerateWeeklyPlan();
+        }
+      }
+    };
+
+    loadWeeklyPlan();
   }, [apiKey, onGenerateWeeklyPlan]);
 
   const getDayInfo = (dayOffset) => {

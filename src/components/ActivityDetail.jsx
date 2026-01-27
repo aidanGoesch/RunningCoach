@@ -52,7 +52,11 @@ const ActivityDetail = ({ activityId, onBack }) => {
             const cachedInsights = await getActivityInsights(activityId);
             if (cachedInsights) {
               console.log('Found cached insights for', activityId);
-              setInsights(cachedInsights);
+              // Ensure cached insights are strings
+              const insightsText = typeof cachedInsights === 'string' 
+                ? cachedInsights 
+                : cachedInsights?.insights || cachedInsights?.content || JSON.stringify(cachedInsights);
+              setInsights(insightsText);
             } else {
               console.log('No cached insights found for', activityId);
             }
@@ -93,7 +97,11 @@ const ActivityDetail = ({ activityId, onBack }) => {
         const cachedInsights = await getActivityInsights(activityId);
         if (cachedInsights) {
           console.log('Found cached insights for', activityId);
-          setInsights(cachedInsights);
+          // Ensure cached insights are strings
+          const insightsText = typeof cachedInsights === 'string' 
+            ? cachedInsights 
+            : cachedInsights?.insights || cachedInsights?.content || JSON.stringify(cachedInsights);
+          setInsights(insightsText);
         } else {
           console.log('No cached insights found for', activityId);
         }
