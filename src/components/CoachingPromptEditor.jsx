@@ -155,6 +155,8 @@ Please provide progressive, injury-conscious workouts that will safely bridge th
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
+
+  const handleSaveToFile = () => {
     const blob = new Blob([prompt], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -165,9 +167,6 @@ Please provide progressive, injury-conscious workouts that will safely bridge th
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
-
-  const handleSaveToFile = () => {
-    const blob = new Blob([prompt], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
