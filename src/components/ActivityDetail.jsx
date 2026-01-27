@@ -119,7 +119,7 @@ const ActivityDetail = ({ activityId, onBack }) => {
       
       const insightsPromise = generateInsights(apiKey, [activity], streams, activityRating);
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Insights timeout')), 15000)
+        setTimeout(() => reject(new Error('Insights timeout')), 30000) // Increased to 30 seconds
       );
       
       const activityInsights = await Promise.race([insightsPromise, timeoutPromise]);
@@ -128,7 +128,7 @@ const ActivityDetail = ({ activityId, onBack }) => {
       console.log('Insights generated and saved');
     } catch (err) {
       console.error('Failed to generate insights:', err);
-      setError('Failed to generate insights: ' + err.message);
+      // Don't show error to user, just log it and reset the button
     } finally {
       setGeneratingInsights(false);
     }
@@ -197,21 +197,31 @@ const ActivityDetail = ({ activityId, onBack }) => {
             </div>
           </div>
         ) : (
-          <div className="workout-block">
-            <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>
-              {(import.meta.env.VITE_OPENAI_API_KEY || localStorage.getItem('openai_api_key')) ? (
-                <button 
-                  className="btn btn-primary"
-                  onClick={handleGenerateInsights}
-                  disabled={generatingInsights}
-                  style={{ fontSize: '14px', padding: '10px 20px' }}
-                >
-                  {generatingInsights ? 'Generating Insights...' : 'Generate AI Insights'}
-                </button>
-              ) : (
-                'Add OpenAI API key to generate insights'
-              )}
-            </div>
+          <div className="workout-block" style={{ 
+            backgroundColor: '#000', 
+            color: '#888', 
+            textAlign: 'center', 
+            padding: '40px 20px',
+            cursor: generatingInsights ? 'default' : 'pointer',
+            border: '1px solid #333',
+            position: 'relative'
+          }}
+          onClick={generatingInsights ? undefined : handleGenerateInsights}>
+            {generatingInsights ? (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
+                <div style={{
+                  width: '20px',
+                  height: '20px',
+                  border: '2px solid #333',
+                  borderTop: '2px solid #888',
+                  borderRadius: '50%',
+                  animation: 'spin 1s linear infinite'
+                }}></div>
+                Generating insights...
+              </div>
+            ) : (
+              'Click to generate insights'
+            )}
           </div>
         )}
       </div>
