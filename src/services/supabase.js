@@ -347,11 +347,19 @@ export const migrateToSupabase = async (exportedData) => {
       console.log('Found', Object.keys(ratings).length, 'ratings');
       
       for (const [activityId, rating] of Object.entries(ratings)) {
+        const numericActivityId = parseInt(activityId);
+        
+        // Skip activity ID 0 or invalid IDs (these are unmatched workouts)
+        if (numericActivityId <= 0) {
+          console.log('Skipping invalid activity ID:', activityId);
+          continue;
+        }
+        
         const { error } = await supabase
           .from('workout_ratings')
           .insert({
             user_id: user.id,
-            strava_activity_id: parseInt(activityId),
+            strava_activity_id: numericActivityId,
             rating: rating.rating,
             feedback: rating.feedback || null,
             is_injured: rating.isInjured || false,
@@ -372,29 +380,80 @@ export const migrateToSupabase = async (exportedData) => {
       console.log('Found', Object.keys(feedback).length, 'feedback entries');
       
       for (const [activityId, feedbackData] of Object.entries(feedback)) {
+        const numericActivityId = parseInt(activityId);
+        
+        // Skip activity ID 0 or invalid IDs
+        if (numericActivityId <= 0) {
+          console.log('Skipping invalid activity ID:', activityId);
+          continue;
+        }
+        
         // Check if we already have a rating for this activity
-        const { data: existingRating } = await supabase
-          .from('workout_ratings')
+        try {
+          const { data: existingRating } = await supabase
+            .from('workout_ratings')
+            .select('id')
+            .eq('strava_activity_id', numericActivityId)
+            .single()
+          
+          if (!existingRating) {
+            const { error } = await supabase
+              .from('workout_ratings')
+              .insert({
+                user_id: user.id,
+                strava_activity_id: numericActivityId,
+                rating: feedbackData.rating || 3,
+                feedback: feedbackData.feedback || null,
+                is_injured: feedbackData.isInjured || false,
+                injury_details: feedbackData.injuryDetails || null
+              })
+            if (error) {
+              console.error('Feedback insert error for', activityId, ':', error);
+            } else {
+              console.log('Migrated feedback for activity:', activityId);
+            }
+          }
+        } catch (queryError) {
+          console.log('Query failed for activity', activityId, ', skipping...');
+        }
+      }
+    }
+
+    // Migrate activity insights
+    if (exportedData.data.activity_insights) {
+      console.log('Migrating activity insights...');
+      for (const [key, value] of Object.entries(exportedData.data.activity_insights)) {
+        const activityId = key.replace('activity_insights_', '');
+        const numericActivityId = parseInt(activityId);
+        
+        // Skip invalid activity IDs
+        if (numericActivityId <= 0) {
+          console.log('Skipping invalid insights for activity ID:', activityId);
+          continue;
+        }
+        
+        // Check if insights already exist
+        const { data: existing } = await supabase
+          .from('activity_insights')
           .select('id')
-          .eq('strava_activity_id', parseInt(activityId))
+          .eq('strava_activity_id', numericActivityId)
           .single()
         
-        if (!existingRating) {
+        if (!existing) {
           const { error } = await supabase
-            .from('workout_ratings')
+            .from('activity_insights')
             .insert({
               user_id: user.id,
-              strava_activity_id: parseInt(activityId),
-              rating: feedbackData.rating || 3,
-              feedback: feedbackData.feedback || null,
-              is_injured: feedbackData.isInjured || false,
-              injury_details: feedbackData.injuryDetails || null
+              strava_activity_id: numericActivityId,
+              insights_text: value
             })
           if (error) {
-            console.error('Feedback insert error for', activityId, ':', error);
+            console.error('Insights insert error for', activityId, ':', error);
           } else {
-            console.log('Migrated feedback for activity:', activityId);
+            console.log('Migrated insights for activity:', activityId);
           }
+        } else {
+          console.log('Insights already exist for activity:', activityId);
         }
       }
     }

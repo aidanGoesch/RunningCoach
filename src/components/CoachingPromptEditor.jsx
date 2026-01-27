@@ -18,12 +18,14 @@ const CoachingPromptEditor = ({ onSave, onCancel, currentPrompt }) => {
         openai_api_key: localStorage.getItem('openai_api_key'),
         darkMode: localStorage.getItem('darkMode'),
         isInjured: localStorage.getItem('isInjured'),
-        authenticated: localStorage.getItem('authenticated')
+        authenticated: localStorage.getItem('authenticated'),
+        insights: localStorage.getItem('insights')
       }
     };
 
     // Add all weekly plans and activity cache
     const weeklyPlans = {};
+    const activityInsights = {};
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       if (key.startsWith('weekly_plan_')) {
@@ -32,8 +34,12 @@ const CoachingPromptEditor = ({ onSave, onCancel, currentPrompt }) => {
       if (key.startsWith('activity_detail_')) {
         exportData.data[key] = localStorage.getItem(key);
       }
+      if (key.startsWith('activity_insights_')) {
+        activityInsights[key] = localStorage.getItem(key);
+      }
     }
     exportData.data.weekly_plans = weeklyPlans;
+    exportData.data.activity_insights = activityInsights;
 
     const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
