@@ -107,6 +107,33 @@ const CoachingPromptEditor = ({ onSave, onCancel, currentPrompt }) => {
             Export All Data
           </button>
 
+          <label className="btn btn-success" style={{ fontSize: '14px', padding: '8px 12px', cursor: 'pointer' }}>
+            Import to Supabase
+            <input
+              type="file"
+              accept=".json"
+              onChange={async (event) => {
+                const file = event.target.files[0];
+                if (file) {
+                  const reader = new FileReader();
+                  reader.onload = async (e) => {
+                    try {
+                      const exportedData = JSON.parse(e.target.result);
+                      const { migrateToSupabase } = await import('../services/supabase');
+                      await migrateToSupabase(exportedData);
+                      alert('Data migrated to Supabase successfully!');
+                      window.location.reload();
+                    } catch (error) {
+                      alert('Migration failed: ' + error.message);
+                    }
+                  };
+                  reader.readAsText(file);
+                }
+              }}
+              style={{ display: 'none' }}
+            />
+          </label>
+
           <button 
             className="btn btn-secondary"
             onClick={async () => {

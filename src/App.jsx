@@ -9,7 +9,7 @@ import ActivityDetail from './components/ActivityDetail';
 import CoachingPromptEditor from './components/CoachingPromptEditor';
 import WorkoutFeedback from './components/WorkoutFeedback';
 import PostponeWorkout from './components/PostponeWorkout';
-import { generateWorkout, generateWeeklyPlan, adjustWeeklyPlanForPostponement, syncWithStrava, generateInsights } from './services/api';
+import { generateWorkout, generateWeeklyPlan, syncWithStrava, generateInsights } from './services/api';
 
 function App() {
   const [workout, setWorkout] = useState(null);
@@ -24,8 +24,28 @@ function App() {
   const [showPromptEditor, setShowPromptEditor] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
   const [showPostpone, setShowPostpone] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
   const [darkMode, setDarkMode] = useState(localStorage.getItem('darkMode') === 'true');
   const [isInjured, setIsInjured] = useState(localStorage.getItem('isInjured') === 'true');
+
+  // Track daily button usage
+  const [dailyUsage, setDailyUsage] = useState(() => {
+    const today = new Date().toDateString();
+    const stored = localStorage.getItem('daily_button_usage');
+    const usage = stored ? JSON.parse(stored) : {};
+    
+    // Reset if it's a new day
+    if (usage.date !== today) {
+      return { date: today, postponed: false, recovery: false };
+    }
+    return usage;
+  });
+
+  const updateDailyUsage = (action) => {
+    const newUsage = { ...dailyUsage, [action]: true };
+    setDailyUsage(newUsage);
+    localStorage.setItem('daily_button_usage', JSON.stringify(newUsage));
+  };
   const [isAuthenticated, setIsAuthenticated] = useState(localStorage.getItem('authenticated') === 'true');
   const [password, setPassword] = useState('');
   const [apiKey, setApiKey] = useState(
@@ -430,6 +450,12 @@ function App() {
           setShowWorkoutDetail(false);
           setSelectedPlannedWorkout(null);
         }}
+        onPostpone={() => {
+          setShowPostpone(true);
+          updateDailyUsage('postponed');
+          window.history.pushState({ view: 'postpone' }, '', window.location.pathname);
+        }}
+        postponeDisabled={dailyUsage.postponed}
       />
     );
   }
@@ -478,14 +504,126 @@ function App() {
 
   return (
     <div className="app">
-      <button 
-        className="theme-toggle"
-        onClick={() => setDarkMode(!darkMode)}
-        title="Toggle dark mode"
-      >
-        {darkMode ? '☀' : '☾'}
-      </button>
-      
+      {/* Hamburger Menu */}
+      <div style={{ position: 'fixed', top: '20px', left: '20px', zIndex: 1000 }}>
+        <button
+          onClick={() => setShowMenu(!showMenu)}
+          style={{
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '4px',
+            width: '30px',
+            height: '30px',
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: '5px'
+          }}
+        >
+          <div style={{ width: '24px', height: '3px', backgroundColor: 'var(--text-color)', borderRadius: '2px' }}></div>
+          <div style={{ width: '24px', height: '3px', backgroundColor: 'var(--text-color)', borderRadius: '2px' }}></div>
+          <div style={{ width: '24px', height: '3px', backgroundColor: 'var(--text-color)', borderRadius: '2px' }}></div>
+        </button>
+
+        {/* Menu Slide Panel */}
+        <div style={{
+          position: 'fixed',
+          top: '0',
+          left: showMenu ? '0' : '-300px',
+          width: '280px',
+          height: '100vh',
+          background: 'var(--card-bg)',
+          borderRight: '1px solid var(--border-color)',
+          transition: 'left 0.3s ease-in-out',
+          padding: '60px 0 20px 0',
+          boxShadow: showMenu ? '2px 0 10px rgba(0,0,0,0.1)' : 'none',
+          zIndex: 999
+        }}>
+          <div style={{ 
+            padding: '0 20px 20px 20px', 
+            fontSize: '20px', 
+            fontWeight: '600', 
+            color: 'var(--text-color)',
+            borderBottom: '1px solid var(--border-color)',
+            marginBottom: '0'
+          }}>
+            Menu
+          </div>
+          
+          <div style={{ padding: '0' }}>
+            <button
+              onClick={() => {
+                setDarkMode(!darkMode);
+                setShowMenu(false);
+              }}
+              style={{
+                width: '100%',
+                padding: '16px 20px',
+                background: 'none',
+                border: 'none',
+                textAlign: 'left',
+                cursor: 'pointer',
+                color: 'var(--text-color)',
+                fontSize: '16px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                borderBottom: '1px solid var(--grid-color)'
+              }}
+              onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--grid-color)'}
+              onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+            >
+              <span style={{ fontSize: '18px' }}>{darkMode ? '☀️' : '🌙'}</span>
+              <span>{darkMode ? 'Light Mode' : 'Dark Mode'}</span>
+            </button>
+            
+            <button
+              onClick={() => {
+                setShowPromptEditor(true);
+                setShowMenu(false);
+              }}
+              style={{
+                width: '100%',
+                padding: '16px 20px',
+                background: 'none',
+                border: 'none',
+                textAlign: 'left',
+                cursor: 'pointer',
+                color: 'var(--text-color)',
+                fontSize: '16px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                borderBottom: '1px solid var(--grid-color)'
+              }}
+              onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--grid-color)'}
+              onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+            >
+              <span style={{ fontSize: '18px' }}>⚙️</span>
+              <span>Coaching Settings</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Overlay */}
+        {showMenu && (
+          <div 
+            style={{
+              position: 'fixed',
+              top: '0',
+              left: '0',
+              width: '100vw',
+              height: '100vh',
+              backgroundColor: 'rgba(0,0,0,0.3)',
+              zIndex: 998
+            }}
+            onClick={() => setShowMenu(false)}
+          />
+        )}
+      </div>
+
       <div className="header">
         <h1>Running Coach</h1>
         <p>Your AI-powered running companion</p>
@@ -525,47 +663,21 @@ function App() {
       <div className="buttons">
         <button 
           className="btn btn-secondary" 
-          onClick={() => handleGenerateWorkout(false, { reason: 'Recovery day', adjustment: 'recovery' })}
-          disabled={loading || (!apiKey && !import.meta.env.VITE_OPENAI_API_KEY)}
-          style={{ fontSize: '14px', padding: '12px 20px' }}
-        >
-          Generate Recovery Exercises
-        </button>
-        
-        {workout && (
-          <button 
-            className="btn btn-secondary" 
-            onClick={() => {
-              setShowPostpone(true);
-              // Add to browser history
-              window.history.pushState({ view: 'postpone' }, '', window.location.pathname);
-            }}
-            disabled={loading}
-            style={{ fontSize: '14px', padding: '12px 20px' }}
-          >
-            Postpone Workout
-          </button>
-        )}
-        
-        <button 
-          className={`btn ${isInjured ? 'btn-primary' : 'btn-secondary'}`}
-          onClick={() => setIsInjured(!isInjured)}
-          style={{ fontSize: '14px', padding: '12px 20px' }}
-        >
-          {isInjured ? 'I\'m Injured' : 'I\'m Healthy'}
-        </button>
-        
-        <button 
-          className="btn btn-secondary" 
           onClick={() => {
-            setShowPromptEditor(true);
-            // Add to browser history
-            window.history.pushState({ view: 'promptEditor' }, '', window.location.pathname);
+            handleGenerateWorkout(false, { reason: 'Recovery day', adjustment: 'recovery' });
+            updateDailyUsage('recovery');
           }}
-          style={{ fontSize: '14px', padding: '12px 20px' }}
+          disabled={loading || (!apiKey && !import.meta.env.VITE_OPENAI_API_KEY) || dailyUsage.recovery}
+          style={{ 
+            fontSize: '14px', 
+            padding: '12px 20px',
+            opacity: dailyUsage.recovery ? 0.5 : 1,
+            cursor: dailyUsage.recovery ? 'not-allowed' : 'pointer'
+          }}
         >
-          Coaching Settings
+          {dailyUsage.recovery ? 'Recovery Used Today' : 'Generate Recovery Exercises'}
         </button>
+        
       </div>
 
       {loading && (

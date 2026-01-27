@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-const WorkoutDetail = ({ workout, onBack }) => {
+const WorkoutDetail = ({ workout, onBack, onPostpone, postponeDisabled }) => {
   const [completedBlocks, setCompletedBlocks] = useState(new Set());
 
   const toggleBlockCompletion = (blockIndex) => {
@@ -147,6 +147,24 @@ const WorkoutDetail = ({ workout, onBack }) => {
             Completed: {completedBlocks.size} of {workout.blocks?.length || 0} blocks
           </div>
         </div>
+
+        {onPostpone && (
+          <div style={{ marginTop: '20px', textAlign: 'center' }}>
+            <button 
+              className="btn btn-secondary" 
+              onClick={onPostpone}
+              disabled={postponeDisabled}
+              style={{ 
+                fontSize: '14px', 
+                padding: '12px 20px',
+                opacity: postponeDisabled ? 0.5 : 1,
+                cursor: postponeDisabled ? 'not-allowed' : 'pointer'
+              }}
+            >
+              {postponeDisabled ? 'Postponed Today' : 'Postpone Workout'}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
