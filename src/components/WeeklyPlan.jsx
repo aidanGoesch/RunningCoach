@@ -26,10 +26,9 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey }
           console.log('Parsed weekly plan:', parsedPlan);
           setWeeklyPlan(parsedPlan);
           console.log('Weekly plan state set successfully');
-        } else if (apiKey || import.meta.env.VITE_OPENAI_API_KEY) {
-          console.log('No weekly plan found, auto-generating...');
-          // Auto-generate plan if none exists and we have an API key
-          onGenerateWeeklyPlan();
+        } else {
+          console.log('No weekly plan found - NOT auto-generating to avoid API spam');
+          // Removed auto-generation to prevent API rate limiting
         }
       } catch (error) {
         console.error('Error loading weekly plan from Supabase:', error);
@@ -39,14 +38,15 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey }
         console.log('localStorage weekly plan:', localPlan);
         if (localPlan) {
           setWeeklyPlan(JSON.parse(localPlan));
-        } else if (apiKey || import.meta.env.VITE_OPENAI_API_KEY) {
-          onGenerateWeeklyPlan();
+        } else {
+          console.log('No weekly plan found in localStorage either - use Generate Weekly Plan button');
+          // Removed auto-generation to prevent API rate limiting
         }
       }
     };
 
     loadWeeklyPlan();
-  }, [apiKey, onGenerateWeeklyPlan]);
+  }, [apiKey]); // Removed onGenerateWeeklyPlan from dependencies to prevent infinite loops
 
   const getDayInfo = (dayOffset) => {
     if (!currentWeek) return null;
