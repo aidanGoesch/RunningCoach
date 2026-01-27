@@ -170,7 +170,8 @@ export const generateWorkout = async (apiKey, activities = [], isInjured = false
 
 CRITICAL: Return the response in this exact JSON format:
 {
-  "title": "Recovery Exercise Routine",
+  "title": "Recovery",
+  "type": "recovery",
   "blocks": [
     {
       "title": "Hip Stability",

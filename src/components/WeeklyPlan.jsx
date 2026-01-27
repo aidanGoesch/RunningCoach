@@ -25,6 +25,7 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey }
           const parsedPlan = JSON.parse(storedPlan);
           console.log('Parsed weekly plan:', parsedPlan);
           setWeeklyPlan(parsedPlan);
+          console.log('Weekly plan state set successfully');
         } else if (apiKey || import.meta.env.VITE_OPENAI_API_KEY) {
           console.log('No weekly plan found, auto-generating...');
           // Auto-generate plan if none exists and we have an API key
@@ -117,6 +118,9 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey }
   };
 
   const weeklyStats = getWeeklyStats();
+
+  console.log('WeeklyPlan render - weeklyPlan:', weeklyPlan);
+  console.log('WeeklyPlan render - currentWeek:', currentWeek);
 
   return (
     <div className="workout-display" style={{ marginBottom: '20px' }}>
