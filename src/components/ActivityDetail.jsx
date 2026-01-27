@@ -123,8 +123,14 @@ const ActivityDetail = ({ activityId, onBack }) => {
       );
       
       const activityInsights = await Promise.race([insightsPromise, timeoutPromise]);
-      setInsights(activityInsights);
-      await saveActivityInsights(activityId, activityInsights);
+      
+      // Extract the insights text from the response
+      const insightsText = typeof activityInsights === 'string' 
+        ? activityInsights 
+        : activityInsights?.insights || activityInsights?.content || JSON.stringify(activityInsights);
+      
+      setInsights(insightsText);
+      await saveActivityInsights(activityId, insightsText);
       console.log('Insights generated and saved');
     } catch (err) {
       console.error('Failed to generate insights:', err);

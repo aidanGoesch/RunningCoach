@@ -544,13 +544,13 @@ Keep insights concise and actionable.`;
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      model: 'gpt-4',
+      model: 'gpt-3.5-turbo',
       messages: [
         { role: 'system', content: basePrompt },
         { role: 'user', content: 'Analyze this activity and provide coaching insights.' }
       ],
       temperature: 0.7,
-      max_tokens: 800
+      max_tokens: 600
     })
   });
 
