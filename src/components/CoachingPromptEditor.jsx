@@ -113,6 +113,59 @@ Give context on how this fits into the overall plan
 
 Please provide progressive, injury-conscious workouts that will safely bridge the gap from my current 2:01 half marathon fitness to a 1:45 finish, with special attention to building durability and avoiding the overuse injuries I've experienced in the past.`);
 
+  const handleExportData = () => {
+    const exportData = {
+      exportDate: new Date().toISOString(),
+      version: "1.0",
+      data: {
+        coaching_prompt: localStorage.getItem('coaching_prompt'),
+        strava_activities: localStorage.getItem('strava_activities'),
+        workout_feedback: localStorage.getItem('workout_feedback'),
+        activity_ratings: localStorage.getItem('activity_ratings'),
+        rating_queue: localStorage.getItem('rating_queue'),
+        current_workout: localStorage.getItem('current_workout'),
+        postponed_workout: localStorage.getItem('postponed_workout'),
+        openai_api_key: localStorage.getItem('openai_api_key'),
+        darkMode: localStorage.getItem('darkMode'),
+        isInjured: localStorage.getItem('isInjured'),
+        authenticated: localStorage.getItem('authenticated')
+      }
+    };
+
+    // Add all weekly plans
+    const weeklyPlans = {};
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key.startsWith('weekly_plan_')) {
+        weeklyPlans[key] = localStorage.getItem(key);
+      }
+      if (key.startsWith('activity_detail_')) {
+        exportData.data[key] = localStorage.getItem(key);
+      }
+    }
+    exportData.data.weekly_plans = weeklyPlans;
+
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `running-coach-backup-${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+    const blob = new Blob([prompt], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'coaching-prompt.txt';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const handleSaveToFile = () => {
     const blob = new Blob([prompt], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
@@ -165,6 +218,14 @@ Please provide progressive, injury-conscious workouts that will safely bridge th
               style={{ display: 'none' }}
             />
           </label>
+
+          <button 
+            className="btn btn-primary"
+            onClick={handleExportData}
+            style={{ fontSize: '14px', padding: '8px 12px' }}
+          >
+            Export All Data
+          </button>
 
           <button 
             className="btn btn-secondary"
