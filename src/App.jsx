@@ -233,10 +233,11 @@ function App() {
 
     // Auto-sync with Strava on page load if we have tokens
     const hasTokens = localStorage.getItem('strava_access_token') && localStorage.getItem('strava_refresh_token');
-    if (hasTokens) {
+    if (hasTokens && !savedWorkout) {
+      // Only auto-sync if there's no current workout
       // Small delay to let the page load first
       setTimeout(() => {
-        handleStravaSync();
+        handleStravaSync(false); // Don't show loading for background sync
       }, 1000);
     }
 
@@ -386,11 +387,13 @@ function App() {
     }, 100);
   };
 
-  const handleStravaSync = async () => {
+  const handleStravaSync = async (showLoadingState = true) => {
     console.log('Strava sync clicked');
     console.log('Current token:', localStorage.getItem('strava_access_token') ? 'exists' : 'none');
     
-    setLoading(true);
+    if (showLoadingState) {
+      setLoading(true);
+    }
     setError(null);
     
     try {
@@ -417,7 +420,9 @@ function App() {
       console.error('Strava sync error:', err);
       setError(`Strava sync failed: ${err.message}`);
     } finally {
-      setLoading(false);
+      if (showLoadingState) {
+        setLoading(false);
+      }
     }
   };
 
