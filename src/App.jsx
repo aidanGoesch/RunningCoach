@@ -322,6 +322,7 @@ function App() {
   };
 
   const handlePlannedWorkoutClick = (plannedWorkout, dayName) => {
+    console.log('Planned workout clicked:', plannedWorkout, dayName);
     setSelectedPlannedWorkout({ workout: plannedWorkout, dayName });
     setShowWorkoutDetail(true);
     window.history.pushState({ view: 'plannedWorkout', dayName }, '', window.location.pathname);
@@ -481,6 +482,8 @@ function App() {
   if (showWorkoutDetail) {
     const workoutToShow = selectedPlannedWorkout ? selectedPlannedWorkout.workout : workout;
     const title = selectedPlannedWorkout ? `${selectedPlannedWorkout.dayName} - ${workoutToShow.title}` : workoutToShow.title;
+    
+    console.log('Showing workout detail:', { workoutToShow, title, selectedPlannedWorkout });
     
     return (
       <WorkoutDetail 
