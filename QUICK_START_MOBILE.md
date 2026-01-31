@@ -42,13 +42,22 @@ Then in Xcode:
 
 ## Data Sync
 
-The mobile app automatically syncs with Supabase when running on iOS. This means:
+The mobile app automatically syncs with Supabase when running on iOS. 
+
+**To enable sync on the web app (GitHub Pages):**
+1. Open the web app
+2. Click the menu (☰) 
+3. Click "Enable Cloud Sync"
+
+Once enabled on both platforms:
 
 ✅ Workouts sync between phone and web  
 ✅ Activities sync between phone and web  
 ✅ Weekly plans sync between phone and web  
 ✅ Settings sync between phone and web  
 ✅ Real-time updates (changes appear within seconds)
+
+**Note:** Both apps must use the same Supabase instance (same environment variables) for sync to work.
 
 ## Troubleshooting
 

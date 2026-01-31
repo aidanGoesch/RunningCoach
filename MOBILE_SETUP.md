@@ -2,6 +2,8 @@
 
 This guide will help you build and install the Running Coach app on your iPhone.
 
+**Note:** The web app is hosted on GitHub Pages. To sync data between the web app and mobile app, you'll need to enable cloud sync in the web app's menu (☰ > Enable Cloud Sync).
+
 ## Prerequisites
 
 1. **macOS** (required for iOS development)
@@ -111,11 +113,22 @@ This will open Xcode with your project.
 
 ## Step 10: Enable Supabase Sync
 
+### On Mobile App
 The mobile app automatically enables Supabase sync when running on iOS. This means:
 
 - All your data (workouts, activities, weekly plans) will sync to Supabase
 - Changes made on your phone will appear on the web app
 - Changes made on the web app will appear on your phone (via real-time sync)
+
+### On Web App (GitHub Pages)
+To sync your web app data with the mobile app:
+
+1. Open the web app on GitHub Pages
+2. Click the hamburger menu (☰) in the top-left corner
+3. Click **"Enable Cloud Sync"**
+4. Your data will now sync with Supabase and appear on your mobile app
+
+**Important:** Both the web app and mobile app must use the same Supabase instance (same `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`) for sync to work properly.
 
 ## Troubleshooting
 
@@ -188,7 +201,7 @@ VITE_OPENAI_API_KEY=your_openai_key (optional)
 
 ## Data Sync
 
-The mobile app uses Supabase for data synchronization:
+Both the web app (GitHub Pages) and mobile app use Supabase for data synchronization:
 
 - **Activities**: Synced from Strava and stored in Supabase
 - **Workouts**: Generated workouts are saved to Supabase
@@ -196,6 +209,13 @@ The mobile app uses Supabase for data synchronization:
 - **Settings**: Coaching prompts and preferences sync
 
 Changes are synced in real-time using Supabase's real-time subscriptions, so updates on one device appear on the other within seconds.
+
+### Sync Status
+
+- **Mobile App**: Automatically enabled when running on iOS
+- **Web App**: Must be manually enabled via the menu (☰ > Enable Cloud Sync)
+
+Both apps must use the same Supabase credentials (configured via environment variables) to sync properly.
 
 ## Notes
 

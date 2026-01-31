@@ -22,9 +22,11 @@ npm run build
 ## Features
 
 - **Generate Workout**: Uses ChatGPT to create personalized running workouts
-- **Strava Integration**: Placeholder for future Strava API integration
+- **Strava Integration**: Sync activities from Strava
+- **Mobile App**: Native iOS app with Capacitor (see [MOBILE_SETUP.md](./MOBILE_SETUP.md))
+- **Cloud Sync**: Sync data between web and mobile using Supabase
 - **Mobile-Friendly**: Responsive design optimized for mobile devices
-- **GitHub Pages Ready**: Configured for static hosting
+- **GitHub Pages**: Hosted on GitHub Pages
 
 ## Usage
 
@@ -42,3 +44,26 @@ npm run build
 ## Deployment
 
 The app is configured for GitHub Pages deployment. The build output will be in the `dist` folder.
+
+### GitHub Pages Setup
+
+1. Build the app: `npm run build`
+2. Commit and push the `dist` folder to your GitHub repository
+3. Enable GitHub Pages in your repository settings (pointing to the `dist` folder)
+
+### Cloud Sync (Web ↔ Mobile)
+
+To enable data sync between the web app and mobile app:
+
+1. **On Web App (GitHub Pages):**
+   - Open the app
+   - Click the menu (☰) in the top-left
+   - Click "Enable Cloud Sync"
+
+2. **On Mobile App:**
+   - Sync is automatically enabled when running on iOS
+   - No manual configuration needed
+
+Both apps must use the same Supabase credentials (via environment variables) for sync to work.
+
+See [MOBILE_SETUP.md](./MOBILE_SETUP.md) for mobile app setup instructions.

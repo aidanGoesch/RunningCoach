@@ -10,7 +10,7 @@ import CoachingPromptEditor from './components/CoachingPromptEditor';
 import WorkoutFeedback from './components/WorkoutFeedback';
 import PostponeWorkout from './components/PostponeWorkout';
 import { generateWorkout, generateWeeklyPlan, syncWithStrava, generateInsights } from './services/api';
-import { dataService, setupRealtimeSync, syncAllDataFromSupabase } from './services/supabase';
+import { dataService, setupRealtimeSync, syncAllDataFromSupabase, enableSupabase } from './services/supabase';
 
 function App() {
   const [workout, setWorkout] = useState(null);
@@ -28,6 +28,7 @@ function App() {
   const [showMenu, setShowMenu] = useState(false);
   const [darkMode, setDarkMode] = useState(localStorage.getItem('darkMode') === 'true');
   const [isInjured, setIsInjured] = useState(localStorage.getItem('isInjured') === 'true');
+  const [supabaseEnabled, setSupabaseEnabled] = useState(dataService.useSupabase || localStorage.getItem('use_supabase') === 'true');
 
   // Track daily button usage
   const [dailyUsage, setDailyUsage] = useState(() => {
@@ -733,6 +734,74 @@ function App() {
             >
               <span style={{ fontSize: '18px' }}>📅</span>
               <span>Generate Weekly Plan</span>
+            </button>
+            
+            <button
+              onClick={async () => {
+                if (!supabaseEnabled) {
+                  enableSupabase();
+                  setSupabaseEnabled(true);
+                  setError(null);
+                  setTimeout(() => {
+                    setError('Supabase sync enabled! Your data will now sync with the mobile app.');
+                    setTimeout(() => setError(null), 3000);
+                  }, 100);
+                  // Reload data from Supabase
+                  const syncedData = await syncAllDataFromSupabase();
+                  if (syncedData) {
+                    if (syncedData.activities && syncedData.activities.length > 0) {
+                      setActivities(syncedData.activities);
+                    }
+                    if (syncedData.workout) {
+                      setWorkout(syncedData.workout);
+                    }
+                  }
+                  // Setup real-time sync
+                  setupRealtimeSync({
+                    onActivitiesChange: async (payload) => {
+                      const stored = await dataService.get('strava_activities');
+                      if (stored) {
+                        setActivities(JSON.parse(stored));
+                      }
+                    },
+                    onWorkoutChange: async (payload) => {
+                      const workoutData = await dataService.get('current_workout');
+                      if (workoutData) {
+                        setWorkout(JSON.parse(workoutData));
+                      }
+                    }
+                  });
+                } else {
+                  dataService.useSupabase = false;
+                  localStorage.setItem('use_supabase', 'false');
+                  setSupabaseEnabled(false);
+                  setError(null);
+                  setTimeout(() => {
+                    setError('Supabase sync disabled. Using local storage only.');
+                    setTimeout(() => setError(null), 3000);
+                  }, 100);
+                }
+                setShowMenu(false);
+              }}
+              style={{
+                width: '100%',
+                padding: '16px 20px',
+                background: 'none',
+                border: 'none',
+                textAlign: 'left',
+                cursor: 'pointer',
+                color: 'var(--text-color)',
+                fontSize: '16px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                borderBottom: '1px solid var(--grid-color)'
+              }}
+              onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--grid-color)'}
+              onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+            >
+              <span style={{ fontSize: '18px' }}>{supabaseEnabled ? '☁️' : '📱'}</span>
+              <span>{supabaseEnabled ? 'Disable Cloud Sync' : 'Enable Cloud Sync'}</span>
             </button>
           </div>
         </div>
