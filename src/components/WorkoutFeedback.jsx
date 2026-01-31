@@ -1,6 +1,8 @@
 import { useState } from 'react';
+import { useSwipeBack } from '../hooks/useSwipeBack';
 
-const WorkoutFeedback = ({ workout, onSubmit }) => {
+const WorkoutFeedback = ({ workout, onSubmit, onBack }) => {
+  const swipeBackRef = useSwipeBack(onBack);
   const [rating, setRating] = useState(null);
   const [isInjured, setIsInjured] = useState(false);
   const [injuryDetails, setInjuryDetails] = useState('');
@@ -21,7 +23,8 @@ const WorkoutFeedback = ({ workout, onSubmit }) => {
   };
 
   return (
-    <div className="workout-display">
+    <div className="app" ref={swipeBackRef}>
+      <div className="workout-display">
       <div className="workout-title">📝 Workout Feedback</div>
       
       <div className="workout-block">
@@ -107,6 +110,7 @@ const WorkoutFeedback = ({ workout, onSubmit }) => {
         >
           Submit Feedback
         </button>
+      </div>
       </div>
     </div>
   );

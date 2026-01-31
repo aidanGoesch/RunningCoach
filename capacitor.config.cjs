@@ -1,7 +1,5 @@
-import { CapacitorConfig } from '@capacitor/cli';
-
-const config: CapacitorConfig = {
-  appId: 'com.runningcoach.app',
+module.exports = {
+  appId: 'com.aidangoeschel.runningcoach',
   appName: 'Running Coach',
   webDir: 'dist',
   server: {
@@ -24,5 +22,3 @@ const config: CapacitorConfig = {
     }
   }
 };
-
-export default config;

@@ -1,6 +1,8 @@
 import { useState } from 'react';
+import { useSwipeBack } from '../hooks/useSwipeBack';
 
 const CoachingPromptEditor = ({ onSave, onCancel, currentPrompt }) => {
+  const swipeBackRef = useSwipeBack(onCancel);
   const [prompt, setPrompt] = useState(currentPrompt || `You are an elite running coach specializing in half marathon training and injury prevention. I need a personalized 100-day training plan to run a half marathon in 1:45:00 on May 2nd.`);
 
   const handleExportData = () => {
@@ -80,7 +82,8 @@ const CoachingPromptEditor = ({ onSave, onCancel, currentPrompt }) => {
   };
 
   return (
-    <div className="workout-display">
+    <div className="app" ref={swipeBackRef}>
+      <div className="workout-display">
       <div className="workout-title">Coaching Prompt Settings</div>
       
       <div className="workout-block">
@@ -210,6 +213,7 @@ const CoachingPromptEditor = ({ onSave, onCancel, currentPrompt }) => {
             Cancel
           </button>
         </div>
+      </div>
       </div>
     </div>
   );

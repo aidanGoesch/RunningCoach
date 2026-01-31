@@ -3,32 +3,39 @@ import { createRoot } from 'react-dom/client'
 import App from './App.jsx'
 import './index.css'
 
-// Initialize Capacitor for mobile (with error handling)
-(async () => {
-  try {
-    const { Capacitor } = await import('@capacitor/core');
-    
-    if (Capacitor && Capacitor.isNativePlatform()) {
-      import('@capacitor/app').then(({ App: CapacitorApp }) => {
-        // Handle app state changes
-        CapacitorApp.addListener('appStateChange', ({ isActive }) => {
-          console.log('App state changed. Is active?', isActive);
-        });
-      }).catch(err => console.log('Capacitor App plugin not available:', err));
-
-      import('@capacitor/status-bar').then(({ StatusBar }) => {
-        StatusBar.setStyle({ style: 'dark' });
-        StatusBar.setBackgroundColor({ color: '#ffffff' });
-      }).catch(err => console.log('Capacitor StatusBar plugin not available:', err));
+// Initialize Capacitor for mobile (runtime only, won't break web builds)
+// Capacitor will be injected by the native app at runtime
+if (typeof window !== 'undefined' && window.Capacitor) {
+  // Only run if Capacitor is already available (injected by native app)
+  // This avoids any import statements that would break the web build
+  setTimeout(() => {
+    try {
+      if (window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) {
+        // Use global Capacitor object that's injected by the native app
+        // No imports needed - Capacitor is available globally in native apps
+        console.log('Running in Capacitor native environment');
+        
+        // Status bar styling is handled by Capacitor config
+        // App state listeners can be added here if needed via Capacitor.Plugins
+      }
+    } catch (err) {
+      // Not in native environment, continue as web app
     }
-  } catch (err) {
-    // Capacitor not available (running in web browser)
-    console.log('Capacitor not available, running in web mode');
-  }
-})();
+  }, 100);
+}
 
-createRoot(document.getElementById('root')).render(
+// Wait for DOM to be ready and ensure root element exists
+const rootElement = document.getElementById('root');
+if (!rootElement) {
+  throw new Error('Root element not found');
+}
+
+// Clear any existing content to avoid hydration issues
+rootElement.innerHTML = '';
+
+const root = createRoot(rootElement);
+root.render(
   <StrictMode>
     <App />
-  </StrictMode>,
-)
+  </StrictMode>
+);

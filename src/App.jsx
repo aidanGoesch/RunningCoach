@@ -9,6 +9,7 @@ import ActivityDetail from './components/ActivityDetail';
 import CoachingPromptEditor from './components/CoachingPromptEditor';
 import WorkoutFeedback from './components/WorkoutFeedback';
 import PostponeWorkout from './components/PostponeWorkout';
+import PullToRefresh from './components/PullToRefresh';
 import { generateWorkout, generateWeeklyPlan, syncWithStrava, generateInsights } from './services/api';
 import { dataService, setupRealtimeSync, syncAllDataFromSupabase, enableSupabase } from './services/supabase';
 
@@ -137,9 +138,29 @@ function App() {
   useEffect(() => {
     // Check if this is a Strava callback - handle both paths and URL params
     const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
+    const error = urlParams.get('error');
     const isCallback = window.location.pathname === '/strava-callback' || 
                       window.location.pathname === '/RunningCoach/strava-callback' ||
-                      urlParams.has('code');
+                      window.location.pathname === '/strava-callback.html' ||
+                      (code !== null || error !== null);
+    
+    // Check if there's an activity ID in the URL (after Strava auth redirect)
+    const activityIdFromUrl = urlParams.get('activity');
+    if (activityIdFromUrl && !isCallback) {
+      setSelectedActivityId(parseInt(activityIdFromUrl));
+      // Clean up URL
+      window.history.replaceState({}, '', window.location.pathname);
+      return;
+    }
+    
+    // Check if we should redirect to an activity after Strava auth
+    const redirectToActivity = sessionStorage.getItem('redirect_to_activity');
+    if (redirectToActivity && !isCallback) {
+      sessionStorage.removeItem('redirect_to_activity');
+      setSelectedActivityId(parseInt(redirectToActivity));
+      return;
+    }
     
     if (isCallback) {
       setIsStravaCallback(true);
@@ -527,11 +548,27 @@ function App() {
   const handleStravaAuthComplete = (success) => {
     setIsStravaCallback(false);
     if (success) {
-      // Redirect back to main app and sync
-      window.history.replaceState({}, '', '/');
-      handleStravaSync();
+      // Clear the callback URL parameters
+      const urlParams = new URLSearchParams(window.location.search);
+      urlParams.delete('code');
+      urlParams.delete('state');
+      urlParams.delete('scope');
+      const cleanUrl = window.location.pathname + (urlParams.toString() ? '?' + urlParams.toString() : '');
+      window.history.replaceState({}, '', cleanUrl);
+      
+      // Check if we should redirect to an activity
+      const redirectToActivity = sessionStorage.getItem('redirect_to_activity');
+      if (redirectToActivity) {
+        sessionStorage.removeItem('redirect_to_activity');
+        setSelectedActivityId(parseInt(redirectToActivity));
+      } else {
+        // Sync with Strava to get activities
+        handleStravaSync();
+      }
     } else {
       setError('Strava authentication failed');
+      // Clean up URL even on error
+      window.history.replaceState({}, '', window.location.pathname);
     }
   };
 
@@ -580,6 +617,10 @@ function App() {
       <WorkoutFeedback 
         workout={workout}
         onSubmit={handleWorkoutFeedback}
+        onBack={() => {
+          setShowFeedback(false);
+          window.history.pushState({ view: 'main' }, '', window.location.pathname);
+        }}
       />
     );
   }
@@ -610,7 +651,14 @@ function App() {
   return (
     <div className="app">
       {/* Hamburger Menu */}
-      <div style={{ position: 'fixed', top: '20px', left: '20px', zIndex: 1000 }}>
+      <div style={{ 
+        position: 'fixed', 
+        top: '20px', 
+        left: '20px', 
+        zIndex: 1000,
+        paddingTop: 'env(safe-area-inset-top)',
+        paddingLeft: 'env(safe-area-inset-left)'
+      }}>
         <button
           onClick={() => setShowMenu(!showMenu)}
           style={{
@@ -823,101 +871,103 @@ function App() {
         )}
       </div>
 
-      <div className="header">
-        <h1>Running Coach</h1>
-        <p>Your AI-powered running companion</p>
-      </div>
-
-      {!import.meta.env.VITE_OPENAI_API_KEY && (
-        <div style={{ marginBottom: '20px' }}>
-          <input
-            type="password"
-            placeholder="Enter OpenAI API Key"
-            value={apiKey}
-            onChange={handleApiKeyChange}
-            style={{
-              width: '100%',
-              padding: '12px',
-              border: '1px solid #ddd',
-              borderRadius: '8px',
-              fontSize: '14px'
-            }}
-          />
+      <PullToRefresh onRefresh={handleStravaSync}>
+        <div className="header">
+          <h1>Running Coach</h1>
+          <p>Your AI-powered running companion</p>
         </div>
-      )}
 
-      {error && (
-        <div className="error">
-          {error}
-        </div>
-      )}
+        {!import.meta.env.VITE_OPENAI_API_KEY && (
+          <div style={{ marginBottom: '20px' }}>
+            <input
+              type="password"
+              placeholder="Enter OpenAI API Key"
+              value={apiKey}
+              onChange={handleApiKeyChange}
+              style={{
+                width: '100%',
+                padding: '12px',
+                border: '1px solid #ddd',
+                borderRadius: '8px',
+                fontSize: '14px'
+              }}
+            />
+          </div>
+        )}
 
-      <WeeklyPlan 
-        activities={activities}
-        onWorkoutClick={handlePlannedWorkoutClick}
-        onGenerateWeeklyPlan={handleGenerateWeeklyPlan}
-        apiKey={apiKey}
-      />
+        {error && (
+          <div className="error">
+            {error}
+          </div>
+        )}
 
-      <div className="buttons">
-        <button 
-          className="btn btn-secondary" 
-          onClick={() => {
-            handleGenerateWorkout(false, { reason: 'Recovery day', adjustment: 'recovery' });
-            updateDailyUsage('recovery');
-          }}
-          disabled={loading || (!apiKey && !import.meta.env.VITE_OPENAI_API_KEY) || dailyUsage.recovery}
-          style={{ 
-            fontSize: '14px', 
-            padding: '12px 20px',
-            opacity: dailyUsage.recovery ? 0.5 : 1,
-            cursor: dailyUsage.recovery ? 'not-allowed' : 'pointer'
-          }}
-        >
-          {dailyUsage.recovery ? 'Recovery Used Today' : 'Generate Recovery Exercises'}
-        </button>
-        
-      </div>
+        <WeeklyPlan 
+          activities={activities}
+          onWorkoutClick={handlePlannedWorkoutClick}
+          onGenerateWeeklyPlan={handleGenerateWeeklyPlan}
+          apiKey={apiKey}
+        />
 
-      {loading && (
-        <div className="loading">
-          Generating your personalized workout...
-        </div>
-      )}
-
-      <WorkoutDisplay 
-        workout={workout} 
-        onWorkoutClick={() => {
-          setShowWorkoutDetail(true);
-          // Add to browser history
-          window.history.pushState({ view: 'workoutDetail' }, '', window.location.pathname);
-        }}
-      />
-      
-      {workout && (
-        <div style={{ marginBottom: '20px' }}>
+        <div className="buttons">
           <button 
-            className="btn btn-secondary"
+            className="btn btn-secondary" 
             onClick={() => {
-              setShowFeedback(true);
-              // Add to browser history
-              window.history.pushState({ view: 'feedback' }, '', window.location.pathname);
+              handleGenerateWorkout(false, { reason: 'Recovery day', adjustment: 'recovery' });
+              updateDailyUsage('recovery');
             }}
-            style={{ width: '100%' }}
+            disabled={loading || (!apiKey && !import.meta.env.VITE_OPENAI_API_KEY) || dailyUsage.recovery}
+            style={{ 
+              fontSize: '14px', 
+              padding: '12px 20px',
+              opacity: dailyUsage.recovery ? 0.5 : 1,
+              cursor: dailyUsage.recovery ? 'not-allowed' : 'pointer'
+            }}
           >
-            Rate This Workout
+            {dailyUsage.recovery ? 'Recovery Used Today' : 'Generate Recovery Exercises'}
           </button>
+          
         </div>
-      )}
-      
-      <ActivitiesDisplay 
-        activities={activities} 
-        onActivityClick={(activityId) => {
-          setSelectedActivityId(activityId);
-          // Add to browser history
-          window.history.pushState({ view: 'activity', activityId }, '', window.location.pathname);
-        }}
-      />
+
+        {loading && (
+          <div className="loading">
+            Generating your personalized workout...
+          </div>
+        )}
+
+        <WorkoutDisplay 
+          workout={workout} 
+          onWorkoutClick={() => {
+            setShowWorkoutDetail(true);
+            // Add to browser history
+            window.history.pushState({ view: 'workoutDetail' }, '', window.location.pathname);
+          }}
+        />
+        
+        {workout && (
+          <div style={{ marginBottom: '20px' }}>
+            <button 
+              className="btn btn-secondary"
+              onClick={() => {
+                setShowFeedback(true);
+                // Add to browser history
+                window.history.pushState({ view: 'feedback' }, '', window.location.pathname);
+              }}
+              style={{ width: '100%' }}
+            >
+              Rate This Workout
+            </button>
+          </div>
+        )}
+        
+        <ActivitiesDisplay 
+          activities={activities} 
+          onActivityClick={(activityId) => {
+            setSelectedActivityId(activityId);
+            // Add to browser history
+            window.history.pushState({ view: 'activity', activityId }, '', window.location.pathname);
+          }}
+        />
+      </PullToRefresh>
     </div>
   );
 }

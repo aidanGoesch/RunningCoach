@@ -285,20 +285,19 @@ if (typeof window !== 'undefined') {
   // Check for mobile platform after a short delay to allow Capacitor to load
   setTimeout(() => {
     try {
-      // Try to import Capacitor dynamically
-      import('@capacitor/core').then(({ Capacitor }) => {
-        if (Capacitor && Capacitor.isNativePlatform()) {
-          console.log('Mobile platform detected, enabling Supabase sync');
-          dataService.useSupabase = true;
-          localStorage.setItem('use_supabase', 'true');
-        }
-      }).catch(() => {
-        // Capacitor not available, check user preference
+      // Check if Capacitor is available (injected by native app at runtime)
+      // No import needed - Capacitor is available globally in native apps
+      if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) {
+        console.log('Mobile platform detected, enabling Supabase sync');
+        dataService.useSupabase = true;
+        localStorage.setItem('use_supabase', 'true');
+      } else {
+        // Not in native environment, check user preference
         const preference = localStorage.getItem('use_supabase');
         if (preference === 'true') {
           dataService.useSupabase = true;
         }
-      });
+      }
     } catch (err) {
       // Ignore errors, will use localStorage
       console.log('Could not detect mobile platform, using localStorage');
@@ -798,5 +797,102 @@ export const syncAllDataFromSupabase = async () => {
   } catch (error) {
     console.error('Error syncing data from Supabase:', error);
     return null;
+  }
+};
+// Strava token storage functions
+export const saveStravaTokens = async (accessToken, refreshToken, expiresAt = null) => {
+  if (!dataService.useSupabase) {
+    localStorage.setItem('strava_access_token', accessToken);
+    localStorage.setItem('strava_refresh_token', refreshToken);
+    if (expiresAt) localStorage.setItem('strava_token_expires_at', expiresAt);
+    return;
+  }
+  try {
+    const user = await ensureUser();
+    const { error } = await supabase.from('strava_tokens').upsert({
+      user_id: user.id,
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      expires_at: expiresAt,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'user_id' });
+    if (error) {
+      console.error('Error saving Strava tokens to Supabase:', error);
+      localStorage.setItem('strava_access_token', accessToken);
+      localStorage.setItem('strava_refresh_token', refreshToken);
+      if (expiresAt) localStorage.setItem('strava_token_expires_at', expiresAt);
+      throw error;
+    }
+    localStorage.setItem('strava_access_token', accessToken);
+    localStorage.setItem('strava_refresh_token', refreshToken);
+    if (expiresAt) localStorage.setItem('strava_token_expires_at', expiresAt);
+    console.log('Strava tokens saved to Supabase');
+  } catch (error) {
+    console.error('Failed to save Strava tokens:', error);
+    localStorage.setItem('strava_access_token', accessToken);
+    localStorage.setItem('strava_refresh_token', refreshToken);
+    if (expiresAt) localStorage.setItem('strava_token_expires_at', expiresAt);
+  }
+};
+
+export const getStravaTokens = async () => {
+  if (!dataService.useSupabase) {
+    const accessToken = localStorage.getItem('strava_access_token');
+    const refreshToken = localStorage.getItem('strava_refresh_token');
+    return accessToken && refreshToken ? { accessToken, refreshToken } : null;
+  }
+  try {
+    const user = await ensureUser();
+    const { data, error } = await supabase.from('strava_tokens').select('access_token, refresh_token, expires_at').eq('user_id', user.id).single();
+    if (error) {
+      if (error.code === 'PGRST116') {
+        const accessToken = localStorage.getItem('strava_access_token');
+        const refreshToken = localStorage.getItem('strava_refresh_token');
+        if (accessToken && refreshToken) {
+          console.log('Migrating tokens from localStorage to Supabase');
+          await saveStravaTokens(accessToken, refreshToken);
+          return { accessToken, refreshToken };
+        }
+        return null;
+      }
+      console.error('Error getting Strava tokens from Supabase:', error);
+      const accessToken = localStorage.getItem('strava_access_token');
+      const refreshToken = localStorage.getItem('strava_refresh_token');
+      return accessToken && refreshToken ? { accessToken, refreshToken } : null;
+    }
+    if (data) {
+      localStorage.setItem('strava_access_token', data.access_token);
+      localStorage.setItem('strava_refresh_token', data.refresh_token);
+      if (data.expires_at) localStorage.setItem('strava_token_expires_at', data.expires_at);
+      return { accessToken: data.access_token, refreshToken: data.refresh_token, expiresAt: data.expires_at };
+    }
+    return null;
+  } catch (error) {
+    console.error('Failed to get Strava tokens:', error);
+    const accessToken = localStorage.getItem('strava_access_token');
+    const refreshToken = localStorage.getItem('strava_refresh_token');
+    return accessToken && refreshToken ? { accessToken, refreshToken } : null;
+  }
+};
+
+export const deleteStravaTokens = async () => {
+  if (!dataService.useSupabase) {
+    localStorage.removeItem('strava_access_token');
+    localStorage.removeItem('strava_refresh_token');
+    localStorage.removeItem('strava_token_expires_at');
+    return;
+  }
+  try {
+    const user = await ensureUser();
+    const { error } = await supabase.from('strava_tokens').delete().eq('user_id', user.id);
+    if (error) console.error('Error deleting Strava tokens from Supabase:', error);
+    localStorage.removeItem('strava_access_token');
+    localStorage.removeItem('strava_refresh_token');
+    localStorage.removeItem('strava_token_expires_at');
+  } catch (error) {
+    console.error('Failed to delete Strava tokens:', error);
+    localStorage.removeItem('strava_access_token');
+    localStorage.removeItem('strava_refresh_token');
+    localStorage.removeItem('strava_token_expires_at');
   }
 };

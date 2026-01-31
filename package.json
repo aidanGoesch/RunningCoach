@@ -7,13 +7,16 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "cap:add:ios": "npx cap add ios",
-    "cap:sync": "npx cap sync",
-    "cap:open:ios": "npx cap open ios",
-    "cap:build:ios": "npm run build && npx cap sync ios && npx cap open ios"
+    "cap:add:ios": "./node_modules/.bin/cap add ios",
+    "cap:sync": "./node_modules/.bin/cap sync",
+    "cap:open:ios": "./node_modules/.bin/cap open ios",
+    "build:mobile": "CAPACITOR=true npm run build",
+    "cap:build:ios": "npm run build:mobile && npm run cap:sync && npm run cap:open:ios",
+    "cap:init:ios": "npm run cap:add:ios && npm run cap:sync"
   },
   "dependencies": {
     "@capacitor/app": "^6.0.0",
+    "@capacitor/browser": "^6.0.6",
     "@capacitor/core": "^6.0.0",
     "@capacitor/ios": "^6.0.0",
     "@capacitor/keyboard": "^6.0.0",

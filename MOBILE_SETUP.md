@@ -40,10 +40,18 @@ Add the iOS platform to your Capacitor project:
 npm run cap:add:ios
 ```
 
-Or manually:
+Or manually (try these in order):
 
 ```bash
-npx cap add ios
+# Option 1: Use local binary
+./node_modules/.bin/cap add ios
+
+# Option 2: Use npx with full package name
+npx @capacitor/cli add ios
+
+# Option 3: If above don't work, install Capacitor CLI globally
+npm install -g @capacitor/cli
+cap add ios
 ```
 
 ## Step 4: Sync Capacitor

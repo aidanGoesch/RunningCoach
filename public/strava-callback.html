@@ -1,16 +1,79 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Strava Callback</title>
-  <script>
-    // Redirect to main app with callback parameters
-    const params = new URLSearchParams(window.location.search);
-    const newUrl = '/RunningCoach/?' + params.toString();
-    window.location.replace(newUrl);
-  </script>
-</head>
-<body>
-  <p>Redirecting...</p>
-</body>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Strava Callback - Running Coach</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏃‍♂️</text></svg>" />
+  </head>
+  <body>
+    <div style="text-align: center; padding: 40px; font-family: system-ui, sans-serif;">
+      <h2>Connecting to Strava...</h2>
+      <p>Please wait while we complete the authentication.</p>
+      <p id="status">Redirecting...</p>
+    </div>
+    <script>
+      // Immediately redirect - run as soon as script loads
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const code = params.get('code');
+        const error = params.get('error');
+        const state = params.get('state');
+        const scope = params.get('scope');
+        
+        if (code || error) {
+          // Build redirect URL with all parameters
+          const redirectParams = new URLSearchParams();
+          if (code) redirectParams.set('code', code);
+          if (error) redirectParams.set('error', error);
+          if (state) redirectParams.set('state', state);
+          if (scope) redirectParams.set('scope', scope);
+          
+          // For localhost development, redirect to root with params
+          // For GitHub Pages, redirect to /RunningCoach/ with params
+          let basePath = '/';
+          const pathname = window.location.pathname;
+          const hostname = window.location.hostname;
+          
+          if (pathname.includes('/RunningCoach/')) {
+            basePath = '/RunningCoach/';
+          } else if (hostname === 'localhost' || hostname === '127.0.0.1') {
+            basePath = '/';
+          }
+          
+          // Redirect to main app with the callback parameters
+          const redirectUrl = basePath + '?' + redirectParams.toString();
+          console.log('Strava callback - redirecting to:', redirectUrl);
+          
+          // Update status
+          const statusEl = document.getElementById('status');
+          if (statusEl) {
+            statusEl.textContent = 'Redirecting to app...';
+          }
+          
+          // Use replace to avoid back button issues
+          window.location.replace(redirectUrl);
+        } else {
+          // No callback params, redirect to main app
+          const statusEl = document.getElementById('status');
+          if (statusEl) {
+            statusEl.textContent = 'No callback parameters found. Redirecting...';
+          }
+          let basePath = '/';
+          if (window.location.pathname.includes('/RunningCoach/')) {
+            basePath = '/RunningCoach/';
+          }
+          setTimeout(() => {
+            window.location.replace(basePath);
+          }, 1000);
+        }
+      } catch (err) {
+        console.error('Redirect error:', err);
+        const statusEl = document.getElementById('status');
+        if (statusEl) {
+          statusEl.textContent = 'Error: ' + err.message + '. Please refresh the page.';
+        }
+      }
+    </script>
+  </body>
 </html>

@@ -1,6 +1,8 @@
 import { useState } from 'react';
+import { useSwipeBack } from '../hooks/useSwipeBack';
 
 const PostponeWorkout = ({ workout, onPostpone, onCancel }) => {
+  const swipeBackRef = useSwipeBack(onCancel);
   const [reason, setReason] = useState('');
   const [customReason, setCustomReason] = useState('');
 
@@ -30,7 +32,7 @@ const PostponeWorkout = ({ workout, onPostpone, onCancel }) => {
   };
 
   return (
-    <div className="app">
+    <div className="app" ref={swipeBackRef}>
       <div className="workout-display">
         <div className="workout-title">Postpone Today's Workout</div>
         

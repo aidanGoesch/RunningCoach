@@ -2,8 +2,10 @@ import { useState, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { getActivityDetails, getActivityStreams, generateInsights, getActivityRating } from '../services/api';
 import { getActivityInsights, saveActivityInsights } from '../services/supabase';
+import { useSwipeBack } from '../hooks/useSwipeBack';
 
 const ActivityDetail = ({ activityId, onBack }) => {
+  const swipeBackRef = useSwipeBack(onBack);
   const [activity, setActivity] = useState(null);
   const [streams, setStreams] = useState(null);
   const [insights, setInsights] = useState(null);
@@ -16,16 +18,45 @@ const ActivityDetail = ({ activityId, onBack }) => {
     const fetchActivityData = async () => {
       console.log('=== Starting fetchActivityData for activityId:', activityId, '===');
       
-      const token = localStorage.getItem('strava_access_token');
+      // Try to get token from Supabase first, then localStorage
+      const { getStravaTokens } = await import('../services/supabase');
+      const tokens = await getStravaTokens();
+      const token = tokens?.accessToken || localStorage.getItem('strava_access_token');
       const apiKey = import.meta.env.VITE_OPENAI_API_KEY || localStorage.getItem('openai_api_key');
       
       console.log('Token exists:', !!token);
       console.log('API key exists:', !!apiKey);
       
       if (!token) {
-        console.error('No Strava token found - this is expected in local development');
-        setError('Connect to Strava to view activity details');
-        setLoading(false);
+        console.log('No Strava token found, redirecting to Strava authentication...');
+        // Automatically redirect to Strava authentication
+        const STRAVA_CLIENT_ID = import.meta.env.VITE_STRAVA_CLIENT_ID;
+        
+        // Use web redirect URI (Strava doesn't support custom URL schemes)
+        // For mobile, we'll intercept the web redirect
+        const STRAVA_REDIRECT_URI = window.location.hostname === 'localhost'
+          ? 'http://localhost:5173/strava-callback'
+          : 'https://aidangoesch.github.io/RunningCoach/strava-callback.html';
+        
+        const authUrl = `https://www.strava.com/oauth/authorize?client_id=${STRAVA_CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(STRAVA_REDIRECT_URI)}&approval_prompt=force&scope=read,activity:read`;
+        // Store the current activity ID so we can return to it after auth
+        sessionStorage.setItem('pending_activity_id', activityId);
+        
+        // Use Capacitor Browser plugin for mobile apps, fallback to window.location for web
+        if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) {
+          try {
+            const { Browser } = await import('@capacitor/browser');
+            await Browser.open({
+              url: authUrl,
+              windowName: '_self'
+            });
+          } catch (err) {
+            console.error('Failed to open Browser, falling back to window.location:', err);
+            window.location.href = authUrl;
+          }
+        } else {
+          window.location.href = authUrl;
+        }
         return;
       }
 
@@ -154,7 +185,7 @@ const ActivityDetail = ({ activityId, onBack }) => {
   if (!activity) return <div className="error">Activity not found</div>;
 
   return (
-    <div className="app">
+    <div className="app" ref={swipeBackRef}>
       <div className="header">
         <h1>{activity.name}</h1>
         <p>{new Date(activity.start_date).toLocaleDateString()}</p>

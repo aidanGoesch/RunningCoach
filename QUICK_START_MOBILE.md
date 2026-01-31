@@ -2,7 +2,14 @@
 
 ## One-Command Setup
 
-After installing dependencies, use this single command to build and open in Xcode:
+**First time only:** You need to add the iOS platform first:
+
+```bash
+npm run cap:add:ios
+cd ios/App && pod install && cd ../..
+```
+
+Then, use this single command to build and open in Xcode:
 
 ```bash
 npm run cap:build:ios

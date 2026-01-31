@@ -40,6 +40,9 @@ body {
   transition: background-color 0.2s ease, color 0.2s ease;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Smooth scrolling for iOS */
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
 }
 
 .app {
@@ -47,6 +50,14 @@ body {
   margin: 0 auto;
   padding: 24px 16px;
   min-height: 100vh;
+  /* Smooth scrolling for iOS */
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+  /* Safe area support for iPhone - using CSS custom properties */
+  padding-top: calc(24px + env(safe-area-inset-top));
+  padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  padding-left: calc(16px + env(safe-area-inset-left));
+  padding-right: calc(16px + env(safe-area-inset-right));
 }
 
 .header {
@@ -217,8 +228,8 @@ body {
 
 .theme-toggle {
   position: fixed;
-  top: 24px;
-  right: 24px;
+  top: calc(24px + env(safe-area-inset-top));
+  right: calc(24px + env(safe-area-inset-right));
   background: var(--card-bg);
   border: 1px solid var(--border-color);
   border-radius: 50%;
@@ -241,7 +252,7 @@ body {
 
 @media (max-width: 480px) {
   .app {
-    padding: 20px 12px;
+    padding: calc(20px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-left)) calc(20px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-right));
   }
   
   .buttons {
@@ -254,8 +265,8 @@ body {
   }
   
   .theme-toggle {
-    top: 16px;
-    right: 16px;
+    top: calc(16px + env(safe-area-inset-top));
+    right: calc(16px + env(safe-area-inset-right));
     width: 44px;
     height: 44px;
   }

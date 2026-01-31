@@ -1,7 +1,9 @@
 import { useState } from 'react';
+import { useSwipeBack } from '../hooks/useSwipeBack';
 
 const WorkoutDetail = ({ workout, onBack, onPostpone, postponeDisabled }) => {
   const [completedBlocks, setCompletedBlocks] = useState(new Set());
+  const swipeBackRef = useSwipeBack(onBack);
 
   const toggleBlockCompletion = (blockIndex) => {
     const newCompleted = new Set(completedBlocks);
@@ -16,7 +18,7 @@ const WorkoutDetail = ({ workout, onBack, onPostpone, postponeDisabled }) => {
   if (!workout) return null;
 
   return (
-    <div className="app">
+    <div className="app" ref={swipeBackRef}>
       <div className="workout-display">
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: '20px' }}>
           <button 

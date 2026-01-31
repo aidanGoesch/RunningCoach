@@ -1,8 +1,23 @@
+import { getStravaTokens, saveStravaTokens, deleteStravaTokens } from './supabase';
+
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 const STRAVA_CLIENT_ID = import.meta.env.VITE_STRAVA_CLIENT_ID;
-const STRAVA_REDIRECT_URI = window.location.hostname === 'localhost' 
-  ? 'http://localhost:5173/strava-callback'
-  : `https://aidangoesch.github.io/RunningCoach/strava-callback.html`;
+
+// Determine redirect URI based on platform
+// Note: Strava doesn't support custom URL schemes, so we use web URLs
+// For mobile apps, we'll use the web URL and intercept it
+const getStravaRedirectUri = () => {
+  // For development
+  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+    return 'http://localhost:5173/strava-callback';
+  }
+  
+  // For production (web or mobile app)
+  // Use GitHub Pages URL - the app will intercept this
+  return 'https://aidangoesch.github.io/RunningCoach/strava-callback.html';
+};
+
+const STRAVA_REDIRECT_URI = getStravaRedirectUri();
 
 console.log('Environment check:', {
   STRAVA_CLIENT_ID: STRAVA_CLIENT_ID ? 'set' : 'missing',
@@ -371,10 +386,13 @@ Return the response in this exact JSON format:
 // Strava functions (keeping existing ones)
 export const syncWithStrava = async () => {
   console.log('syncWithStrava called');
-  const token = localStorage.getItem('strava_access_token');
+  
+  // Try to get tokens from Supabase first, fallback to localStorage
+  const tokens = await getStravaTokens();
+  const token = tokens?.accessToken || localStorage.getItem('strava_access_token');
   
   if (!token) {
-    initiateStravaAuth();
+    await initiateStravaAuth();
     return null;
   }
 
@@ -386,15 +404,13 @@ export const syncWithStrava = async () => {
     console.error('Sync error:', error);
     if (error.message.includes('401')) {
       try {
-        await refreshStravaToken();
-        const newToken = localStorage.getItem('strava_access_token');
+        const newToken = await refreshStravaToken();
         const activities = await getStravaActivities(newToken, 30);
         localStorage.setItem('strava_activities', JSON.stringify(activities));
         return activities;
       } catch (refreshError) {
-        localStorage.removeItem('strava_access_token');
-        localStorage.removeItem('strava_refresh_token');
-        initiateStravaAuth();
+        await deleteStravaTokens();
+        await initiateStravaAuth();
         return null;
       }
     }
@@ -403,7 +419,9 @@ export const syncWithStrava = async () => {
 };
 
 export const refreshStravaToken = async () => {
-  const refreshToken = localStorage.getItem('strava_refresh_token');
+  // Try to get tokens from Supabase first, fallback to localStorage
+  const tokens = await getStravaTokens();
+  const refreshToken = tokens?.refreshToken || localStorage.getItem('strava_refresh_token');
   const clientSecret = import.meta.env.VITE_STRAVA_CLIENT_SECRET;
   
   if (!refreshToken || !clientSecret) {
@@ -424,15 +442,39 @@ export const refreshStravaToken = async () => {
   if (!response.ok) throw new Error('Failed to refresh Strava token');
   
   const data = await response.json();
-  localStorage.setItem('strava_access_token', data.access_token);
-  localStorage.setItem('strava_refresh_token', data.refresh_token);
+  
+  // Calculate expiration time (Strava tokens typically expire in 6 hours)
+  const expiresAt = data.expires_at 
+    ? new Date(data.expires_at * 1000).toISOString()
+    : new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString();
+  
+  // Save to Supabase (and localStorage as backup)
+  await saveStravaTokens(data.access_token, data.refresh_token, expiresAt);
   
   return data.access_token;
 };
 
-const initiateStravaAuth = () => {
+const initiateStravaAuth = async () => {
   const authUrl = `https://www.strava.com/oauth/authorize?client_id=${STRAVA_CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(STRAVA_REDIRECT_URI)}&approval_prompt=force&scope=read,activity:read`;
-  window.location.href = authUrl;
+  
+  // Use Capacitor Browser plugin for mobile apps, fallback to window.location for web
+  if (typeof window !== 'undefined' && window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) {
+    try {
+      // Dynamically import Browser plugin
+      const { Browser } = await import('@capacitor/browser');
+      await Browser.open({
+        url: authUrl,
+        windowName: '_self'
+      });
+    } catch (err) {
+      console.error('Failed to open Browser, falling back to window.location:', err);
+      // Fallback to window.location if Browser plugin fails
+      window.location.href = authUrl;
+    }
+  } else {
+    // Web browser - use window.location
+    window.location.href = authUrl;
+  }
 };
 
 export const exchangeStravaCode = async (code) => {
@@ -459,9 +501,13 @@ export const exchangeStravaCode = async (code) => {
 
   const data = await response.json();
   
-  // Store tokens
-  localStorage.setItem('strava_access_token', data.access_token);
-  localStorage.setItem('strava_refresh_token', data.refresh_token);
+  // Calculate expiration time (Strava tokens typically expire in 6 hours)
+  const expiresAt = data.expires_at 
+    ? new Date(data.expires_at * 1000).toISOString()
+    : new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString();
+  
+  // Save to Supabase first (and localStorage as backup)
+  await saveStravaTokens(data.access_token, data.refresh_token, expiresAt);
   
   return data;
 };
