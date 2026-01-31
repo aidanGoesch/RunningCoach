@@ -10,7 +10,7 @@ import CoachingPromptEditor from './components/CoachingPromptEditor';
 import WorkoutFeedback from './components/WorkoutFeedback';
 import PostponeWorkout from './components/PostponeWorkout';
 import { generateWorkout, generateWeeklyPlan, syncWithStrava, generateInsights } from './services/api';
-import { dataService } from './services/supabase';
+import { dataService, setupRealtimeSync, syncAllDataFromSupabase } from './services/supabase';
 
 function App() {
   const [workout, setWorkout] = useState(null);
@@ -203,12 +203,26 @@ function App() {
       try {
         console.log('Loading data from Supabase...');
         
+        // If using Supabase, sync all data
+        if (dataService.useSupabase) {
+          const syncedData = await syncAllDataFromSupabase();
+          if (syncedData) {
+            if (syncedData.activities && syncedData.activities.length > 0) {
+              setActivities(syncedData.activities);
+            }
+            if (syncedData.workout) {
+              setWorkout(syncedData.workout);
+            }
+          }
+        }
+        
         // Load stored activities first (most important)
         console.log('Loading activities...');
         const stored = await dataService.get('strava_activities');
         if (stored) {
-          console.log('Activities loaded:', JSON.parse(stored).length);
-          setActivities(JSON.parse(stored));
+          const parsed = JSON.parse(stored);
+          console.log('Activities loaded:', parsed.length);
+          setActivities(parsed);
         } else {
           console.log('No activities found, checking localStorage fallback...');
           const localStored = localStorage.getItem('strava_activities');
@@ -217,11 +231,16 @@ function App() {
           }
         }
         
-        // Load saved workout (skip for now due to 406 error)
-        console.log('Skipping current workout load due to Supabase query issues...');
-        const localWorkout = localStorage.getItem('current_workout');
-        if (localWorkout) {
-          setWorkout(JSON.parse(localWorkout));
+        // Load saved workout
+        console.log('Loading current workout...');
+        const workoutData = await dataService.get('current_workout');
+        if (workoutData) {
+          setWorkout(JSON.parse(workoutData));
+        } else {
+          const localWorkout = localStorage.getItem('current_workout');
+          if (localWorkout) {
+            setWorkout(JSON.parse(localWorkout));
+          }
         }
         
         console.log('Data loading completed');
@@ -240,6 +259,40 @@ function App() {
     };
 
     loadData();
+
+    // Setup real-time sync if using Supabase
+    let cleanupSync = null;
+    if (dataService.useSupabase) {
+      cleanupSync = setupRealtimeSync({
+        onActivitiesChange: async (payload) => {
+          console.log('Activities changed via realtime:', payload);
+          // Reload activities when they change
+          const stored = await dataService.get('strava_activities');
+          if (stored) {
+            setActivities(JSON.parse(stored));
+          }
+        },
+        onWorkoutChange: async (payload) => {
+          console.log('Workout changed via realtime:', payload);
+          // Reload workout when it changes
+          const workoutData = await dataService.get('current_workout');
+          if (workoutData) {
+            setWorkout(JSON.parse(workoutData));
+          }
+        },
+        onWeeklyPlanChange: async (payload) => {
+          console.log('Weekly plan changed via realtime:', payload);
+          // Could trigger a reload of weekly plan view if needed
+        }
+      });
+    }
+
+    // Cleanup on unmount
+    return () => {
+      if (cleanupSync) {
+        cleanupSync();
+      }
+    };
     
     // Check for postponed workout on page load
     const postponedWorkout = localStorage.getItem('postponed_workout');
@@ -303,6 +356,7 @@ function App() {
       localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(weeklyPlan));
       console.log('Saving weekly plan to Supabase:', weekKey, weeklyPlan);
       await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(weeklyPlan));
+      localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(weeklyPlan)); // Keep local copy
       
       // Set today's workout if it exists
       const today_day = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][today.getDay()];
@@ -353,8 +407,9 @@ function App() {
       
       setWorkout(newWorkout);
       
-      // Save workout to localStorage for persistence
-      localStorage.setItem('current_workout', JSON.stringify(newWorkout));
+      // Save workout to Supabase (or localStorage fallback)
+      await dataService.set('current_workout', JSON.stringify(newWorkout));
+      localStorage.setItem('current_workout', JSON.stringify(newWorkout)); // Keep local copy too
       if (apiKey) localStorage.setItem('openai_api_key', apiKey);
       
       // Clear postpone data after generating workout
@@ -368,8 +423,10 @@ function App() {
     }
   };
 
-  const handleSavePrompt = (prompt) => {
+  const handleSavePrompt = async (prompt) => {
     localStorage.setItem('coaching_prompt', prompt);
+    // Save to Supabase if enabled
+    await dataService.set('coaching_prompt', prompt);
     setShowPromptEditor(false);
     // Update browser history
     window.history.pushState({ view: 'main' }, '', window.location.pathname);
@@ -439,6 +496,10 @@ function App() {
       
       if (syncedActivities) {
         setActivities(syncedActivities);
+        
+        // Save activities to Supabase
+        await dataService.set('strava_activities', JSON.stringify(syncedActivities));
+        localStorage.setItem('strava_activities', JSON.stringify(syncedActivities)); // Keep local copy
         
         // Generate insights for most recent activity
         if (syncedActivities.length > 0 && apiKey) {

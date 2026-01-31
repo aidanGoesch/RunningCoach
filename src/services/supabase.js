@@ -243,8 +243,68 @@ export class DataService {
   }
 }
 
-// Global instance - will switch to Supabase after migration
-export const dataService = new DataService(false)
+// Check if we're on a mobile platform (Capacitor)
+const isMobilePlatform = () => {
+  try {
+    // Check if Capacitor is available (might be loaded asynchronously)
+    if (typeof window !== 'undefined') {
+      // Check for Capacitor in window
+      if (window.Capacitor && window.Capacitor.isNativePlatform) {
+        return window.Capacitor.isNativePlatform();
+      }
+      // Check for Capacitor in global scope (ES modules)
+      if (typeof Capacitor !== 'undefined' && Capacitor.isNativePlatform) {
+        return Capacitor.isNativePlatform();
+      }
+    }
+    // Fallback: check user agent for mobile (but this is less reliable)
+    // We'll primarily rely on the use_supabase flag for web
+    return false;
+  } catch {
+    return false;
+  }
+};
+
+// Global instance - enable Supabase by default on mobile, localStorage on web
+// On mobile, we always want to sync with Supabase for cross-device sync
+const shouldUseSupabase = () => {
+  // Check localStorage preference first (user override)
+  const preference = localStorage.getItem('use_supabase');
+  if (preference === 'true') return true;
+  if (preference === 'false') return false;
+  
+  // Default: use Supabase on mobile, localStorage on web
+  // We'll check this at runtime when needed, not at module load
+  return false; // Default to false, will be enabled on mobile when Capacitor loads
+};
+
+export const dataService = new DataService(shouldUseSupabase())
+
+// Enable Supabase on mobile platforms after Capacitor loads
+if (typeof window !== 'undefined') {
+  // Check for mobile platform after a short delay to allow Capacitor to load
+  setTimeout(() => {
+    try {
+      // Try to import Capacitor dynamically
+      import('@capacitor/core').then(({ Capacitor }) => {
+        if (Capacitor && Capacitor.isNativePlatform()) {
+          console.log('Mobile platform detected, enabling Supabase sync');
+          dataService.useSupabase = true;
+          localStorage.setItem('use_supabase', 'true');
+        }
+      }).catch(() => {
+        // Capacitor not available, check user preference
+        const preference = localStorage.getItem('use_supabase');
+        if (preference === 'true') {
+          dataService.useSupabase = true;
+        }
+      });
+    } catch (err) {
+      // Ignore errors, will use localStorage
+      console.log('Could not detect mobile platform, using localStorage');
+    }
+  }, 100);
+}
 
 // Migration functions
 export const migrateToSupabase = async (exportedData) => {
@@ -610,7 +670,133 @@ export const saveActivityRating = async (activityId, rating, feedback, isInjured
     })
 }
 
-// Initialize on load - check if migration completed
+// Initialize on load - check if user has explicitly enabled Supabase
 if (localStorage.getItem('use_supabase') === 'true') {
   dataService.useSupabase = true
 }
+// Mobile platform detection happens asynchronously above
+
+// Real-time sync subscriptions
+let subscriptions = [];
+
+export const setupRealtimeSync = (callbacks = {}) => {
+  if (!dataService.useSupabase) {
+    console.log('Realtime sync disabled - not using Supabase');
+    return () => {};
+  }
+
+  const cleanup = async () => {
+    subscriptions.forEach(sub => {
+      supabase.removeChannel(sub);
+    });
+    subscriptions = [];
+  };
+
+  ensureUser().then(async (user) => {
+    if (!user) {
+      console.error('Cannot setup realtime sync - no user');
+      return cleanup;
+    }
+
+    // Subscribe to activities changes
+    const activitiesChannel = supabase
+      .channel('strava_activities_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'strava_activities',
+          filter: `user_id=eq.${user.id}`
+        },
+        (payload) => {
+          console.log('Activities changed:', payload);
+          if (callbacks.onActivitiesChange) {
+            callbacks.onActivitiesChange(payload);
+          }
+        }
+      )
+      .subscribe();
+
+    // Subscribe to current workout changes
+    const workoutChannel = supabase
+      .channel('current_workout_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'current_workouts',
+          filter: `user_id=eq.${user.id}`
+        },
+        (payload) => {
+          console.log('Workout changed:', payload);
+          if (callbacks.onWorkoutChange) {
+            callbacks.onWorkoutChange(payload);
+          }
+        }
+      )
+      .subscribe();
+
+    // Subscribe to weekly plan changes
+    const weeklyPlanChannel = supabase
+      .channel('weekly_plan_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'weekly_plans',
+          filter: `user_id=eq.${user.id}`
+        },
+        (payload) => {
+          console.log('Weekly plan changed:', payload);
+          if (callbacks.onWeeklyPlanChange) {
+            callbacks.onWeeklyPlanChange(payload);
+          }
+        }
+      )
+      .subscribe();
+
+    subscriptions = [activitiesChannel, workoutChannel, weeklyPlanChannel];
+  }).catch(err => {
+    console.error('Error setting up realtime sync:', err);
+  });
+
+  return cleanup;
+};
+
+// Helper to sync all data from Supabase to local state
+export const syncAllDataFromSupabase = async () => {
+  if (!dataService.useSupabase) {
+    console.log('Sync skipped - not using Supabase');
+    return null;
+  }
+
+  try {
+    const user = await ensureUser();
+    
+    // Sync activities
+    const activities = await dataService.get('strava_activities');
+    
+    // Sync current workout
+    const workout = await dataService.get('current_workout');
+    
+    // Sync weekly plans (get current week)
+    const today = new Date();
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+    monday.setHours(0, 0, 0, 0);
+    const weekKey = `${monday.getFullYear()}-${monday.getMonth()}-${monday.getDate()}`;
+    const weeklyPlan = await dataService.get(`weekly_plan_${weekKey}`);
+
+    return {
+      activities: activities ? JSON.parse(activities) : [],
+      workout: workout ? JSON.parse(workout) : null,
+      weeklyPlan: weeklyPlan ? JSON.parse(weeklyPlan) : null
+    };
+  } catch (error) {
+    console.error('Error syncing data from Supabase:', error);
+    return null;
+  }
+};
