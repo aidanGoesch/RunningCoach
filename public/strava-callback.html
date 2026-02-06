@@ -10,70 +10,142 @@
     <div style="text-align: center; padding: 40px; font-family: system-ui, sans-serif;">
       <h2>Connecting to Strava...</h2>
       <p>Please wait while we complete the authentication.</p>
-      <p id="status">Redirecting...</p>
+      <p id="status">Processing...</p>
     </div>
     <script>
-      // Immediately redirect - run as soon as script loads
-      try {
-        const params = new URLSearchParams(window.location.search);
-        const code = params.get('code');
-        const error = params.get('error');
-        const state = params.get('state');
-        const scope = params.get('scope');
-        
-        if (code || error) {
-          // Build redirect URL with all parameters
-          const redirectParams = new URLSearchParams();
-          if (code) redirectParams.set('code', code);
-          if (error) redirectParams.set('error', error);
-          if (state) redirectParams.set('state', state);
-          if (scope) redirectParams.set('scope', scope);
-          
-          // For localhost development, redirect to root with params
-          // For GitHub Pages, redirect to /RunningCoach/ with params
-          let basePath = '/';
-          const pathname = window.location.pathname;
-          const hostname = window.location.hostname;
-          
-          if (pathname.includes('/RunningCoach/')) {
-            basePath = '/RunningCoach/';
-          } else if (hostname === 'localhost' || hostname === '127.0.0.1') {
-            basePath = '/';
+      // Helper function to close Browser window using Capacitor's global API
+      function closeBrowserWindow() {
+        try {
+          // Try different ways to access the Browser plugin
+          if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Browser) {
+            window.Capacitor.Plugins.Browser.close().catch(err => {
+              console.log('Could not close Browser via Plugins:', err);
+            });
+          } else if (window.Capacitor && window.Capacitor.getPlugin) {
+            const Browser = window.Capacitor.getPlugin('Browser');
+            if (Browser && Browser.close) {
+              Browser.close().catch(err => {
+                console.log('Could not close Browser via getPlugin:', err);
+              });
+            } else {
+              console.log('Browser plugin not found via getPlugin');
+            }
+          } else if (window.Capacitor && window.Capacitor.Platform && window.Capacitor.Platform.isNative) {
+            // Try to use native bridge directly
+            window.Capacitor.nativePromise('Browser', 'close', {}).catch(err => {
+              console.log('Could not close Browser via native bridge:', err);
+            });
+          } else {
+            console.log('Capacitor Browser plugin not available, app will poll localStorage');
+            // The app will poll localStorage for the code
           }
-          
-          // Redirect to main app with the callback parameters
-          const redirectUrl = basePath + '?' + redirectParams.toString();
-          console.log('Strava callback - redirecting to:', redirectUrl);
-          
-          // Update status
-          const statusEl = document.getElementById('status');
-          if (statusEl) {
-            statusEl.textContent = 'Redirecting to app...';
-          }
-          
-          // Use replace to avoid back button issues
-          window.location.replace(redirectUrl);
-        } else {
-          // No callback params, redirect to main app
-          const statusEl = document.getElementById('status');
-          if (statusEl) {
-            statusEl.textContent = 'No callback parameters found. Redirecting...';
-          }
-          let basePath = '/';
-          if (window.location.pathname.includes('/RunningCoach/')) {
-            basePath = '/RunningCoach/';
-          }
-          setTimeout(() => {
-            window.location.replace(basePath);
-          }, 1000);
-        }
-      } catch (err) {
-        console.error('Redirect error:', err);
-        const statusEl = document.getElementById('status');
-        if (statusEl) {
-          statusEl.textContent = 'Error: ' + err.message + '. Please refresh the page.';
+        } catch (err) {
+          console.log('Error closing Browser:', err);
+          // The app will poll localStorage for the code
         }
       }
+      
+      // Handle Strava callback - works for both web and mobile
+      (async function() {
+        try {
+          const params = new URLSearchParams(window.location.search);
+          const code = params.get('code');
+          const error = params.get('error');
+          const state = params.get('state');
+          const scope = params.get('scope');
+          
+          const statusEl = document.getElementById('status');
+          
+          // Check if we're in a Capacitor Browser window (mobile app)
+          const isCapacitorBrowser = typeof window !== 'undefined' && 
+            (window.Capacitor || typeof Capacitor !== 'undefined');
+          
+          if (isCapacitorBrowser && (code || error)) {
+            // We're in a Capacitor Browser window on mobile
+            console.log('Capacitor Browser detected, handling callback...');
+            
+            if (error) {
+              console.error('Strava auth error:', error);
+              if (statusEl) statusEl.textContent = 'Authentication failed. Closing...';
+              // Store error for app to handle
+              localStorage.setItem('strava_auth_error', error);
+              
+              // Close the Browser window using Capacitor's global API
+              closeBrowserWindow();
+              return;
+            }
+            
+            if (code) {
+              console.log('Code received, storing and closing Browser...');
+              if (statusEl) statusEl.textContent = 'Authentication successful! Closing...';
+              
+              // Store in localStorage (Browser window and app don't share storage, so this may not work)
+              // Workaround: Users should authenticate on web first, which saves tokens to Supabase
+              localStorage.setItem('strava_auth_code', code);
+              localStorage.setItem('strava_auth_code_timestamp', Date.now().toString());
+              if (state) localStorage.setItem('strava_auth_state', state);
+              if (scope) localStorage.setItem('strava_auth_scope', scope);
+              
+              // Also store pending activity ID if it exists
+              const pendingActivityId = sessionStorage.getItem('pending_activity_id');
+              if (pendingActivityId) {
+                localStorage.setItem('redirect_to_activity', pendingActivityId);
+                sessionStorage.removeItem('pending_activity_id');
+              }
+              
+              console.log('Code stored in localStorage, closing Browser...');
+              closeBrowserWindow();
+              return;
+            }
+          }
+          
+          // Web browser flow - redirect to main app with params
+          if (code || error) {
+            const redirectParams = new URLSearchParams();
+            if (code) redirectParams.set('code', code);
+            if (error) redirectParams.set('error', error);
+            if (state) redirectParams.set('state', state);
+            if (scope) redirectParams.set('scope', scope);
+            
+            let basePath = '/';
+            const pathname = window.location.pathname;
+            const hostname = window.location.hostname;
+            
+            if (pathname.includes('/RunningCoach/')) {
+              basePath = '/RunningCoach/';
+            } else if (hostname === 'localhost' || hostname === '127.0.0.1') {
+              basePath = '/';
+            }
+            
+            const redirectUrl = basePath + '?' + redirectParams.toString();
+            console.log('Strava callback - redirecting to:', redirectUrl);
+            
+            if (statusEl) {
+              statusEl.textContent = 'Redirecting to app...';
+            }
+            
+            window.location.replace(redirectUrl);
+          } else {
+            // No callback params
+            if (statusEl) {
+              statusEl.textContent = 'No callback parameters found. Redirecting...';
+            }
+            let basePath = '/';
+            if (window.location.pathname.includes('/RunningCoach/')) {
+              basePath = '/RunningCoach/';
+            }
+            setTimeout(() => {
+              window.location.replace(basePath);
+            }, 1000);
+          }
+        } catch (err) {
+          console.error('Callback error:', err);
+          const statusEl = document.getElementById('status');
+          if (statusEl) {
+            statusEl.textContent = 'Error: ' + err.message + '. Please refresh the page.';
+          }
+        }
+      })();
     </script>
   </body>
 </html>

@@ -391,24 +391,37 @@ export const syncWithStrava = async () => {
   const tokens = await getStravaTokens();
   const token = tokens?.accessToken || localStorage.getItem('strava_access_token');
   
+  console.log('Token check:', {
+    hasTokens: !!tokens,
+    hasAccessToken: !!tokens?.accessToken,
+    hasLocalStorageToken: !!localStorage.getItem('strava_access_token'),
+    useSupabase: typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.()
+  });
+  
   if (!token) {
+    console.log('No token found, initiating Strava auth...');
     await initiateStravaAuth();
     return null;
   }
 
   try {
+    console.log('Fetching activities with token...');
     const activities = await getStravaActivities(token, 30);
+    console.log('Activities fetched:', activities?.length || 0);
     localStorage.setItem('strava_activities', JSON.stringify(activities));
     return activities;
   } catch (error) {
     console.error('Sync error:', error);
-    if (error.message.includes('401')) {
+    if (error.message.includes('401') || error.message.includes('403')) {
+      console.log('Token expired or invalid, attempting refresh...');
       try {
         const newToken = await refreshStravaToken();
+        console.log('Token refreshed, fetching activities...');
         const activities = await getStravaActivities(newToken, 30);
         localStorage.setItem('strava_activities', JSON.stringify(activities));
         return activities;
       } catch (refreshError) {
+        console.error('Token refresh failed:', refreshError);
         await deleteStravaTokens();
         await initiateStravaAuth();
         return null;
@@ -462,9 +475,139 @@ const initiateStravaAuth = async () => {
     try {
       // Dynamically import Browser plugin
       const { Browser } = await import('@capacitor/browser');
+      
+      // Set up listener for app state changes to detect when Browser closes
+      const setupAppListener = async () => {
+        try {
+          const { App } = await import('@capacitor/app');
+          
+          // Remove any existing listener
+          if (window._stravaAuthListener) {
+            await window._stravaAuthListener.remove();
+          }
+          
+          // Listen for app state changes - when Browser closes, app comes to foreground
+          let lastCodeTimestamp = null;
+          
+          // Helper to get code from localStorage
+          // Note: Browser window and app don't share localStorage, so this may not work
+          // The workaround is to authenticate on web first, which saves to Supabase
+          const getAuthCode = async () => {
+            return {
+              code: localStorage.getItem('strava_auth_code'),
+              codeTimestamp: localStorage.getItem('strava_auth_code_timestamp'),
+              error: localStorage.getItem('strava_auth_error'),
+              source: 'localStorage'
+            };
+          };
+          
+          // Helper to remove code from storage
+          const removeAuthCode = async (source) => {
+            localStorage.removeItem('strava_auth_code');
+            localStorage.removeItem('strava_auth_code_timestamp');
+            localStorage.removeItem('strava_auth_state');
+            localStorage.removeItem('strava_auth_scope');
+            localStorage.removeItem('strava_auth_error');
+          };
+          
+          const listener = await App.addListener('appStateChange', async (state) => {
+            if (state.isActive) {
+              // App is active, check if we have callback data
+              const authData = await getAuthCode();
+              
+              // Only process if this is a new code (timestamp changed)
+              if (authData.codeTimestamp && authData.codeTimestamp !== lastCodeTimestamp) {
+                lastCodeTimestamp = authData.codeTimestamp;
+                
+                if (authData.error) {
+                  console.error('Strava auth error from callback:', authData.error);
+                  await removeAuthCode(authData.source);
+                  return;
+                }
+                
+                if (authData.code) {
+                  console.log(`Code found in ${authData.source}, exchanging for token...`);
+                  await removeAuthCode(authData.source);
+                  
+                  // Exchange the code for tokens
+                  try {
+                    await exchangeStravaCode(authData.code);
+                    console.log('Token exchange successful, reloading app...');
+                    // Trigger a reload to refresh the app state
+                    window.location.reload();
+                  } catch (err) {
+                    console.error('Failed to exchange code:', err);
+                  }
+                }
+              }
+            }
+          });
+          
+          // Also set up a polling mechanism as backup
+          // Note: Browser window might not share localStorage, so we poll more aggressively
+          let pollCount = 0;
+          const maxPolls = 120; // Poll for up to 60 seconds (120 * 500ms)
+          
+          const pollInterval = setInterval(async () => {
+            pollCount++;
+            
+            // Check both Preferences and localStorage
+            let code = null;
+            let codeTimestamp = null;
+            let source = 'localStorage';
+            
+            // Check localStorage (Browser window and app don't share storage, so this may not work)
+            code = localStorage.getItem('strava_auth_code');
+            codeTimestamp = localStorage.getItem('strava_auth_code_timestamp');
+            
+            if (pollCount % 10 === 0) {
+              console.log(`Polling for auth code (attempt ${pollCount}/${maxPolls})...`, { hasCode: !!code, hasTimestamp: !!codeTimestamp, source });
+            }
+            
+            if (codeTimestamp && codeTimestamp !== lastCodeTimestamp) {
+              lastCodeTimestamp = codeTimestamp;
+              clearInterval(pollInterval);
+              
+              if (code) {
+                console.log(`Code found via polling in ${source}, exchanging for token...`);
+                
+                // Remove from storage
+                localStorage.removeItem('strava_auth_code');
+                localStorage.removeItem('strava_auth_code_timestamp');
+                localStorage.removeItem('strava_auth_state');
+                localStorage.removeItem('strava_auth_scope');
+                
+                exchangeStravaCode(code)
+                  .then(() => {
+                    console.log('Token exchange successful, reloading app...');
+                    window.location.reload();
+                  })
+                  .catch(err => {
+                    console.error('Failed to exchange code:', err);
+                  });
+              }
+            }
+            
+            if (pollCount >= maxPolls) {
+              console.log('Polling timeout reached, stopping...');
+              clearInterval(pollInterval);
+            }
+          }, 500); // Check every 500ms
+          
+          // Store listener for cleanup
+          window._stravaAuthListener = listener;
+        } catch (err) {
+          console.log('App plugin not available:', err);
+        }
+      };
+      
+      await setupAppListener();
+      
+      console.log('Opening Strava auth in Browser...');
       await Browser.open({
         url: authUrl,
-        windowName: '_self'
+        windowName: '_system',
+        presentationStyle: 'popover'
       });
     } catch (err) {
       console.error('Failed to open Browser, falling back to window.location:', err);

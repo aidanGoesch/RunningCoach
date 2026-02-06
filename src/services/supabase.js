@@ -801,34 +801,55 @@ export const syncAllDataFromSupabase = async () => {
 };
 // Strava token storage functions
 export const saveStravaTokens = async (accessToken, refreshToken, expiresAt = null) => {
-  if (!dataService.useSupabase) {
+  // Check if we're on mobile - if so, always try Supabase first (even if useSupabase isn't set yet)
+  const isMobile = typeof window !== 'undefined' && (
+    (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) ||
+    (typeof Capacitor !== 'undefined' && Capacitor.isNativePlatform && Capacitor.isNativePlatform())
+  );
+  
+  const shouldUseSupabase = dataService.useSupabase || isMobile;
+  
+  console.log('saveStravaTokens called:', { useSupabase: dataService.useSupabase, isMobile, shouldUseSupabase });
+  
+  if (!shouldUseSupabase) {
     localStorage.setItem('strava_access_token', accessToken);
     localStorage.setItem('strava_refresh_token', refreshToken);
     if (expiresAt) localStorage.setItem('strava_token_expires_at', expiresAt);
     return;
   }
+  
   try {
     const user = await ensureUser();
+    const expiresAtTimestamp = expiresAt ? new Date(expiresAt).toISOString() : null;
+    
+    console.log('Saving tokens to Supabase for user:', user.id);
+    
     const { error } = await supabase.from('strava_tokens').upsert({
       user_id: user.id,
       access_token: accessToken,
       refresh_token: refreshToken,
-      expires_at: expiresAt,
+      expires_at: expiresAtTimestamp,
       updated_at: new Date().toISOString()
     }, { onConflict: 'user_id' });
+    
     if (error) {
       console.error('Error saving Strava tokens to Supabase:', error);
+      // Still save to localStorage as fallback
       localStorage.setItem('strava_access_token', accessToken);
       localStorage.setItem('strava_refresh_token', refreshToken);
       if (expiresAt) localStorage.setItem('strava_token_expires_at', expiresAt);
       throw error;
     }
+    
+    console.log('Strava tokens saved to Supabase successfully');
+    
+    // Also update localStorage as backup
     localStorage.setItem('strava_access_token', accessToken);
     localStorage.setItem('strava_refresh_token', refreshToken);
     if (expiresAt) localStorage.setItem('strava_token_expires_at', expiresAt);
-    console.log('Strava tokens saved to Supabase');
   } catch (error) {
     console.error('Failed to save Strava tokens:', error);
+    // Fallback to localStorage
     localStorage.setItem('strava_access_token', accessToken);
     localStorage.setItem('strava_refresh_token', refreshToken);
     if (expiresAt) localStorage.setItem('strava_token_expires_at', expiresAt);
@@ -836,16 +857,35 @@ export const saveStravaTokens = async (accessToken, refreshToken, expiresAt = nu
 };
 
 export const getStravaTokens = async () => {
-  if (!dataService.useSupabase) {
+  console.log('getStravaTokens called, useSupabase:', dataService.useSupabase);
+  
+  // Check if we're on mobile - if so, always try Supabase first (even if useSupabase isn't set yet)
+  const isMobile = typeof window !== 'undefined' && (
+    (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) ||
+    (typeof Capacitor !== 'undefined' && Capacitor.isNativePlatform && Capacitor.isNativePlatform())
+  );
+  
+  const shouldCheckSupabase = dataService.useSupabase || isMobile;
+  
+  console.log('Token retrieval:', { useSupabase: dataService.useSupabase, isMobile, shouldCheckSupabase });
+  
+  if (!shouldCheckSupabase) {
     const accessToken = localStorage.getItem('strava_access_token');
     const refreshToken = localStorage.getItem('strava_refresh_token');
+    console.log('Not using Supabase, checking localStorage:', { hasAccessToken: !!accessToken, hasRefreshToken: !!refreshToken });
     return accessToken && refreshToken ? { accessToken, refreshToken } : null;
   }
+  
   try {
+    console.log('Fetching tokens from Supabase...');
     const user = await ensureUser();
+    console.log('User authenticated:', user?.id);
+    
     const { data, error } = await supabase.from('strava_tokens').select('access_token, refresh_token, expires_at').eq('user_id', user.id).single();
+    
     if (error) {
       if (error.code === 'PGRST116') {
+        console.log('No tokens in Supabase, checking localStorage for migration...');
         const accessToken = localStorage.getItem('strava_access_token');
         const refreshToken = localStorage.getItem('strava_refresh_token');
         if (accessToken && refreshToken) {
@@ -853,24 +893,33 @@ export const getStravaTokens = async () => {
           await saveStravaTokens(accessToken, refreshToken);
           return { accessToken, refreshToken };
         }
+        console.log('No tokens found in Supabase or localStorage');
         return null;
       }
       console.error('Error getting Strava tokens from Supabase:', error);
+      // Fallback to localStorage
       const accessToken = localStorage.getItem('strava_access_token');
       const refreshToken = localStorage.getItem('strava_refresh_token');
+      console.log('Falling back to localStorage:', { hasAccessToken: !!accessToken, hasRefreshToken: !!refreshToken });
       return accessToken && refreshToken ? { accessToken, refreshToken } : null;
     }
+    
     if (data) {
+      console.log('Tokens found in Supabase, updating localStorage');
       localStorage.setItem('strava_access_token', data.access_token);
       localStorage.setItem('strava_refresh_token', data.refresh_token);
       if (data.expires_at) localStorage.setItem('strava_token_expires_at', data.expires_at);
       return { accessToken: data.access_token, refreshToken: data.refresh_token, expiresAt: data.expires_at };
     }
+    
+    console.log('No data returned from Supabase');
     return null;
   } catch (error) {
     console.error('Failed to get Strava tokens:', error);
+    // Fallback to localStorage
     const accessToken = localStorage.getItem('strava_access_token');
     const refreshToken = localStorage.getItem('strava_refresh_token');
+    console.log('Exception occurred, falling back to localStorage:', { hasAccessToken: !!accessToken, hasRefreshToken: !!refreshToken });
     return accessToken && refreshToken ? { accessToken, refreshToken } : null;
   }
 };

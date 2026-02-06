@@ -162,6 +162,38 @@ function App() {
       return;
     }
     
+    // Check for Strava auth code from Browser callback (mobile) - immediate check
+    const stravaAuthCode = localStorage.getItem('strava_auth_code');
+    const stravaAuthCodeTimestamp = localStorage.getItem('strava_auth_code_timestamp');
+    if (stravaAuthCode && stravaAuthCodeTimestamp && !isCallback) {
+      console.log('Found Strava auth code in localStorage, exchanging...');
+      localStorage.removeItem('strava_auth_code');
+      localStorage.removeItem('strava_auth_code_timestamp');
+      localStorage.removeItem('strava_auth_state');
+      localStorage.removeItem('strava_auth_scope');
+      
+      // Import and exchange the code
+      import('./services/api').then(({ exchangeStravaCode }) => {
+        exchangeStravaCode(stravaAuthCode)
+          .then(() => {
+            console.log('Token exchange successful');
+            // Sync activities after successful auth
+            syncWithStrava().then(activities => {
+              if (activities) {
+                setActivities(activities);
+              }
+              // Reload to refresh app state
+              window.location.reload();
+            });
+          })
+          .catch(err => {
+            console.error('Failed to exchange code:', err);
+            setError('Failed to complete Strava authentication');
+          });
+      });
+      return; // Don't continue with the rest of the useEffect
+    }
+    
     if (isCallback) {
       setIsStravaCallback(true);
       return; // Don't auto-sync if we're handling callback
@@ -353,6 +385,63 @@ function App() {
       window.removeEventListener('popstate', handlePopState);
     };
   }, []);
+  
+  // Separate useEffect for polling for Strava auth code (mobile Browser callback)
+  useEffect(() => {
+    if (isStravaCallback) return; // Don't poll if we're already handling a callback
+    
+    let pollCount = 0;
+    const maxPolls = 120; // Poll for up to 60 seconds
+    
+    const checkForAuthCode = async () => {
+      // Check localStorage (Browser window and app don't share storage, so this may not work)
+      // Workaround: Authenticate on web first, which saves tokens to Supabase
+      const stravaAuthCode = localStorage.getItem('strava_auth_code');
+      const stravaAuthCodeTimestamp = localStorage.getItem('strava_auth_code_timestamp');
+      
+      if (stravaAuthCode && stravaAuthCodeTimestamp) {
+        console.log('Found Strava auth code via polling, exchanging...');
+        
+        // Remove from storage
+        localStorage.removeItem('strava_auth_code');
+        localStorage.removeItem('strava_auth_code_timestamp');
+        localStorage.removeItem('strava_auth_state');
+        localStorage.removeItem('strava_auth_scope');
+        
+        // Import and exchange the code
+        import('./services/api').then(({ exchangeStravaCode }) => {
+          exchangeStravaCode(stravaAuthCode)
+            .then(() => {
+              console.log('Token exchange successful, reloading...');
+              window.location.reload();
+            })
+            .catch(err => {
+              console.error('Failed to exchange code:', err);
+              setError('Failed to complete Strava authentication');
+            });
+        });
+        return true; // Code found and processed
+      }
+      return false; // No code found
+    };
+    
+    // Set up polling
+    const pollInterval = setInterval(async () => {
+      pollCount++;
+      if (pollCount % 10 === 0) {
+        console.log(`App polling for auth code (attempt ${pollCount}/${maxPolls})...`);
+      }
+      
+      if (await checkForAuthCode()) {
+        clearInterval(pollInterval);
+      } else if (pollCount >= maxPolls) {
+        console.log('App polling timeout reached');
+        clearInterval(pollInterval);
+      }
+    }, 500);
+    
+    return () => clearInterval(pollInterval);
+  }, [isStravaCallback]);
 
   const handleGenerateWeeklyPlan = async () => {
     const availableApiKey = import.meta.env.VITE_OPENAI_API_KEY || apiKey;
