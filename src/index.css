@@ -213,6 +213,10 @@ body {
   gap: 4px;
 }
 
+.detail-item.full-width {
+  grid-column: 1 / -1;
+}
+
 .detail-label {
   font-size: 11px;
   color: var(--label-color);

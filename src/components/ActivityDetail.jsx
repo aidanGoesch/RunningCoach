@@ -356,13 +356,13 @@ const ActivityDetail = ({ activityId, onBack }) => {
                 </span>
               </div>
               {rating.feedback && (
-                <div className="detail-item">
+                <div className="detail-item full-width">
                   <span className="detail-label">Comment</span>
                   <span className="detail-value">{rating.feedback}</span>
                 </div>
               )}
               {rating.isInjured && (
-                <div className="detail-item">
+                <div className="detail-item full-width">
                   <span className="detail-label">Injury</span>
                   <span className="detail-value">⚠️ {rating.injuryDetails || 'Reported'}</span>
                 </div>
@@ -900,8 +900,9 @@ const MileSplitPaceBarChart = ({ data }) => {
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    const paddingLeft = 92;
-    const paddingRight = 20;
+    // Shift the mile-splits plot left a bit (keep the Y-axis title position as-is)
+    const paddingLeft = 76;
+    const paddingRight = 28;
     const paddingTop = 20;
     const paddingBottom = 30;
     const height = rect.height || 250;
@@ -966,8 +967,9 @@ const MileSplitPaceBarChart = ({ data }) => {
     const minSpeed = Math.min(...speeds);
     const maxSpeed = Math.max(...speeds);
 
-    const paddingLeft = 92;
-    const paddingRight = 20;
+    // Shift the mile-splits plot left a bit (keep the Y-axis title position as-is)
+    const paddingLeft = 76;
+    const paddingRight = 28;
     const paddingTop = 20;
     const paddingBottom = 30;
     const plotWidth = width - paddingLeft - paddingRight;
@@ -1087,19 +1089,21 @@ const HeartRateChart = ({ data, xAxisMode = 'time' }) => {
     
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
-    const padding = 60;
+    // Keep plot/tick labels away from rotated Y-axis title without adding huge top padding.
+    const paddingLeft = 72;
+    const paddingRight = 60;
     const width = rect.width;
     
     // Only show tooltip and cursor within the graph area
-    if (x < padding || x > width - padding) {
+    if (x < paddingLeft || x > width - paddingRight) {
       setTooltip(null);
       setCursorX(null);
       return;
     }
     
     // Calculate which data point based on X position
-    const dataWidth = width - 2 * padding;
-    const adjustedX = x - padding;
+    const dataWidth = width - paddingLeft - paddingRight;
+    const adjustedX = x - paddingLeft;
     const progress = adjustedX / dataWidth;
     const dataIndex = Math.round(progress * (data.heartrate.data.length - 1));
     
@@ -1151,7 +1155,11 @@ const HeartRateChart = ({ data, xAxisMode = 'time' }) => {
     
     const width = cssWidth;
     const height = cssHeight;
-    const padding = 60;
+    // Keep plot/ticks away from rotated Y-axis title, but don't waste vertical space.
+    const paddingLeft = 72;
+    const paddingRight = 60;
+    const paddingTop = 28;
+    const paddingBottom = 60;
     
     ctx.clearRect(0, 0, width, height);
     
@@ -1190,9 +1198,9 @@ const HeartRateChart = ({ data, xAxisMode = 'time' }) => {
     ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--axis-color').trim();
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(padding, padding);
-    ctx.lineTo(padding, height - padding);
-    ctx.lineTo(width - padding, height - padding);
+    ctx.moveTo(paddingLeft, paddingTop);
+    ctx.lineTo(paddingLeft, height - paddingBottom);
+    ctx.lineTo(width - paddingRight, height - paddingBottom);
     ctx.stroke();
     
     // Draw horizontal grid lines for HR chart
@@ -1200,19 +1208,19 @@ const HeartRateChart = ({ data, xAxisMode = 'time' }) => {
     ctx.lineWidth = 1;
     hrIntervals.forEach((hrValue) => {
       if (hrValue < minHR || hrValue > maxHR) return; // Only show grid lines within data range
-      const y = padding + ((maxHR - hrValue) / (maxHR - minHR)) * (height - 2 * padding);
+      const y = paddingTop + ((maxHR - hrValue) / (maxHR - minHR)) * (height - paddingTop - paddingBottom);
       ctx.beginPath();
-      ctx.moveTo(padding, y);
-      ctx.lineTo(width - padding, y);
+      ctx.moveTo(paddingLeft, y);
+      ctx.lineTo(width - paddingRight, y);
       ctx.stroke();
     });
     
     // Draw vertical grid lines (only for intervals within data range)
     xIntervalsInRange.forEach((xValue) => {
-      const x = padding + ((xValue - minX) / (maxX - minX)) * (width - 2 * padding);
+      const x = paddingLeft + ((xValue - minX) / (maxX - minX)) * (width - paddingLeft - paddingRight);
       ctx.beginPath();
-      ctx.moveTo(x, padding);
-      ctx.lineTo(x, height - padding);
+      ctx.moveTo(x, paddingTop);
+      ctx.lineTo(x, height - paddingBottom);
       ctx.stroke();
     });
     
@@ -1222,8 +1230,8 @@ const HeartRateChart = ({ data, xAxisMode = 'time' }) => {
     ctx.beginPath();
     
     hrData.forEach((hr, i) => {
-      const x = padding + ((xAxisData[i] - minX) / (maxX - minX)) * (width - 2 * padding);
-      const y = padding + ((maxHR - hr) / (maxHR - minHR)) * (height - 2 * padding);
+      const x = paddingLeft + ((xAxisData[i] - minX) / (maxX - minX)) * (width - paddingLeft - paddingRight);
+      const y = paddingTop + ((maxHR - hr) / (maxHR - minHR)) * (height - paddingTop - paddingBottom);
       
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
@@ -1238,7 +1246,8 @@ const HeartRateChart = ({ data, xAxisMode = 'time' }) => {
     ctx.fillText(xAxisMode === 'distance' ? 'Distance (mi)' : 'Time (min)', width / 2, height - 5);
     
     ctx.save();
-    ctx.translate(15, height / 2);
+    // Shift Y-axis title right so it doesn't clip on full-bleed mobile charts
+    ctx.translate(28, height / 2);
     ctx.rotate(-Math.PI / 2);
     ctx.fillText('Heart Rate (bpm)', 0, 0);
     ctx.restore();
@@ -1247,14 +1256,14 @@ const HeartRateChart = ({ data, xAxisMode = 'time' }) => {
     ctx.textAlign = 'right';
     hrIntervals.forEach((hrValue) => {
       if (hrValue < minHR || hrValue > maxHR) return; // Only show labels within data range
-      const y = padding + ((maxHR - hrValue) / (maxHR - minHR)) * (height - 2 * padding);
-      ctx.fillText(Math.round(hrValue).toString(), padding - 5, y + 5);
+      const y = paddingTop + ((maxHR - hrValue) / (maxHR - minHR)) * (height - paddingTop - paddingBottom);
+      ctx.fillText(Math.round(hrValue).toString(), paddingLeft - 8, y + 5);
       
       // Draw tick marks
       ctx.strokeStyle = '#ddd';
       ctx.beginPath();
-      ctx.moveTo(padding - 3, y);
-      ctx.lineTo(padding, y);
+      ctx.moveTo(paddingLeft - 3, y);
+      ctx.lineTo(paddingLeft, y);
       ctx.stroke();
     });
     
@@ -1262,17 +1271,17 @@ const HeartRateChart = ({ data, xAxisMode = 'time' }) => {
     ctx.textAlign = 'center';
     ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--label-color').trim();
     xIntervalsInRange.forEach((xValue) => {
-      const x = padding + ((xValue - minX) / (maxX - minX)) * (width - 2 * padding);
+      const x = paddingLeft + ((xValue - minX) / (maxX - minX)) * (width - paddingLeft - paddingRight);
       const label = xAxisMode === 'distance' 
         ? xValue.toFixed(1) 
         : Math.round(xValue).toString();
-      ctx.fillText(label, x, height - padding + 15);
+      ctx.fillText(label, x, height - paddingBottom + 15);
       
       // Draw tick marks
       ctx.strokeStyle = '#ddd';
       ctx.beginPath();
-      ctx.moveTo(x, height - padding);
-      ctx.lineTo(x, height - padding + 3);
+      ctx.moveTo(x, height - paddingBottom);
+      ctx.lineTo(x, height - paddingBottom + 3);
       ctx.stroke();
     });
     
@@ -1282,8 +1291,8 @@ const HeartRateChart = ({ data, xAxisMode = 'time' }) => {
       ctx.lineWidth = 2;
       ctx.setLineDash([5, 5]);
       ctx.beginPath();
-      ctx.moveTo(cursorX, padding);
-      ctx.lineTo(cursorX, height - padding);
+      ctx.moveTo(cursorX, paddingTop);
+      ctx.lineTo(cursorX, height - paddingBottom);
       ctx.stroke();
       ctx.setLineDash([]);
     }
@@ -1346,19 +1355,21 @@ const PaceChart = ({ data, xAxisMode = 'time' }) => {
     
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
-    const padding = 60;
+    // Shift plot right (without adding extra vertical padding)
+    const paddingLeft = 84;
+    const paddingRight = 60;
     const width = rect.width;
     
     // Only show tooltip and cursor within the graph area
-    if (x < padding || x > width - padding) {
+    if (x < paddingLeft || x > width - paddingRight) {
       setTooltip(null);
       setCursorX(null);
       return;
     }
     
     // Calculate which data point based on X position
-    const dataWidth = width - 2 * padding;
-    const adjustedX = x - padding;
+    const dataWidth = width - paddingLeft - paddingRight;
+    const adjustedX = x - paddingLeft;
     const progress = adjustedX / dataWidth;
     
     // Convert velocity to pace and filter
@@ -1419,7 +1430,11 @@ const PaceChart = ({ data, xAxisMode = 'time' }) => {
     
     const width = cssWidth;
     const height = cssHeight;
-    const padding = 60;
+    // Shift plot right without wasting vertical space
+    const paddingLeft = 84;
+    const paddingRight = 60;
+    const paddingTop = 28;
+    const paddingBottom = 60;
     
     ctx.clearRect(0, 0, width, height);
     
@@ -1469,9 +1484,9 @@ const PaceChart = ({ data, xAxisMode = 'time' }) => {
     ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--axis-color').trim();
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(padding, padding);
-    ctx.lineTo(padding, height - padding);
-    ctx.lineTo(width - padding, height - padding);
+    ctx.moveTo(paddingLeft, paddingTop);
+    ctx.lineTo(paddingLeft, height - paddingBottom);
+    ctx.lineTo(width - paddingRight, height - paddingBottom);
     ctx.stroke();
     
     // Draw horizontal grid lines for pace chart
@@ -1479,19 +1494,19 @@ const PaceChart = ({ data, xAxisMode = 'time' }) => {
     ctx.lineWidth = 1;
     paceIntervals.forEach((paceValue) => {
       if (paceValue < minPace || paceValue > maxPace) return; // Only show grid lines within data range
-      const y = padding + ((paceValue - minPace) / (maxPace - minPace)) * (height - 2 * padding);
+      const y = paddingTop + ((paceValue - minPace) / (maxPace - minPace)) * (height - paddingTop - paddingBottom);
       ctx.beginPath();
-      ctx.moveTo(padding, y);
-      ctx.lineTo(width - padding, y);
+      ctx.moveTo(paddingLeft, y);
+      ctx.lineTo(width - paddingRight, y);
       ctx.stroke();
     });
     
     // Draw vertical grid lines (only for intervals within data range)
     xIntervalsInRange.forEach((xValue) => {
-      const x = padding + ((xValue - minX) / (maxX - minX)) * (width - 2 * padding);
+      const x = paddingLeft + ((xValue - minX) / (maxX - minX)) * (width - paddingLeft - paddingRight);
       ctx.beginPath();
-      ctx.moveTo(x, padding);
-      ctx.lineTo(x, height - padding);
+      ctx.moveTo(x, paddingTop);
+      ctx.lineTo(x, height - paddingBottom);
       ctx.stroke();
     });
     
@@ -1501,8 +1516,8 @@ const PaceChart = ({ data, xAxisMode = 'time' }) => {
     ctx.beginPath();
     
     paceData.forEach((pace, i) => {
-      const x = padding + ((xAxisData[i] - minX) / (maxX - minX)) * (width - 2 * padding);
-      const y = padding + ((pace - minPace) / (maxPace - minPace)) * (height - 2 * padding);
+      const x = paddingLeft + ((xAxisData[i] - minX) / (maxX - minX)) * (width - paddingLeft - paddingRight);
+      const y = paddingTop + ((pace - minPace) / (maxPace - minPace)) * (height - paddingTop - paddingBottom);
       
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
@@ -1517,7 +1532,8 @@ const PaceChart = ({ data, xAxisMode = 'time' }) => {
     ctx.fillText(xAxisMode === 'distance' ? 'Distance (mi)' : 'Time (min)', width / 2, height - 5);
     
     ctx.save();
-    ctx.translate(15, height / 2);
+    // Shift Y-axis title right so it doesn't clip on full-bleed mobile charts
+    ctx.translate(28, height / 2);
     ctx.rotate(-Math.PI / 2);
     ctx.fillText('Pace (min/mile)', 0, 0);
     ctx.restore();
@@ -1532,14 +1548,14 @@ const PaceChart = ({ data, xAxisMode = 'time' }) => {
     
     paceIntervals.forEach((paceValue) => {
       if (paceValue < minPace || paceValue > maxPace) return; // Only show labels within data range
-      const y = padding + ((paceValue - minPace) / (maxPace - minPace)) * (height - 2 * padding);
-      ctx.fillText(formatPaceLabel(paceValue), padding - 5, y + 5);
+      const y = paddingTop + ((paceValue - minPace) / (maxPace - minPace)) * (height - paddingTop - paddingBottom);
+      ctx.fillText(formatPaceLabel(paceValue), paddingLeft - 8, y + 5);
       
       // Draw tick marks
       ctx.strokeStyle = '#ddd';
       ctx.beginPath();
-      ctx.moveTo(padding - 3, y);
-      ctx.lineTo(padding, y);
+      ctx.moveTo(paddingLeft - 3, y);
+      ctx.lineTo(paddingLeft, y);
       ctx.stroke();
     });
     
@@ -1547,17 +1563,17 @@ const PaceChart = ({ data, xAxisMode = 'time' }) => {
     ctx.textAlign = 'center';
     ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--label-color').trim();
     xIntervalsInRange.forEach((xValue) => {
-      const x = padding + ((xValue - minX) / (maxX - minX)) * (width - 2 * padding);
+      const x = paddingLeft + ((xValue - minX) / (maxX - minX)) * (width - paddingLeft - paddingRight);
       const label = xAxisMode === 'distance' 
         ? xValue.toFixed(1) 
         : Math.round(xValue).toString();
-      ctx.fillText(label, x, height - padding + 15);
+      ctx.fillText(label, x, height - paddingBottom + 15);
       
       // Draw tick marks
       ctx.strokeStyle = '#ddd';
       ctx.beginPath();
-      ctx.moveTo(x, height - padding);
-      ctx.lineTo(x, height - padding + 3);
+      ctx.moveTo(x, height - paddingBottom);
+      ctx.lineTo(x, height - paddingBottom + 3);
       ctx.stroke();
     });
     
@@ -1567,8 +1583,8 @@ const PaceChart = ({ data, xAxisMode = 'time' }) => {
       ctx.lineWidth = 2;
       ctx.setLineDash([5, 5]);
       ctx.beginPath();
-      ctx.moveTo(cursorX, padding);
-      ctx.lineTo(cursorX, height - padding);
+      ctx.moveTo(cursorX, paddingTop);
+      ctx.lineTo(cursorX, height - paddingBottom);
       ctx.stroke();
       ctx.setLineDash([]);
     }
@@ -1686,18 +1702,20 @@ const CadenceChart = ({ data, xAxisMode = 'time' }) => {
     
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
-    const padding = 60;
+    // Shift plot right (keep rotated axis title anchored separately) without adding extra vertical padding
+    const paddingLeft = 84;
+    const paddingRight = 60;
     const width = rect.width;
     
     // Only show tooltip and cursor within the graph area
-    if (x < padding || x > width - padding) {
+    if (x < paddingLeft || x > width - paddingRight) {
       setTooltip(null);
       setCursorX(null);
       return;
     }
     
-    const dataWidth = width - 2 * padding;
-    const adjustedX = x - padding;
+    const dataWidth = width - paddingLeft - paddingRight;
+    const adjustedX = x - paddingLeft;
     const progress = adjustedX / dataWidth;
     const dataIndex = Math.round(progress * (data.cadence.data.length - 1));
     
@@ -1750,7 +1768,11 @@ const CadenceChart = ({ data, xAxisMode = 'time' }) => {
     
     const width = cssWidth;
     const height = cssHeight;
-    const padding = 60;
+    // Shift plot right without wasting vertical space
+    const paddingLeft = 84;
+    const paddingRight = 60;
+    const paddingTop = 28;
+    const paddingBottom = 60;
     
     ctx.clearRect(0, 0, width, height);
     
@@ -1789,9 +1811,9 @@ const CadenceChart = ({ data, xAxisMode = 'time' }) => {
     ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--axis-color').trim();
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(padding, padding);
-    ctx.lineTo(padding, height - padding);
-    ctx.lineTo(width - padding, height - padding);
+    ctx.moveTo(paddingLeft, paddingTop);
+    ctx.lineTo(paddingLeft, height - paddingBottom);
+    ctx.lineTo(width - paddingRight, height - paddingBottom);
     ctx.stroke();
     
     // Draw horizontal grid lines
@@ -1799,39 +1821,39 @@ const CadenceChart = ({ data, xAxisMode = 'time' }) => {
     ctx.lineWidth = 1;
     cadenceIntervals.forEach((cadenceValue) => {
       if (cadenceValue < minCadence || cadenceValue > maxCadence) return; // Only show grid lines within data range
-      const y = padding + ((maxCadence - cadenceValue) / (maxCadence - minCadence)) * (height - 2 * padding);
+      const y = paddingTop + ((maxCadence - cadenceValue) / (maxCadence - minCadence)) * (height - paddingTop - paddingBottom);
       ctx.beginPath();
-      ctx.moveTo(padding, y);
-      ctx.lineTo(width - padding, y);
+      ctx.moveTo(paddingLeft, y);
+      ctx.lineTo(width - paddingRight, y);
       ctx.stroke();
     });
     
     // Draw vertical grid lines (only for intervals within data range)
     xIntervalsInRange.forEach((xValue) => {
-      const x = padding + ((xValue - minX) / (maxX - minX)) * (width - 2 * padding);
+      const x = paddingLeft + ((xValue - minX) / (maxX - minX)) * (width - paddingLeft - paddingRight);
       ctx.beginPath();
-      ctx.moveTo(x, padding);
-      ctx.lineTo(x, height - padding);
+      ctx.moveTo(x, paddingTop);
+      ctx.lineTo(x, height - paddingBottom);
       ctx.stroke();
     });
     
     // Draw 170 spm target line (using actual data range)
     const targetCadence = 170;
     if (targetCadence >= minCadence && targetCadence <= maxCadence) {
-      const targetY = padding + ((maxCadence - targetCadence) / (maxCadence - minCadence)) * (height - 2 * padding);
+      const targetY = paddingTop + ((maxCadence - targetCadence) / (maxCadence - minCadence)) * (height - paddingTop - paddingBottom);
       ctx.strokeStyle = '#f39c12';
       ctx.lineWidth = 2;
       ctx.setLineDash([5, 5]);
       ctx.beginPath();
-      ctx.moveTo(padding, targetY);
-      ctx.lineTo(width - padding, targetY);
+      ctx.moveTo(paddingLeft, targetY);
+      ctx.lineTo(width - paddingRight, targetY);
       ctx.stroke();
       ctx.setLineDash([]);
       
       // Label for target line
       ctx.fillStyle = '#f39c12';
       ctx.font = '12px sans-serif';
-      ctx.fillText('170 spm target', width - padding - 80, targetY - 5);
+      ctx.fillText('170 spm target', width - paddingRight - 80, targetY - 5);
     }
     
     // Draw cadence line (using actual data min/max for x-axis)
@@ -1840,8 +1862,8 @@ const CadenceChart = ({ data, xAxisMode = 'time' }) => {
     ctx.beginPath();
     
     cadenceData.forEach((cadence, i) => {
-      const x = padding + ((xAxisData[i] - minX) / (maxX - minX)) * (width - 2 * padding);
-      const y = padding + ((maxCadence - cadence) / (maxCadence - minCadence)) * (height - 2 * padding);
+      const x = paddingLeft + ((xAxisData[i] - minX) / (maxX - minX)) * (width - paddingLeft - paddingRight);
+      const y = paddingTop + ((maxCadence - cadence) / (maxCadence - minCadence)) * (height - paddingTop - paddingBottom);
       
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
@@ -1856,14 +1878,14 @@ const CadenceChart = ({ data, xAxisMode = 'time' }) => {
     
     cadenceIntervals.forEach((cadenceValue) => {
       if (cadenceValue < minCadence || cadenceValue > maxCadence) return; // Only show labels within data range
-      const y = padding + ((maxCadence - cadenceValue) / (maxCadence - minCadence)) * (height - 2 * padding);
-      ctx.fillText(Math.round(cadenceValue).toString(), padding - 10, y + 4);
+      const y = paddingTop + ((maxCadence - cadenceValue) / (maxCadence - minCadence)) * (height - paddingTop - paddingBottom);
+      ctx.fillText(Math.round(cadenceValue).toString(), paddingLeft - 10, y + 4);
       
       // Draw tick marks
       ctx.strokeStyle = '#ddd';
       ctx.beginPath();
-      ctx.moveTo(padding - 3, y);
-      ctx.lineTo(padding, y);
+      ctx.moveTo(paddingLeft - 3, y);
+      ctx.lineTo(paddingLeft, y);
       ctx.stroke();
     });
     
@@ -1871,17 +1893,17 @@ const CadenceChart = ({ data, xAxisMode = 'time' }) => {
     ctx.textAlign = 'center';
     ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--label-color').trim();
     xIntervalsInRange.forEach((xValue) => {
-      const x = padding + ((xValue - minX) / (maxX - minX)) * (width - 2 * padding);
+      const x = paddingLeft + ((xValue - minX) / (maxX - minX)) * (width - paddingLeft - paddingRight);
       const label = xAxisMode === 'distance' 
         ? xValue.toFixed(1) 
         : Math.round(xValue).toString();
-      ctx.fillText(label, x, height - padding + 15);
+      ctx.fillText(label, x, height - paddingBottom + 15);
       
       // Draw tick marks
       ctx.strokeStyle = '#ddd';
       ctx.beginPath();
-      ctx.moveTo(x, height - padding);
-      ctx.lineTo(x, height - padding + 3);
+      ctx.moveTo(x, height - paddingBottom);
+      ctx.lineTo(x, height - paddingBottom + 3);
       ctx.stroke();
     });
     
@@ -1891,7 +1913,8 @@ const CadenceChart = ({ data, xAxisMode = 'time' }) => {
     
     // Draw Y-axis label
     ctx.save();
-    ctx.translate(15, height / 2);
+    // Shift Y-axis title right so it doesn't clip on full-bleed mobile charts
+    ctx.translate(28, height / 2);
     ctx.rotate(-Math.PI / 2);
     ctx.fillText('Cadence (spm)', 0, 0);
     ctx.restore();
@@ -1902,8 +1925,8 @@ const CadenceChart = ({ data, xAxisMode = 'time' }) => {
       ctx.lineWidth = 1;
       ctx.setLineDash([2, 2]);
       ctx.beginPath();
-      ctx.moveTo(cursorX, padding);
-      ctx.lineTo(cursorX, height - padding);
+      ctx.moveTo(cursorX, paddingTop);
+      ctx.lineTo(cursorX, height - paddingBottom);
       ctx.stroke();
       ctx.setLineDash([]);
     }
