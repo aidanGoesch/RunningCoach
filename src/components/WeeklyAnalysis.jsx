@@ -4,8 +4,21 @@ const WeeklyAnalysis = ({ analysis }) => {
   }
 
   return (
-    <div className="workout-display" style={{ marginBottom: '20px', border: '2px solid var(--accent)' }}>
-      <div className="workout-title" style={{ color: 'var(--accent)' }}>
+    <div
+      className="workout-display"
+      style={{
+        marginBottom: '20px',
+        border: '2px solid rgba(37, 99, 235, 0.95)', // blue-blue border
+        background: 'var(--card-bg)',
+        boxShadow: `
+          0 18px 70px rgba(37, 99, 235, 0.18),
+          inset 0 0 0 1px rgba(37, 99, 235, 0.22),
+          inset 0 0 70px rgba(37, 99, 235, 0.22),
+          inset 0 0 140px rgba(37, 99, 235, 0.12)
+        `.replace(/\s+/g, ' ').trim()
+      }}
+    >
+      <div className="workout-title" style={{ color: 'var(--text-color)' }}>
         💪 Week in Review
       </div>
       <div className="workout-block">
