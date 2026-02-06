@@ -35,6 +35,21 @@ function App() {
   const [newActivityQueue, setNewActivityQueue] = useState([]);
   const [currentActivityForRating, setCurrentActivityForRating] = useState(null);
 
+  // Determine if a run activity was completed today
+  const hasRunToday = (() => {
+    const today = new Date();
+    const todayStart = new Date(today);
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(today);
+    todayEnd.setHours(23, 59, 59, 999);
+
+    return (activities || []).some((a) => {
+      if (!a || a.type !== 'Run' || !a.start_date) return false;
+      const d = new Date(a.start_date);
+      return d >= todayStart && d <= todayEnd;
+    });
+  })();
+
   // Track daily button usage
   const [dailyUsage, setDailyUsage] = useState(() => {
     const today = new Date().toDateString();
@@ -1502,6 +1517,7 @@ function App() {
 
         <WorkoutDisplay 
           workout={workout} 
+          isCompleted={hasRunToday}
           onWorkoutClick={() => {
             setShowWorkoutDetail(true);
             // Add to browser history

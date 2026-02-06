@@ -31,7 +31,7 @@ const WorkoutBlock = ({ block }) => {
   );
 };
 
-const WorkoutDisplay = ({ workout, onWorkoutClick }) => {
+const WorkoutDisplay = ({ workout, onWorkoutClick, isCompleted = false }) => {
   if (!workout) return null;
 
   // Calculate workout summary
@@ -145,7 +145,23 @@ const WorkoutDisplay = ({ workout, onWorkoutClick }) => {
 
   return (
     <div className="workout-display">
-      <div className="workout-title">{workout.title}</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+        <div className="workout-title">{workout.title}</div>
+        {isCompleted && (
+          <div style={{
+            padding: '6px 10px',
+            borderRadius: '999px',
+            backgroundColor: 'rgba(34, 197, 94, 0.15)',
+            border: '1px solid rgba(34, 197, 94, 0.35)',
+            color: 'var(--text-color)',
+            fontSize: '12px',
+            fontWeight: 700,
+            whiteSpace: 'nowrap'
+          }}>
+            Completed
+          </div>
+        )}
+      </div>
       
       <div 
         className="workout-block clickable"
@@ -185,7 +201,7 @@ const WorkoutDisplay = ({ workout, onWorkoutClick }) => {
           color: 'var(--text-secondary)',
           textAlign: 'center'
         }}>
-          Click to view detailed workout instructions →
+          {isCompleted ? 'Nice work — workout completed today.' : 'Click to view detailed workout instructions →'}
         </div>
       </div>
     </div>

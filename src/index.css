@@ -18,6 +18,7 @@
   --accent: #3b82f6;
   --accent-hover: #2563eb;
   --chart-height: 250px;
+  --splits-chart-height: 200px;
 }
 
 [data-theme="dark"] {
@@ -36,6 +37,7 @@
 @media (max-width: 768px) {
   :root {
     --chart-height: 320px;
+    --splits-chart-height: 260px;
   }
 }
 
@@ -274,8 +276,9 @@ body {
 
   /* Make charts wider on mobile only (full-bleed into app padding) */
   .mobile-wide-chart {
-    width: calc(100% + 24px) !important;
-    margin-left: -12px;
+    /* Full-bleed to the viewport (respect safe-area insets) */
+    width: calc(100vw - env(safe-area-inset-left) - env(safe-area-inset-right)) !important;
+    margin-left: calc(50% - 50vw + env(safe-area-inset-left));
     display: block;
   }
 

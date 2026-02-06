@@ -1047,7 +1047,7 @@ const MileSplitPaceBarChart = ({ data }) => {
             handleMouseMove({ clientX: touch.clientX, clientY: touch.clientY });
           }}
           onTouchEnd={handleMouseLeave}
-          style={{ width: '100%', height: 'var(--chart-height)', borderRadius: '8px', cursor: 'crosshair' }}
+          style={{ width: '100%', height: 'var(--splits-chart-height, var(--chart-height))', borderRadius: '8px', cursor: 'crosshair' }}
         />
         {tooltip && (
           <div
