@@ -1037,6 +1037,7 @@ const MileSplitPaceBarChart = ({ data }) => {
       <div className="workout-title">Mile Splits (Pace)</div>
       <div style={{ position: 'relative' }}>
         <canvas
+          className="mobile-wide-chart"
           ref={canvasRef}
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}
@@ -1294,7 +1295,8 @@ const HeartRateChart = ({ data, xAxisMode = 'time' }) => {
     <div className="workout-display">
       <div className="workout-title">Heart Rate</div>
       <div style={{ position: 'relative' }}>
-        <canvas 
+        <canvas
+          className="mobile-wide-chart"
           ref={canvasRef}
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}
@@ -1578,7 +1580,8 @@ const PaceChart = ({ data, xAxisMode = 'time' }) => {
     <div className="workout-display">
       <div className="workout-title">Pace</div>
       <div style={{ position: 'relative' }}>
-        <canvas 
+        <canvas
+          className="mobile-wide-chart"
           ref={canvasRef}
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}
@@ -1922,6 +1925,7 @@ const CadenceChart = ({ data, xAxisMode = 'time' }) => {
       <div className="workout-title">Cadence</div>
       <div style={{ position: 'relative' }}>
         <canvas
+          className="mobile-wide-chart"
           ref={canvasRef}
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}

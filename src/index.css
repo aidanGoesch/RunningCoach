@@ -271,6 +271,19 @@ body {
   .app {
     padding: calc(20px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-left)) calc(20px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-right));
   }
+
+  /* Make charts wider on mobile only (full-bleed into app padding) */
+  .mobile-wide-chart {
+    width: calc(100% + 24px) !important;
+    margin-left: -12px;
+    display: block;
+  }
+
+  /* Keep stats grids (e.g. activity cards) as 2 rows x 3 cols on mobile */
+  .block-details {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
   
   .buttons {
     gap: 10px;
