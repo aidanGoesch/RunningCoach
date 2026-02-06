@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { getActivityDetails, getActivityStreams, generateInsights } from '../services/api';
 import { getActivityInsights, saveActivityInsights, saveActivityRating, getActivityRating } from '../services/supabase';
@@ -530,22 +530,67 @@ const ActivityDetail = ({ activityId, onBack }) => {
 
 const ActivityMap = ({ activity, streams }) => {
   const mapId = `map-${activity.id}`;
+  const mapRef = useRef(null);
+  const tileLayerRef = useRef(null);
   
   useEffect(() => {
     if (!streams?.latlng?.data || streams.latlng.data.length === 0) return;
 
     // Create map
     const map = L.map(mapId).setView(streams.latlng.data[0], 13);
-    
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap contributors'
-    }).addTo(map);
+    mapRef.current = map;
 
-    // Add route polyline
-    const polyline = L.polyline(streams.latlng.data, { color: 'red', weight: 3 }).addTo(map);
+    // Add route polyline - blue color
+    const polyline = L.polyline(streams.latlng.data, { color: '#3b82f6', weight: 4 }).addTo(map);
     map.fitBounds(polyline.getBounds());
 
-    return () => map.remove();
+    // Function to update tile layer based on theme
+    const updateTileLayer = () => {
+      const theme = document.documentElement.getAttribute('data-theme');
+      
+      // Remove existing tile layer
+      if (tileLayerRef.current) {
+        map.removeLayer(tileLayerRef.current);
+      }
+
+      // Add appropriate tile layer based on theme
+      if (theme === 'dark') {
+        // Dark Matter tiles for dark mode
+        tileLayerRef.current = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+          attribution: '© OpenStreetMap contributors © CARTO',
+          subdomains: 'abcd',
+          maxZoom: 19
+        }).addTo(map);
+      } else {
+        // Light tiles for light mode
+        tileLayerRef.current = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+          attribution: '© OpenStreetMap contributors © CARTO',
+          subdomains: 'abcd',
+          maxZoom: 19
+        }).addTo(map);
+      }
+    };
+
+    // Set initial tile layer
+    updateTileLayer();
+
+    // Watch for theme changes
+    const observer = new MutationObserver(updateTileLayer);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme']
+    });
+
+    mapRef.current._themeObserver = observer;
+
+    return () => {
+      if (mapRef.current._themeObserver) {
+        mapRef.current._themeObserver.disconnect();
+      }
+      map.remove();
+      mapRef.current = null;
+      tileLayerRef.current = null;
+    };
   }, [streams, mapId]);
 
   if (!streams?.latlng?.data) {

@@ -1,3 +1,5 @@
+import ActivityMapThumbnail from './ActivityMapThumbnail';
+
 const ActivityCard = ({ activity, onClick }) => {
   const formatDistance = (meters) => (meters / 1609.34).toFixed(2);
   const formatDuration = (seconds) => {
@@ -18,6 +20,11 @@ const ActivityCard = ({ activity, onClick }) => {
       onClick={() => onClick(activity.id)}
     >
       <div className="block-title">{activity.name}</div>
+      <ActivityMapThumbnail 
+        activityId={activity.id}
+        onClick={onClick}
+        activity={activity}
+      />
       <div className="block-details">
         <div className="detail-item">
           <span className="detail-label">Distance</span>
