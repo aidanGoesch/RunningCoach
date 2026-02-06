@@ -41,6 +41,10 @@ export class DataService {
 
   async get(key) {
     if (!this.useSupabase) {
+      // LocalStorage-only fallback
+      if (key.startsWith('recovery_workout_')) {
+        return localStorage.getItem(key)
+      }
       return localStorage.getItem(key)
     }
 
@@ -112,6 +116,14 @@ export class DataService {
               .select('insights_text')
               .eq('strava_activity_id', parseInt(activityId))
               .single()
+          } else if (key.startsWith('recovery_workout_')) {
+            const workoutDate = key.replace('recovery_workout_', '')
+            dataPromise = supabase
+              .from('recovery_workouts')
+              .select('recovery_data, completed')
+              .eq('user_id', user.id)
+              .eq('workout_date', workoutDate)
+              .single()
           } else {
             return localStorage.getItem(key)
           }
@@ -145,6 +157,11 @@ export class DataService {
             return data ? JSON.stringify(data.plan_data) : null;
           } else if (key.startsWith('activity_insights_')) {
             return data?.insights_text || null;
+          } else if (key.startsWith('recovery_workout_')) {
+            return data ? JSON.stringify({
+              workout: data.recovery_data,
+              completed: !!data.completed
+            }) : null;
           }
           return null;
       }
@@ -252,6 +269,25 @@ export class DataService {
                 strava_activity_id: parseInt(activityId),
                 insights_text: value
               })
+          } else if (key.startsWith('recovery_workout_')) {
+            const workoutDate = key.replace('recovery_workout_', '')
+            const parsed = value === null || value === 'null' ? null : JSON.parse(value || 'null')
+            if (!parsed) {
+              await supabase
+                .from('recovery_workouts')
+                .delete()
+                .eq('user_id', user.id)
+                .eq('workout_date', workoutDate)
+            } else {
+              await supabase
+                .from('recovery_workouts')
+                .upsert({
+                  user_id: user.id,
+                  workout_date: workoutDate,
+                  recovery_data: parsed.workout,
+                  completed: !!parsed.completed
+                })
+            }
           } else {
             localStorage.setItem(key, value)
           }
@@ -656,6 +692,59 @@ export const migrateToSupabase = async (exportedData) => {
   // Switch to Supabase mode
   dataService.useSupabase = true
   localStorage.setItem('use_supabase', 'true')
+}
+
+// Helper to fetch recent recovery workouts (Supabase or localStorage)
+export const getRecentRecoveryWorkouts = async (days = 3) => {
+  const results = []
+  const today = new Date()
+
+  if (!dataService.useSupabase) {
+    for (let i = 0; i < days; i++) {
+      const d = new Date(today)
+      d.setDate(today.getDate() - i)
+      const dateKey = d.toISOString().split('T')[0]
+      const stored = localStorage.getItem(`recovery_workout_${dateKey}`)
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored)
+          results.push({
+            date: dateKey,
+            workout: parsed.workout,
+            completed: !!parsed.completed
+          })
+        } catch {
+          // Ignore malformed entries
+        }
+      }
+    }
+    return results
+  }
+
+  const user = await ensureUser()
+  const endDate = today.toISOString().split('T')[0]
+  const start = new Date(today)
+  start.setDate(today.getDate() - (days - 1))
+  const startDate = start.toISOString().split('T')[0]
+
+  const { data, error } = await supabase
+    .from('recovery_workouts')
+    .select('workout_date, recovery_data, completed')
+    .eq('user_id', user.id)
+    .gte('workout_date', startDate)
+    .lte('workout_date', endDate)
+    .order('workout_date', { ascending: false })
+
+  if (error) {
+    console.error('Error fetching recent recovery workouts:', error)
+    return results
+  }
+
+  return (data || []).map(row => ({
+    date: row.workout_date,
+    workout: row.recovery_data,
+    completed: !!row.completed
+  }))
 }
 
 export const enableSupabase = () => {

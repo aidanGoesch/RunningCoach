@@ -11,10 +11,8 @@ const WeeklyAnalysis = ({ analysis }) => {
         border: '2px solid rgba(37, 99, 235, 0.95)', // blue-blue border
         background: 'var(--card-bg)',
         boxShadow: `
-          0 18px 70px rgba(37, 99, 235, 0.18),
-          inset 0 0 0 1px rgba(37, 99, 235, 0.22),
-          inset 0 0 70px rgba(37, 99, 235, 0.22),
-          inset 0 0 140px rgba(37, 99, 235, 0.12)
+          0 18px 70px rgba(37, 99, 235, 0.16),
+          inset 0 0 0 1px rgba(37, 99, 235, 0.20)
         `.replace(/\s+/g, ' ').trim()
       }}
     >

@@ -34,6 +34,12 @@ function App() {
   const [weeklyAnalysis, setWeeklyAnalysis] = useState(null);
   const [newActivityQueue, setNewActivityQueue] = useState([]);
   const [currentActivityForRating, setCurrentActivityForRating] = useState(null);
+  const [recoveryWorkout, setRecoveryWorkout] = useState(null);
+  const [recoveryCompleted, setRecoveryCompleted] = useState(false);
+  const [recoveryLoading, setRecoveryLoading] = useState(false);
+  const [recoveryBlockStatus, setRecoveryBlockStatus] = useState({});
+
+  const todayDate = new Date().toISOString().split('T')[0];
 
   // Determine if a run activity was completed today
   const hasRunToday = (() => {
@@ -332,8 +338,22 @@ function App() {
           }
         }
         
-        // Process workout
+        // Determine day type for today
         const dayOfWeek = today.getDay();
+        const isRunDay = dayOfWeek === 0 || dayOfWeek === 2 || dayOfWeek === 4; // Sun/Tue/Thu
+
+        // Compute whether a run was completed today from finalActivities
+        const todayStart = new Date(today);
+        todayStart.setHours(0, 0, 0, 0);
+        const todayEnd = new Date(today);
+        todayEnd.setHours(23, 59, 59, 999);
+        const hasRunTodayFromActivities = (finalActivities || []).some((a) => {
+          if (!a || a.type !== 'Run' || !a.start_date) return false;
+          const d = new Date(a.start_date);
+          return d >= todayStart && d <= todayEnd;
+        });
+
+        // Process workout
         const dayNameMap = {
           0: 'sunday',
           1: 'monday',
@@ -370,6 +390,73 @@ function App() {
           const localAnalysis = localStorage.getItem(`weekly_analysis_${weekKey}`);
           if (localAnalysis) {
             setWeeklyAnalysis(JSON.parse(localAnalysis));
+          }
+        }
+
+        // Ensure today's recovery workout exists when appropriate
+        try {
+          let hasRecovery = false;
+
+          // First, try to load any existing recovery workout (Supabase via dataService or localStorage)
+          const storedRecovery = await dataService.get(`recovery_workout_${todayDate}`);
+          if (storedRecovery) {
+            const parsedRecovery = JSON.parse(storedRecovery);
+            setRecoveryWorkout(parsedRecovery.workout || null);
+            setRecoveryCompleted(!!parsedRecovery.completed);
+            setRecoveryBlockStatus({});
+            hasRecovery = !!parsedRecovery.workout;
+          } else {
+            const localRecovery = localStorage.getItem(`recovery_workout_${todayDate}`);
+            if (localRecovery) {
+              const parsedRecovery = JSON.parse(localRecovery);
+              setRecoveryWorkout(parsedRecovery.workout || null);
+              setRecoveryCompleted(!!parsedRecovery.completed);
+              setRecoveryBlockStatus({});
+              hasRecovery = !!parsedRecovery.workout;
+            }
+          }
+
+          const shouldHaveRecovery =
+            !isRunDay || (isRunDay && hasRunTodayFromActivities);
+
+          // On rest days (and on run days after a run), if we still don't have a recovery workout, generate one now
+          if (!hasRecovery && shouldHaveRecovery) {
+            const availableApiKey = import.meta.env.VITE_OPENAI_API_KEY || apiKey;
+            if (availableApiKey) {
+              setRecoveryLoading(true);
+
+              const newWorkout = await generateWorkout(
+                availableApiKey,
+                finalActivities,
+                isInjured,
+                { reason: 'Recovery day', adjustment: 'recovery', source: 'auto' }
+              );
+
+              setRecoveryWorkout(newWorkout);
+              setRecoveryCompleted(false);
+              setRecoveryBlockStatus({});
+
+              const payload = JSON.stringify({
+                workout: newWorkout,
+                completed: false
+              });
+
+              await dataService.set(`recovery_workout_${todayDate}`, payload);
+              localStorage.setItem(`recovery_workout_${todayDate}`, payload);
+            }
+          }
+        } catch (recoveryError) {
+          console.error('Error loading recovery workout:', recoveryError);
+          const localRecovery = localStorage.getItem(`recovery_workout_${todayDate}`);
+          if (localRecovery) {
+            try {
+              const parsedRecovery = JSON.parse(localRecovery);
+              setRecoveryWorkout(parsedRecovery.workout || null);
+              setRecoveryCompleted(!!parsedRecovery.completed);
+              setRecoveryBlockStatus({});
+            } catch {
+              // Ignore malformed local recovery
+            }
           }
         }
         
@@ -413,6 +500,7 @@ function App() {
         return { newActivities: [] };
       } finally {
         setIsPreloading(false);
+        setRecoveryLoading(false);
       }
     };
 
@@ -715,6 +803,86 @@ function App() {
     // Scheduled run days: Tuesday (2), Thursday (4), Sunday (0)
     return dayOfWeek === 0 || dayOfWeek === 2 || dayOfWeek === 4;
   };
+
+  // Safety net: ensure recovery workout exists on rest days (and after runs on run days)
+  useEffect(() => {
+    if (isPreloading) return;
+    if (recoveryWorkout) return;
+
+    const availableApiKey = import.meta.env.VITE_OPENAI_API_KEY || apiKey;
+    if (!availableApiKey) return;
+
+    const today = new Date();
+    const dayOfWeek = today.getDay();
+    const isRunDay = dayOfWeek === 0 || dayOfWeek === 2 || dayOfWeek === 4; // Sun/Tue/Thu
+
+    const todayStart = new Date(today);
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(today);
+    todayEnd.setHours(23, 59, 59, 999);
+
+    const hasRunTodayFromActivities = (activities || []).some((a) => {
+      if (!a || a.type !== 'Run' || !a.start_date) return false;
+      const d = new Date(a.start_date);
+      return d >= todayStart && d <= todayEnd;
+    });
+
+    const shouldHaveRecovery =
+      !isRunDay || (isRunDay && hasRunTodayFromActivities);
+
+    if (!shouldHaveRecovery) return;
+
+    // Avoid regenerating if we already have one persisted
+    const existingLocal = localStorage.getItem(`recovery_workout_${todayDate}`);
+    if (existingLocal) {
+      try {
+        const parsed = JSON.parse(existingLocal);
+        if (parsed && parsed.workout) {
+          setRecoveryWorkout(parsed.workout);
+          setRecoveryCompleted(!!parsed.completed);
+          return;
+        }
+      } catch {
+        // Ignore malformed data and fall through to regenerate
+      }
+    }
+
+    const generate = async () => {
+      try {
+        setRecoveryLoading(true);
+        const newWorkout = await generateWorkout(
+          availableApiKey,
+          activities,
+          isInjured,
+          { reason: 'Recovery day', adjustment: 'recovery', source: 'auto-fallback' }
+        );
+
+        setRecoveryWorkout(newWorkout);
+        setRecoveryCompleted(false);
+
+        const payload = JSON.stringify({
+          workout: newWorkout,
+          completed: false
+        });
+
+        await dataService.set(`recovery_workout_${todayDate}`, payload);
+        localStorage.setItem(`recovery_workout_${todayDate}`, payload);
+      } catch (err) {
+        console.error('Fallback recovery generation failed:', err);
+      } finally {
+        setRecoveryLoading(false);
+      }
+    };
+
+    generate();
+  }, [
+    isPreloading,
+    activities,
+    apiKey,
+    isInjured,
+    recoveryWorkout,
+    todayDate
+  ]);
 
   const handlePlannedWorkoutClick = (plannedWorkout, dayName) => {
     console.log('Planned workout clicked:', plannedWorkout, dayName);
@@ -1434,7 +1602,6 @@ function App() {
           <>
             <div className="header">
               <h1>Running Coach</h1>
-              <p>Your AI-powered running companion</p>
             </div>
 
         {!import.meta.env.VITE_OPENAI_API_KEY && (
@@ -1489,25 +1656,196 @@ function App() {
           }}
         />
 
-        <div className="buttons">
-          <button 
-            className="btn btn-secondary" 
-            onClick={() => {
-              handleGenerateWorkout(false, { reason: 'Recovery day', adjustment: 'recovery' });
-              updateDailyUsage('recovery');
-            }}
-            disabled={loading || (!apiKey && !import.meta.env.VITE_OPENAI_API_KEY) || dailyUsage.recovery}
-            style={{ 
-              fontSize: '14px', 
-              padding: '12px 20px',
-              opacity: dailyUsage.recovery ? 0.5 : 1,
-              cursor: dailyUsage.recovery ? 'not-allowed' : 'pointer'
+        {recoveryWorkout && (
+          <div
+            className="workout-block"
+            style={{
+              marginTop: '24px',
+              border: recoveryCompleted
+                ? '1px solid rgba(34, 197, 94, 0.65)'
+                : '1px solid var(--border-color)',
+              boxShadow: recoveryCompleted
+                ? '0 14px 40px rgba(34, 197, 94, 0.30)'
+                : '0 8px 24px rgba(15, 23, 42, 0.12)',
+              background: recoveryCompleted
+                ? 'linear-gradient(135deg, rgba(34, 197, 94, 0.12), rgba(16, 185, 129, 0.06))'
+                : 'var(--card-bg)',
+              borderRadius: '16px',
+              padding: '14px',
+              transition: 'box-shadow 0.25s ease, border-color 0.25s ease, background 0.25s ease'
             }}
           >
-            {dailyUsage.recovery ? 'Recovery Used Today' : 'Generate Recovery Exercises'}
-          </button>
-          
-        </div>
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                <div className="workout-title">
+                  Recovery Exercises
+                </div>
+                <div
+                  style={{
+                    padding: '6px 10px',
+                    borderRadius: '999px',
+                    background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.30), rgba(16, 185, 129, 0.18))',
+                    border: '1px solid rgba(34, 197, 94, 0.50)',
+                    color: 'var(--text-color)',
+                    fontSize: '11px',
+                    fontWeight: 800,
+                    letterSpacing: '0.02em',
+                    whiteSpace: 'nowrap',
+                    opacity: recoveryCompleted ? 1 : 0,
+                    transform: recoveryCompleted ? 'translateY(0px)' : 'translateY(-4px)',
+                    transition: 'opacity 0.25s ease, transform 0.25s ease',
+                    pointerEvents: recoveryCompleted ? 'auto' : 'none'
+                  }}
+                >
+                  ✅ Recovery Completed
+                </div>
+              </div>
+            </div>
+
+            <div
+              className="block-details"
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px'
+              }}
+            >
+                {(recoveryWorkout.blocks || []).map((block, index) => {
+                  const isBlockCompleted = !!recoveryBlockStatus[index];
+                  return (
+                    <div
+                      key={index}
+                      className="detail-item recovery-detail"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: '12px',
+                        width: '100%'
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRecoveryBlockStatus(prev => ({
+                            ...prev,
+                            [index]: !prev[index]
+                          }));
+                        }}
+                        style={{
+                          width: '20px',
+                          height: '20px',
+                          borderRadius: '50%',
+                          border: '2px solid var(--accent)',
+                          background: isBlockCompleted ? 'var(--accent)' : 'transparent',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0,
+                          cursor: 'pointer',
+                          transition: 'background 0.15s ease, transform 0.1s ease',
+                          transform: isBlockCompleted ? 'scale(0.95)' : 'scale(1)'
+                        }}
+                        aria-label={isBlockCompleted ? 'Mark segment as not done' : 'Mark segment as done'}
+                      >
+                        {isBlockCompleted && (
+                          <span
+                            style={{
+                              width: '8px',
+                              height: '8px',
+                              borderRadius: '50%',
+                              background: 'white'
+                            }}
+                          />
+                        )}
+                      </button>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <span
+                          className="detail-label"
+                          style={{
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.04em',
+                            fontSize: '12px',
+                            opacity: isBlockCompleted ? 0.7 : 1
+                          }}
+                        >
+                          {block.title}
+                        </span>
+                        {block.duration && (
+                          <span
+                            className="detail-value"
+                            style={{
+                              fontSize: '13px',
+                              fontWeight: 500,
+                              opacity: isBlockCompleted ? 0.7 : 1
+                            }}
+                          >
+                            {block.duration}
+                          </span>
+                        )}
+                        {block.notes && (
+                          <span
+                            className="detail-value"
+                            style={{
+                              fontSize: '13px',
+                              color: 'var(--text-secondary)',
+                              opacity: isBlockCompleted ? 0.6 : 1
+                            }}
+                          >
+                            {block.notes}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div
+                style={{
+                  marginTop: '16px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '10px'
+                }}
+              >
+                <button
+                  className="btn btn-primary"
+                  onClick={async () => {
+                    if (!recoveryWorkout) return;
+                    const newCompleted = !recoveryCompleted;
+                    setRecoveryCompleted(newCompleted);
+                    const payload = JSON.stringify({
+                      workout: recoveryWorkout,
+                      completed: newCompleted
+                    });
+                    try {
+                      await dataService.set(`recovery_workout_${todayDate}`, payload);
+                      localStorage.setItem(`recovery_workout_${todayDate}`, payload);
+                    } catch (err) {
+                      console.error('Failed to update recovery completion state:', err);
+                    }
+                  }}
+                  style={{
+                    width: '100%',
+                    background: recoveryCompleted
+                      ? 'transparent'
+                      : 'linear-gradient(135deg, rgba(34,197,94,0.95), rgba(16,185,129,0.9))',
+                    borderColor: recoveryCompleted
+                      ? 'var(--border-color)'
+                      : 'rgba(34,197,94,0.9)',
+                    color: recoveryCompleted ? 'var(--text-color)' : '#ffffff',
+                    boxShadow: recoveryCompleted
+                      ? 'none'
+                      : '0 12px 30px rgba(34,197,94,0.35)',
+                    fontWeight: 700,
+                    transition: 'background 0.25s ease, border-color 0.25s ease, color 0.25s ease, box-shadow 0.25s ease, transform 0.1s ease'
+                  }}
+                >
+                  {recoveryCompleted ? 'Undo Recovery' : 'Complete Recovery'}
+                </button>
+            </div>
+          </div>
+        )}
 
         {loading && (
           <div className="loading">
@@ -1515,15 +1853,17 @@ function App() {
           </div>
         )}
 
-        <WorkoutDisplay 
-          workout={workout} 
-          isCompleted={hasRunToday}
-          onWorkoutClick={() => {
-            setShowWorkoutDetail(true);
-            // Add to browser history
-            window.history.pushState({ view: 'workoutDetail' }, '', window.location.pathname);
-          }}
-        />
+        {isScheduledRunDay() && (
+          <WorkoutDisplay 
+            workout={workout} 
+            isCompleted={hasRunToday}
+            onWorkoutClick={() => {
+              setShowWorkoutDetail(true);
+              // Add to browser history
+              window.history.pushState({ view: 'workoutDetail' }, '', window.location.pathname);
+            }}
+          />
+        )}
         
         <div style={{ marginTop: '32px' }}>
           <ActivitiesDisplay 

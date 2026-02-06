@@ -116,18 +116,22 @@ const WorkoutDisplay = ({ workout, onWorkoutClick, isCompleted = false }) => {
   // Determine workout type - check workout.type first, then title, then blocks
   let workoutType = 'Easy Run';
   if (workout.type) {
-    // Use the type field if available
-    if (workout.type === 'speed' || workout.type === 'Speed Work') {
+    const type = typeof workout.type === 'string' ? workout.type.toLowerCase() : workout.type;
+    if (type === 'recovery') {
+      workoutType = 'Recovery / PT';
+    } else if (type === 'speed' || type === 'speed work') {
       workoutType = 'Speed Work';
-    } else if (workout.type === 'long' || workout.type === 'Long Run') {
+    } else if (type === 'long' || type === 'long run') {
       workoutType = 'Long Run';
-    } else if (workout.type === 'easy' || workout.type === 'Easy Run') {
+    } else if (type === 'easy' || type === 'easy run') {
       workoutType = 'Easy Run';
     }
   } else if (workout.title) {
     // Check title for workout type
     const titleLower = workout.title.toLowerCase();
-    if (titleLower.includes('speed') || titleLower.includes('interval') || titleLower.includes('tempo')) {
+    if (titleLower.includes('recovery') || titleLower.includes('pt')) {
+      workoutType = 'Recovery / PT';
+    } else if (titleLower.includes('speed') || titleLower.includes('interval') || titleLower.includes('tempo')) {
       workoutType = 'Speed Work';
     } else if (titleLower.includes('long')) {
       workoutType = 'Long Run';

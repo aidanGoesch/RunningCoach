@@ -1,4 +1,4 @@
-import { getStravaTokens, saveStravaTokens, deleteStravaTokens } from './supabase';
+import { getStravaTokens, saveStravaTokens, deleteStravaTokens, getRecentRecoveryWorkouts } from './supabase';
 
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 const STRAVA_CLIENT_ID = import.meta.env.VITE_STRAVA_CLIENT_ID;
@@ -177,8 +177,26 @@ const parseWorkoutFromText = (content) => {
 
 export const generateWorkout = async (apiKey, activities = [], isInjured = false, postponeData = null) => {
   const savedPrompt = localStorage.getItem('coaching_prompt') || 'You are an expert running coach.';
-  let basePrompt = updatePromptWithCurrentData(savedPrompt, activities);
-  
+  let basePrompt = savedPrompt;
+
+  // Include recent recovery routines so the model knows what was recommended
+  try {
+    const recentRecovery = await getRecentRecoveryWorkouts(3);
+    if (recentRecovery && recentRecovery.length > 0) {
+      const summaryLines = recentRecovery.map(entry => {
+        const title = entry.workout?.title || 'Recovery';
+        const status = entry.completed ? 'completed' : 'not completed';
+        return `- [${entry.date}] ${title} (${status})`;
+      });
+      basePrompt += `\n\nRecent recovery routines:\n${summaryLines.join('\n')}`;
+    }
+  } catch (recoveryHistoryError) {
+    console.error('Failed to include recovery history in prompt:', recoveryHistoryError);
+  }
+
+  basePrompt = updatePromptWithCurrentData(basePrompt, activities);
+
+  const isRecoveryRequest = !!(postponeData && postponeData.adjustment === 'recovery');
   // If this is a recovery exercise request, override the workout type
   if (postponeData && postponeData.adjustment === 'recovery') {
     basePrompt = `You are an expert running coach. Generate a structured recovery exercise routine.
@@ -229,21 +247,136 @@ CRITICAL: Return the response in this exact JSON format:
 Do NOT include any conversational text. Return ONLY the JSON structure above with specific exercises, sets, reps, and durations.`;
   }
   
-  const response = await fetch(OPENAI_API_URL, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      model: 'gpt-5-mini',
-      messages: [{ role: 'system', content: basePrompt }, { role: 'user', content: 'Generate today\'s workout.' }],
-      temperature: 0.7,
-      max_tokens: 1500
-    })
-  });
+  let response;
+  try {
+    response = await fetch(OPENAI_API_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'gpt-5-mini',
+        messages: [{ role: 'system', content: basePrompt }, { role: 'user', content: 'Generate today\'s workout.' }],
+        temperature: 0.7,
+        max_tokens: 1500
+      })
+    });
+  } catch (networkError) {
+    // If this was a recovery request, fall back to a built-in routine
+    if (isRecoveryRequest) {
+      const fallback = {
+        title: 'Recovery',
+        type: 'recovery',
+        blocks: [
+          {
+            title: 'Hip Stability',
+            distance: '',
+            pace: '',
+            duration: '10-12 minutes',
+            notes: 'Clamshells: 2 sets of 15 each side. Hip bridges: 2 sets of 20 reps. Side-lying leg lifts: 2 sets of 12 each side.'
+          },
+          {
+            title: 'Core Stability',
+            distance: '',
+            pace: '',
+            duration: '8-10 minutes',
+            notes: 'Planks: 3 sets of 30-45 seconds. Bird dogs: 2 sets of 10 each side (hold 5 seconds). Dead bugs: 2 sets of 10 each side.'
+          },
+          {
+            title: 'Lower Leg Strength',
+            distance: '',
+            pace: '',
+            duration: '5-7 minutes',
+            notes: 'Calf raises: 3 sets of 15 reps. Single-leg calf raises: 2 sets of 10 each leg. Ankle circles: 10 each direction.'
+          },
+          {
+            title: 'Mobility & Stretching',
+            distance: '',
+            pace: '',
+            duration: '10-15 minutes',
+            notes: 'Hip flexor stretch: 30 seconds each leg. IT band stretch: 30 seconds each leg. Calf stretch: 30 seconds each leg. Pigeon pose: 45 seconds each side.'
+          },
+          {
+            title: 'Foam Rolling',
+            distance: '',
+            pace: '',
+            duration: '8-10 minutes',
+            notes: 'IT band: 60 seconds each leg. Calves: 45 seconds each leg. Quads: 60 seconds each leg. Glutes: 45 seconds each side.'
+          }
+        ]
+      };
 
-  if (!response.ok) throw new Error(`OpenAI API error: ${response.status}`);
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/6638e027-4723-4b24-b270-caaa7c40bae9', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: 'debug-session',
+          runId: 'pre-fix-1',
+          hypothesisId: 'H9',
+          location: 'api.js:generateWorkout:networkFallbackRecovery',
+          message: 'Using built-in fallback recovery workout after network error',
+          data: {},
+          timestamp: Date.now()
+        })
+      }).catch(() => {});
+      // #endregion
+
+      return fallback;
+    }
+
+    throw networkError;
+  }
+
+  if (!response.ok) {
+    // If this was a recovery request, fall back to a built-in routine
+    if (isRecoveryRequest) {
+      return {
+        title: 'Recovery',
+        type: 'recovery',
+        blocks: [
+          {
+            title: 'Hip Stability',
+            distance: '',
+            pace: '',
+            duration: '10-12 minutes',
+            notes: 'Clamshells: 2 sets of 15 each side. Hip bridges: 2 sets of 20 reps. Side-lying leg lifts: 2 sets of 12 each side.'
+          },
+          {
+            title: 'Core Stability',
+            distance: '',
+            pace: '',
+            duration: '8-10 minutes',
+            notes: 'Planks: 3 sets of 30-45 seconds. Bird dogs: 2 sets of 10 each side (hold 5 seconds). Dead bugs: 2 sets of 10 each side.'
+          },
+          {
+            title: 'Lower Leg Strength',
+            distance: '',
+            pace: '',
+            duration: '5-7 minutes',
+            notes: 'Calf raises: 3 sets of 15 reps. Single-leg calf raises: 2 sets of 10 each leg. Ankle circles: 10 each direction.'
+          },
+          {
+            title: 'Mobility & Stretching',
+            distance: '',
+            pace: '',
+            duration: '10-15 minutes',
+            notes: 'Hip flexor stretch: 30 seconds each leg. IT band stretch: 30 seconds each leg. Calf stretch: 30 seconds each leg. Pigeon pose: 45 seconds each side.'
+          },
+          {
+            title: 'Foam Rolling',
+            distance: '',
+            pace: '',
+            duration: '8-10 minutes',
+            notes: 'IT band: 60 seconds each leg. Calves: 45 seconds each leg. Quads: 60 seconds each leg. Glutes: 45 seconds each side.'
+          }
+        ]
+      };
+    }
+
+    throw new Error(`OpenAI API error: ${response.status}`);
+  }
   
   const data = await response.json();
   const content = data.choices[0].message.content;
@@ -252,8 +385,7 @@ Do NOT include any conversational text. Return ONLY the JSON structure above wit
   try {
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      return parsed;
+      return JSON.parse(jsonMatch[0]);
     }
   } catch (parseError) {
     console.log('Could not parse JSON, using text format');
