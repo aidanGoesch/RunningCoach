@@ -3,12 +3,7 @@ module.exports = {
   appName: 'Running Coach',
   webDir: 'dist',
   server: {
-    androidScheme: 'https',
-    iosScheme: 'https'
-  },
-  ios: {
-    contentInset: 'automatic',
-    scrollEnabled: true
+    androidScheme: 'https'
   },
   plugins: {
     Keyboard: {
