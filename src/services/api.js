@@ -862,6 +862,28 @@ Return the response in this exact JSON format:
   }
 };
 
+// Detect new activities by comparing with last known activity IDs
+export const detectNewActivities = (newActivities) => {
+  if (!newActivities || newActivities.length === 0) {
+    return [];
+  }
+  
+  // Get last known activity IDs from localStorage
+  const lastKnownIdsStr = localStorage.getItem('last_known_activity_ids');
+  const lastKnownIds = lastKnownIdsStr ? JSON.parse(lastKnownIdsStr) : [];
+  
+  // Find activities that are not in the last known list
+  const newActivityList = newActivities.filter(activity => 
+    !lastKnownIds.includes(activity.id)
+  );
+  
+  // Update last known activity IDs with all current activity IDs
+  const currentIds = newActivities.map(activity => activity.id);
+  localStorage.setItem('last_known_activity_ids', JSON.stringify(currentIds));
+  
+  return newActivityList;
+};
+
 // Strava functions (keeping existing ones)
 export const syncWithStrava = async () => {
   console.log('syncWithStrava called');
@@ -888,6 +910,13 @@ export const syncWithStrava = async () => {
     const activities = await getStravaActivities(token, 30);
     console.log('Activities fetched:', activities?.length || 0);
     localStorage.setItem('strava_activities', JSON.stringify(activities));
+    
+    // Track activity IDs after successful sync
+    if (activities && activities.length > 0) {
+      const activityIds = activities.map(activity => activity.id);
+      localStorage.setItem('last_known_activity_ids', JSON.stringify(activityIds));
+    }
+    
     return activities;
   } catch (error) {
     console.error('Sync error:', error);
@@ -898,6 +927,13 @@ export const syncWithStrava = async () => {
         console.log('Token refreshed, fetching activities...');
         const activities = await getStravaActivities(newToken, 30);
         localStorage.setItem('strava_activities', JSON.stringify(activities));
+        
+        // Track activity IDs after successful sync
+        if (activities && activities.length > 0) {
+          const activityIds = activities.map(activity => activity.id);
+          localStorage.setItem('last_known_activity_ids', JSON.stringify(activityIds));
+        }
+        
         return activities;
       } catch (refreshError) {
         console.error('Token refresh failed:', refreshError);

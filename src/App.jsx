@@ -11,7 +11,8 @@ import CoachingPromptEditor from './components/CoachingPromptEditor';
 import WorkoutFeedback from './components/WorkoutFeedback';
 import PostponeWorkout from './components/PostponeWorkout';
 import PullToRefresh from './components/PullToRefresh';
-import { generateWorkout, generateWeeklyPlan, generateDataDrivenWeeklyPlan, generateWeeklyAnalysis, matchActivitiesToWorkouts, syncWithStrava, generateInsights } from './services/api';
+import NewActivityRatingModal from './components/NewActivityRatingModal';
+import { generateWorkout, generateWeeklyPlan, generateDataDrivenWeeklyPlan, generateWeeklyAnalysis, matchActivitiesToWorkouts, syncWithStrava, generateInsights, detectNewActivities } from './services/api';
 import { dataService, setupRealtimeSync, syncAllDataFromSupabase, enableSupabase } from './services/supabase';
 
 function App() {
@@ -19,6 +20,7 @@ function App() {
   const [activities, setActivities] = useState([]);
   const [insights, setInsights] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [isPreloading, setIsPreloading] = useState(true);
   const [error, setError] = useState(null);
   const [isStravaCallback, setIsStravaCallback] = useState(false);
   const [selectedActivityId, setSelectedActivityId] = useState(null);
@@ -32,6 +34,8 @@ function App() {
   const [isInjured, setIsInjured] = useState(localStorage.getItem('isInjured') === 'true');
   const [supabaseEnabled, setSupabaseEnabled] = useState(dataService.useSupabase || localStorage.getItem('use_supabase') === 'true');
   const [weeklyAnalysis, setWeeklyAnalysis] = useState(null);
+  const [newActivityQueue, setNewActivityQueue] = useState([]);
+  const [currentActivityForRating, setCurrentActivityForRating] = useState(null);
 
   // Track daily button usage
   const [dailyUsage, setDailyUsage] = useState(() => {
@@ -254,87 +258,111 @@ function App() {
 
     window.addEventListener('popstate', handlePopState);
     
-    // Load data asynchronously
-    const loadData = async () => {
+    // Preload all data in parallel
+    const preloadAllData = async () => {
       try {
-        console.log('Loading data from Supabase...');
+        console.log('Starting preload...');
         
-        // If using Supabase, sync all data
-        if (dataService.useSupabase) {
-          const syncedData = await syncAllDataFromSupabase();
-          if (syncedData) {
-            if (syncedData.activities && syncedData.activities.length > 0) {
-              setActivities(syncedData.activities);
-            }
-            if (syncedData.workout) {
-              setWorkout(syncedData.workout);
-            }
-          }
-        }
-        
-        // Load stored activities first (most important)
-        console.log('Loading activities...');
-        const stored = await dataService.get('strava_activities');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          console.log('Activities loaded:', parsed.length);
-          setActivities(parsed);
-        } else {
-          console.log('No activities found, checking localStorage fallback...');
-          const localStored = localStorage.getItem('strava_activities');
-          if (localStored) {
-            setActivities(JSON.parse(localStored));
-          }
-        }
-        
-        // Load saved workout, but check if weekly plan has a better match for today
-        console.log('Loading current workout...');
-        
-        // First, check if we have a weekly plan and should use today's workout
         const today = new Date();
         const monday = new Date(today);
         monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
         monday.setHours(0, 0, 0, 0);
         const weekKey = `${monday.getFullYear()}-${monday.getMonth()}-${monday.getDate()}`;
         
-        const weeklyPlanData = await dataService.get(`weekly_plan_${weekKey}`);
-        let todayWorkout = null;
+        // Load all data in parallel
+        const [
+          supabaseData,
+          storedActivities,
+          workoutData,
+          weeklyPlanData,
+          analysisData,
+          syncedActivities
+        ] = await Promise.all([
+          // Supabase sync (if enabled)
+          dataService.useSupabase ? syncAllDataFromSupabase().catch(err => {
+            console.error('Supabase sync error:', err);
+            return null;
+          }) : Promise.resolve(null),
+          
+          // Load stored activities
+          dataService.get('strava_activities').catch(() => null),
+          
+          // Load current workout
+          dataService.get('current_workout').catch(() => null),
+          
+          // Load weekly plan
+          dataService.get(`weekly_plan_${weekKey}`).catch(() => null),
+          
+          // Load weekly analysis
+          dataService.get(`weekly_analysis_${weekKey}`).catch(() => null),
+          
+          // Auto-sync with Strava
+          syncWithStrava().catch(err => {
+            console.error('Strava sync error:', err);
+            return null;
+          })
+        ]);
         
+        // Process Supabase data if available
+        if (supabaseData) {
+          if (supabaseData.activities && supabaseData.activities.length > 0) {
+            setActivities(supabaseData.activities);
+          }
+          if (supabaseData.workout) {
+            setWorkout(supabaseData.workout);
+          }
+        }
+        
+        // Process activities (prioritize synced activities, then stored)
+        let finalActivities = [];
+        if (syncedActivities && syncedActivities.length > 0) {
+          finalActivities = syncedActivities;
+          setActivities(syncedActivities);
+        } else if (storedActivities) {
+          const parsed = JSON.parse(storedActivities);
+          finalActivities = parsed;
+          setActivities(parsed);
+        } else {
+          const localStored = localStorage.getItem('strava_activities');
+          if (localStored) {
+            const parsed = JSON.parse(localStored);
+            finalActivities = parsed;
+            setActivities(parsed);
+          }
+        }
+        
+        // Process workout
+        const dayOfWeek = today.getDay();
+        const dayNameMap = {
+          0: 'sunday',
+          1: 'monday',
+          2: 'tuesday',
+          3: 'wednesday',
+          4: 'thursday',
+          5: 'friday',
+          6: 'saturday'
+        };
+        
+        let todayWorkout = null;
         if (weeklyPlanData) {
           const parsedPlan = JSON.parse(weeklyPlanData);
-          const dayOfWeek = today.getDay();
-          const dayNameMap = {
-            0: 'sunday',
-            1: 'monday',
-            2: 'tuesday',
-            3: 'wednesday',
-            4: 'thursday',
-            5: 'friday',
-            6: 'saturday'
-          };
           todayWorkout = parsedPlan[dayNameMap[dayOfWeek]];
         }
         
-        // Use today's workout from weekly plan if available, otherwise use stored current workout
         if (todayWorkout) {
           setWorkout(todayWorkout);
           await dataService.set('current_workout', JSON.stringify(todayWorkout));
           localStorage.setItem('current_workout', JSON.stringify(todayWorkout));
+        } else if (workoutData) {
+          setWorkout(JSON.parse(workoutData));
         } else {
-          const workoutData = await dataService.get('current_workout');
-          if (workoutData) {
-            setWorkout(JSON.parse(workoutData));
-          } else {
-            const localWorkout = localStorage.getItem('current_workout');
-            if (localWorkout) {
-              setWorkout(JSON.parse(localWorkout));
-            }
+          const localWorkout = localStorage.getItem('current_workout');
+          if (localWorkout) {
+            setWorkout(JSON.parse(localWorkout));
           }
         }
         
-        // Load weekly analysis (reuse weekKey from above)
-        
-        const analysisData = await dataService.get(`weekly_analysis_${weekKey}`);
+        // Process weekly analysis
         if (analysisData) {
           setWeeklyAnalysis(JSON.parse(analysisData));
         } else {
@@ -344,10 +372,20 @@ function App() {
           }
         }
         
-        console.log('Data loading completed');
+        // Detect new activities after sync
+        let newActivities = [];
+        if (syncedActivities && syncedActivities.length > 0) {
+          newActivities = detectNewActivities(syncedActivities);
+          if (newActivities.length > 0) {
+            console.log('New activities detected:', newActivities.length);
+          }
+        }
+        
+        console.log('Preload completed');
+        return { newActivities };
       } catch (error) {
-        console.error('Error loading data from Supabase, falling back to localStorage:', error);
-        // Fallback to localStorage if Supabase fails
+        console.error('Error during preload:', error);
+        // Fallback to localStorage
         const localStored = localStorage.getItem('strava_activities');
         if (localStored) {
           setActivities(JSON.parse(localStored));
@@ -356,10 +394,22 @@ function App() {
         if (localWorkout) {
           setWorkout(JSON.parse(localWorkout));
         }
+        return { newActivities: [] };
+      } finally {
+        setIsPreloading(false);
       }
     };
 
-    loadData();
+    preloadAllData().then((result) => {
+      // If there are new activities, show the first one after preloading completes
+      if (result && result.newActivities && result.newActivities.length > 0) {
+        // Small delay to ensure UI is ready
+        setTimeout(() => {
+          setNewActivityQueue(result.newActivities);
+          setCurrentActivityForRating(result.newActivities[0]);
+        }, 100);
+      }
+    });
 
     // Setup real-time sync if using Supabase
     let cleanupSync = null;
@@ -1158,11 +1208,41 @@ function App() {
         )}
       </div>
 
-      <PullToRefresh onRefresh={handleStravaSync}>
-        <div className="header">
-          <h1>Running Coach</h1>
-          <p>Your AI-powered running companion</p>
+      {/* Loading Spinner */}
+      {isPreloading && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: '100vw',
+          height: '100vh',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: 'var(--bg-color)',
+          zIndex: 9999
+        }}>
+          <div style={{
+            width: '48px',
+            height: '48px',
+            border: '4px solid var(--border-color)',
+            borderTop: '4px solid var(--accent)',
+            borderRadius: '50%',
+            animation: 'spin 1s linear infinite',
+            marginBottom: '16px'
+          }}></div>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '16px' }}>Loading...</p>
         </div>
+      )}
+
+      <PullToRefresh onRefresh={handleStravaSync}>
+        {!isPreloading && (
+          <>
+            <div className="header">
+              <h1>Running Coach</h1>
+              <p>Your AI-powered running companion</p>
+            </div>
 
         {!import.meta.env.VITE_OPENAI_API_KEY && (
           <div style={{ marginBottom: '20px' }}>
@@ -1251,31 +1331,50 @@ function App() {
           }}
         />
         
-        {workout && (
-          <div style={{ marginBottom: '20px' }}>
-            <button 
-              className="btn btn-secondary"
-              onClick={() => {
-                setShowFeedback(true);
-                // Add to browser history
-                window.history.pushState({ view: 'feedback' }, '', window.location.pathname);
-              }}
-              style={{ width: '100%' }}
-            >
-              Rate This Workout
-            </button>
-          </div>
+        <div style={{ marginTop: '32px' }}>
+          <ActivitiesDisplay 
+            activities={activities} 
+            onActivityClick={(activityId) => {
+              setSelectedActivityId(activityId);
+              // Add to browser history
+              window.history.pushState({ view: 'activity', activityId }, '', window.location.pathname);
+            }}
+          />
+        </div>
+          </>
         )}
-        
-        <ActivitiesDisplay 
-          activities={activities} 
-          onActivityClick={(activityId) => {
-            setSelectedActivityId(activityId);
-            // Add to browser history
-            window.history.pushState({ view: 'activity', activityId }, '', window.location.pathname);
+      </PullToRefresh>
+
+      {/* New Activity Rating Modal */}
+      {currentActivityForRating && (
+        <NewActivityRatingModal
+          activity={currentActivityForRating}
+          onClose={() => {
+            // Remove current activity from queue and show next one
+            setNewActivityQueue(prev => {
+              const updated = prev.filter(a => a.id !== currentActivityForRating.id);
+              if (updated.length > 0) {
+                setCurrentActivityForRating(updated[0]);
+              } else {
+                setCurrentActivityForRating(null);
+              }
+              return updated;
+            });
+          }}
+          onComplete={() => {
+            // Remove current activity from queue and show next one
+            setNewActivityQueue(prev => {
+              const updated = prev.filter(a => a.id !== currentActivityForRating.id);
+              if (updated.length > 0) {
+                setCurrentActivityForRating(updated[0]);
+              } else {
+                setCurrentActivityForRating(null);
+              }
+              return updated;
+            });
           }}
         />
-      </PullToRefresh>
+      )}
     </div>
   );
 }
