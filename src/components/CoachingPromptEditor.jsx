@@ -156,62 +156,6 @@ const CoachingPromptEditor = ({ onSave, onCancel, currentPrompt }) => {
               style={{ display: 'none' }}
             />
           </label>
-
-          <button 
-            className="btn btn-secondary"
-            onClick={async () => {
-              try {
-                const { syncWithStrava } = await import('../services/api');
-                await syncWithStrava();
-                onCancel();
-                window.location.reload();
-              } catch (error) {
-                localStorage.removeItem('strava_access_token');
-                localStorage.removeItem('strava_refresh_token');
-                localStorage.removeItem('strava_activities');
-                window.location.reload();
-              }
-            }}
-            style={{ fontSize: '14px', padding: '8px 12px' }}
-          >
-            Sync with Strava
-          </button>
-        </div>
-        
-        <textarea
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          style={{
-            width: '100%',
-            minHeight: '300px',
-            padding: '12px',
-            border: '1px solid var(--border-color)',
-            borderRadius: '8px',
-            fontSize: '14px',
-            fontFamily: 'inherit',
-            lineHeight: '1.5',
-            resize: 'vertical',
-            backgroundColor: 'var(--card-bg)',
-            color: 'var(--text-color)'
-          }}
-          placeholder="Enter your coaching instructions..."
-        />
-        
-        <div style={{ display: 'flex', gap: '10px', marginTop: '15px' }}>
-          <button 
-            className="btn btn-primary"
-            onClick={() => onSave(prompt)}
-            style={{ flex: 1 }}
-          >
-            Save Prompt
-          </button>
-          <button 
-            className="btn btn-secondary"
-            onClick={onCancel}
-            style={{ flex: 1 }}
-          >
-            Cancel
-          </button>
         </div>
       </div>
       </div>

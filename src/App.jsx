@@ -7,7 +7,6 @@ import ActivitiesDisplay from './components/ActivitiesDisplay';
 import InsightsDisplay from './components/InsightsDisplay';
 import StravaCallback from './components/StravaCallback';
 import ActivityDetail from './components/ActivityDetail';
-import CoachingPromptEditor from './components/CoachingPromptEditor';
 import WorkoutFeedback from './components/WorkoutFeedback';
 import PostponeWorkout from './components/PostponeWorkout';
 import PullToRefresh from './components/PullToRefresh';
@@ -26,7 +25,6 @@ function App() {
   const [selectedActivityId, setSelectedActivityId] = useState(null);
   const [showWorkoutDetail, setShowWorkoutDetail] = useState(false);
   const [selectedPlannedWorkout, setSelectedPlannedWorkout] = useState(null);
-  const [showPromptEditor, setShowPromptEditor] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
   const [showPostpone, setShowPostpone] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
@@ -210,38 +208,27 @@ function App() {
       if (event.state) {
         if (event.state.view === 'activity') {
           setSelectedActivityId(event.state.activityId);
-          setShowPromptEditor(false);
           setShowFeedback(false);
           setShowPostpone(false);
           setShowWorkoutDetail(false);
         } else if (event.state.view === 'workoutDetail') {
           setShowWorkoutDetail(true);
           setSelectedActivityId(null);
-          setShowPromptEditor(false);
           setShowFeedback(false);
           setShowPostpone(false);
-        } else if (event.state.view === 'promptEditor') {
-          setShowPromptEditor(true);
-          setSelectedActivityId(null);
-          setShowFeedback(false);
-          setShowPostpone(false);
-          setShowWorkoutDetail(false);
         } else if (event.state.view === 'feedback') {
           setShowFeedback(true);
           setSelectedActivityId(null);
-          setShowPromptEditor(false);
           setShowPostpone(false);
           setShowWorkoutDetail(false);
         } else if (event.state.view === 'postpone') {
           setShowPostpone(true);
           setSelectedActivityId(null);
-          setShowPromptEditor(false);
           setShowFeedback(false);
           setShowWorkoutDetail(false);
         } else {
           // Main view
           setSelectedActivityId(null);
-          setShowPromptEditor(false);
           setShowFeedback(false);
           setShowPostpone(false);
           setShowWorkoutDetail(false);
@@ -249,7 +236,6 @@ function App() {
       } else {
         // No state, go to main view
         setSelectedActivityId(null);
-        setShowPromptEditor(false);
         setShowFeedback(false);
         setShowPostpone(false);
         setShowWorkoutDetail(false);
@@ -747,15 +733,6 @@ function App() {
     }
   };
 
-  const handleSavePrompt = async (prompt) => {
-    localStorage.setItem('coaching_prompt', prompt);
-    // Save to Supabase if enabled
-    await dataService.set('coaching_prompt', prompt);
-    setShowPromptEditor(false);
-    // Update browser history
-    window.history.pushState({ view: 'main' }, '', window.location.pathname);
-  };
-
   const handlePostponeWorkout = (postponeData) => {
     // Store postpone data
     localStorage.setItem('postponed_workout', JSON.stringify(postponeData));
@@ -962,16 +939,6 @@ function App() {
     );
   }
 
-  if (showPromptEditor) {
-    return (
-      <CoachingPromptEditor 
-        currentPrompt={localStorage.getItem('coaching_prompt')}
-        onSave={handleSavePrompt}
-        onCancel={() => setShowPromptEditor(false)}
-      />
-    );
-  }
-
   if (isStravaCallback) {
     return <StravaCallback onAuthComplete={handleStravaAuthComplete} />;
   }
@@ -1043,57 +1010,72 @@ function App() {
           </div>
           
           <div style={{ padding: '0' }}>
-            <button
-              onClick={() => {
-                setDarkMode(!darkMode);
-                setShowMenu(false);
-              }}
+            <div
               style={{
                 width: '100%',
                 padding: '16px 20px',
-                background: 'none',
-                border: 'none',
-                textAlign: 'left',
-                cursor: 'pointer',
-                color: 'var(--text-color)',
-                fontSize: '16px',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '12px',
+                justifyContent: 'space-between',
                 borderBottom: '1px solid var(--grid-color)'
               }}
-              onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--grid-color)'}
-              onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
             >
-              <span style={{ fontSize: '18px' }}>{darkMode ? '☀️' : '🌙'}</span>
-              <span>{darkMode ? 'Light Mode' : 'Dark Mode'}</span>
-            </button>
-            
-            <button
-              onClick={() => {
-                setShowPromptEditor(true);
-                setShowMenu(false);
-              }}
-              style={{
-                width: '100%',
-                padding: '16px 20px',
-                background: 'none',
-                border: 'none',
-                textAlign: 'left',
-                cursor: 'pointer',
-                color: 'var(--text-color)',
-                fontSize: '16px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '12px',
-                borderBottom: '1px solid var(--grid-color)'
-              }}
-              onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--grid-color)'}
-              onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
-            >
-              <span style={{ fontSize: '18px' }}>⚙️</span>
-              <span>Coaching Settings</span>
-            </button>
+              <span style={{ fontSize: '16px', color: 'var(--text-color)' }}>Theme</span>
+              <div
+                onClick={() => {
+                  setDarkMode(!darkMode);
+                }}
+                style={{
+                  position: 'relative',
+                  width: '60px',
+                  height: '32px',
+                  borderRadius: '16px',
+                  backgroundColor: darkMode ? 'var(--accent)' : 'var(--border-color)',
+                  cursor: 'pointer',
+                  transition: 'background-color 0.3s ease',
+                  display: 'flex',
+                  alignItems: 'center',
+                  padding: '4px'
+                }}
+              >
+                <div
+                  style={{
+                    position: 'absolute',
+                    width: '24px',
+                    height: '24px',
+                    borderRadius: '50%',
+                    backgroundColor: '#ffffff',
+                    transition: 'transform 0.3s ease',
+                    transform: darkMode ? 'translateX(28px)' : 'translateX(0)',
+                    boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+                  }}
+                />
+                <span
+                  style={{
+                    position: 'absolute',
+                    left: '8px',
+                    fontSize: '14px',
+                    opacity: darkMode ? 0 : 1,
+                    transition: 'opacity 0.3s ease',
+                    pointerEvents: 'none'
+                  }}
+                >
+                  ☀️
+                </span>
+                <span
+                  style={{
+                    position: 'absolute',
+                    right: '8px',
+                    fontSize: '14px',
+                    opacity: darkMode ? 1 : 0,
+                    transition: 'opacity 0.3s ease',
+                    pointerEvents: 'none'
+                  }}
+                >
+                  🌙
+                </span>
+              </div>
+            </div>
             
             <button
               onClick={() => {
@@ -1119,6 +1101,165 @@ function App() {
             >
               <span style={{ fontSize: '18px' }}>📅</span>
               <span>Generate Weekly Plan</span>
+            </button>
+            
+            <button
+              onClick={async () => {
+                handleStravaSync();
+                setShowMenu(false);
+              }}
+              style={{
+                width: '100%',
+                padding: '16px 20px',
+                background: 'none',
+                border: 'none',
+                textAlign: 'left',
+                cursor: 'pointer',
+                color: 'var(--text-color)',
+                fontSize: '16px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                borderBottom: '1px solid var(--grid-color)',
+                transition: 'background-color 0.2s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = '#FC4C02';
+                e.currentTarget.style.color = '#ffffff';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'transparent';
+                e.currentTarget.style.color = 'var(--text-color)';
+              }}
+            >
+              <img
+                src={`${import.meta.env.BASE_URL}strava-logo.png`}
+                alt="Strava"
+                style={{
+                  width: '20px',
+                  height: '20px',
+                  flexShrink: 0,
+                  objectFit: 'contain',
+                  filter: darkMode ? 'brightness(0) saturate(100%) invert(1)' : 'brightness(0) saturate(100%)',
+                  transition: 'filter 0.2s ease'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.filter = 'brightness(0) saturate(100%) invert(1)';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.filter = darkMode ? 'brightness(0) saturate(100%) invert(1)' : 'brightness(0) saturate(100%)';
+                }}
+                onError={(e) => {
+                  console.error('Failed to load Strava logo:', e.target.src);
+                }}
+              />
+              <span>Sync with Strava</span>
+            </button>
+            
+            <button
+              onClick={async () => {
+                // TODO: Implement Google login
+                setShowMenu(false);
+              }}
+              style={{
+                width: '100%',
+                padding: '16px 20px',
+                background: 'none',
+                border: 'none',
+                textAlign: 'left',
+                cursor: 'pointer',
+                color: 'var(--text-color)',
+                fontSize: '16px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                borderBottom: '1px solid var(--grid-color)',
+                transition: 'background-color 0.2s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = '#4285F4';
+                e.currentTarget.style.color = '#ffffff';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'transparent';
+                e.currentTarget.style.color = 'var(--text-color)';
+              }}
+            >
+              <img
+                src={`${import.meta.env.BASE_URL}google-logo.png`}
+                alt="Google"
+                style={{
+                  width: '20px',
+                  height: '20px',
+                  flexShrink: 0,
+                  objectFit: 'contain',
+                  filter: darkMode ? 'brightness(0) saturate(100%) invert(1)' : 'brightness(0) saturate(100%)',
+                  transition: 'filter 0.2s ease'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.filter = 'brightness(0) saturate(100%) invert(1)';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.filter = darkMode ? 'brightness(0) saturate(100%) invert(1)' : 'brightness(0) saturate(100%)';
+                }}
+                onError={(e) => {
+                  console.error('Failed to load Google logo:', e.target.src);
+                }}
+              />
+              <span>Login with Google</span>
+            </button>
+            
+            <button
+              onClick={async () => {
+                // TODO: Implement Garmin Connect login
+                setShowMenu(false);
+              }}
+              style={{
+                width: '100%',
+                padding: '16px 20px',
+                background: 'none',
+                border: 'none',
+                textAlign: 'left',
+                cursor: 'pointer',
+                color: 'var(--text-color)',
+                fontSize: '16px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                borderBottom: '1px solid var(--grid-color)',
+                transition: 'background-color 0.2s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = '#007CC3';
+                e.currentTarget.style.color = '#ffffff';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'transparent';
+                e.currentTarget.style.color = 'var(--text-color)';
+              }}
+            >
+              <img
+                src={`${import.meta.env.BASE_URL}garminconnect.svg`}
+                alt="Garmin Connect"
+                style={{
+                  width: '20px',
+                  height: '20px',
+                  flexShrink: 0,
+                  objectFit: 'contain',
+                  filter: darkMode ? 'brightness(0) saturate(100%) invert(1)' : 'brightness(0) saturate(100%)',
+                  transition: 'filter 0.2s ease'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.filter = 'brightness(0) saturate(100%) invert(1)';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.filter = darkMode ? 'brightness(0) saturate(100%) invert(1)' : 'brightness(0) saturate(100%)';
+                }}
+                onError={(e) => {
+                  console.error('Failed to load Garmin Connect logo:', e.target.src);
+                }}
+              />
+              <span>Login with Garmin Connect</span>
             </button>
             
             <button

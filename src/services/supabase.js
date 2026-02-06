@@ -321,7 +321,7 @@ const shouldUseSupabase = () => {
   
   // Default: use Supabase on mobile, localStorage on web
   // We'll check this at runtime when needed, not at module load
-  return false; // Default to false, will be enabled on mobile when Capacitor loads
+  return true; // Default to true, cloud sync enabled by default
 };
 
 export const dataService = new DataService(shouldUseSupabase())
