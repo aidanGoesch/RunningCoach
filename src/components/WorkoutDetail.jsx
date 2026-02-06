@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useSwipeBack } from '../hooks/useSwipeBack';
 
-const WorkoutDetail = ({ workout, onBack, onPostpone, postponeDisabled }) => {
+const WorkoutDetail = ({ workout, onBack, onPostpone, postponeDisabled, postponeReason }) => {
   const [completedBlocks, setCompletedBlocks] = useState(new Set());
   const swipeBackRef = useSwipeBack(onBack);
 
@@ -163,8 +163,22 @@ const WorkoutDetail = ({ workout, onBack, onPostpone, postponeDisabled }) => {
                 cursor: postponeDisabled ? 'not-allowed' : 'pointer'
               }}
             >
-              {postponeDisabled ? 'Postponed Today' : 'Postpone Workout'}
+              {postponeDisabled 
+                ? (postponeReason === 'not_run_day' 
+                    ? 'Can Only Postpone on Scheduled Run Day' 
+                    : 'Postponed Today')
+                : 'Postpone Workout'}
             </button>
+            {postponeDisabled && postponeReason === 'not_run_day' && (
+              <div style={{ 
+                marginTop: '8px', 
+                fontSize: '12px', 
+                color: 'var(--text-secondary)',
+                fontStyle: 'italic'
+              }}>
+                You can only postpone a workout on the day it's scheduled (Tuesday, Thursday, or Sunday)
+              </div>
+            )}
           </div>
         )}
       </div>

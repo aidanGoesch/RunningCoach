@@ -262,6 +262,485 @@ Do NOT include any conversational text. Return ONLY the JSON structure above wit
   return parseWorkoutFromText(content);
 };
 
+// Helper function to analyze activity ratings and determine plan adjustments
+const analyzeActivityRatings = async (activities) => {
+  const { getActivityRating } = await import('./supabase');
+  
+  // Get activities from current week (Monday-Sunday)
+  const today = new Date();
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - ((today.getDay() + 6) % 7)); // Get Monday of current week
+  monday.setHours(0, 0, 0, 0);
+  
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6); // Get Sunday of current week
+  sunday.setHours(23, 59, 59, 999);
+  
+  const recentActivities = activities.filter(a => {
+    const activityDate = new Date(a.start_date);
+    return activityDate >= monday && activityDate <= sunday && a.type === 'Run';
+  });
+  
+  // Fetch ratings for these activities
+  const ratingsWithData = [];
+  for (const activity of recentActivities) {
+    const rating = await getActivityRating(activity.id);
+    if (rating) {
+      ratingsWithData.push({
+        activity,
+        rating: rating.rating,
+        feedback: rating.feedback,
+        isInjured: rating.isInjured,
+        injuryDetails: rating.injuryDetails,
+        date: new Date(activity.start_date)
+      });
+    }
+  }
+  
+  if (ratingsWithData.length === 0) {
+    return {
+      avgRating: 3.0,
+      hasInjuries: false,
+      trend: 'stable',
+      adjustment: 0,
+      completionRate: 0
+    };
+  }
+  
+  // Calculate average rating
+  const avgRating = ratingsWithData.reduce((sum, r) => sum + r.rating, 0) / ratingsWithData.length;
+  
+  // Check for injuries
+  const hasInjuries = ratingsWithData.some(r => r.isInjured);
+  const injuryCount = ratingsWithData.filter(r => r.isInjured).length;
+  
+  // Calculate trend (comparing first half vs second half)
+  const sortedRatings = [...ratingsWithData].sort((a, b) => a.date - b.date);
+  const midPoint = Math.floor(sortedRatings.length / 2);
+  const firstHalf = sortedRatings.slice(0, midPoint);
+  const secondHalf = sortedRatings.slice(midPoint);
+  
+  const firstHalfAvg = firstHalf.length > 0 
+    ? firstHalf.reduce((sum, r) => sum + r.rating, 0) / firstHalf.length 
+    : avgRating;
+  const secondHalfAvg = secondHalf.length > 0
+    ? secondHalf.reduce((sum, r) => sum + r.rating, 0) / secondHalf.length
+    : avgRating;
+  
+  let trend = 'stable';
+  if (secondHalfAvg > firstHalfAvg + 0.3) {
+    trend = 'increasing'; // Getting harder
+  } else if (secondHalfAvg < firstHalfAvg - 0.3) {
+    trend = 'decreasing'; // Getting easier
+  }
+  
+  // Calculate completion rate (activities with ratings vs total activities)
+  const completionRate = ratingsWithData.length / Math.max(recentActivities.length, 1);
+  
+  // Determine intensity adjustment
+  let adjustment = 0;
+  if (avgRating < 2.5) {
+    adjustment = -15; // Reduce intensity 15%
+  } else if (avgRating < 3.0) {
+    adjustment = -10; // Reduce intensity 10%
+  } else if (avgRating > 4.0) {
+    adjustment = 10; // Increase challenge 10%
+  } else if (avgRating > 4.5) {
+    adjustment = 15; // Increase challenge 15%
+  }
+  
+  // If injuries reported, reduce volume
+  if (hasInjuries) {
+    adjustment -= 20; // Additional 20% reduction
+  }
+  
+  return {
+    avgRating,
+    hasInjuries,
+    injuryCount,
+    trend,
+    adjustment,
+    completionRate,
+    totalRatings: ratingsWithData.length,
+    recentRatings: ratingsWithData
+  };
+};
+
+export const generateDataDrivenWeeklyPlan = async (apiKey, activities = [], isInjured = false) => {
+  const savedPrompt = localStorage.getItem('coaching_prompt') || 'You are an expert running coach.';
+  let basePrompt = updatePromptWithCurrentData(savedPrompt, activities);
+  
+  // Analyze activity ratings
+  const ratingAnalysis = await analyzeActivityRatings(activities);
+  
+  // Add rating-based adjustments to prompt
+  let intensityNote = '';
+  if (ratingAnalysis.adjustment < 0) {
+    intensityNote = `\n\nIMPORTANT ADJUSTMENT: Recent workout ratings indicate the athlete has been finding workouts too challenging (average rating: ${ratingAnalysis.avgRating.toFixed(1)}/5). 
+Reduce workout intensity by ${Math.abs(ratingAnalysis.adjustment)}%. Make workouts more manageable while still providing training stimulus.`;
+  } else if (ratingAnalysis.adjustment > 0) {
+    intensityNote = `\n\nIMPORTANT ADJUSTMENT: Recent workout ratings indicate the athlete has been finding workouts manageable (average rating: ${ratingAnalysis.avgRating.toFixed(1)}/5). 
+Increase workout challenge by ${ratingAnalysis.adjustment}% to continue progression. Push the athlete appropriately while preventing injury.`;
+  }
+  
+  if (ratingAnalysis.hasInjuries) {
+    intensityNote += `\n\nINJURY ALERT: The athlete has reported ${ratingAnalysis.injuryCount} injury/issue(s) in recent workouts. 
+Reduce training volume significantly, add extra recovery days, and focus on injury prevention. Prioritize health over training intensity.`;
+  }
+  
+  if (ratingAnalysis.completionRate < 0.5) {
+    intensityNote += `\n\nCOMPLETION RATE: The athlete has only rated ${Math.round(ratingAnalysis.completionRate * 100)}% of recent activities. 
+Consider this when generating the plan - they may need more motivation or the plan may need adjustment.`;
+  }
+  
+  basePrompt += intensityNote;
+  
+  // Add weekly plan specific instructions
+  basePrompt += `\n\nWEEKLY PLAN GENERATION:
+
+Generate a complete weekly training plan for Monday through Sunday. The week follows this structure:
+- Monday: Recovery exercises (optional)
+- Tuesday: Easy Run
+- Wednesday: Recovery exercises (optional) 
+- Thursday: Speed/Tempo Work
+- Friday: Recovery exercises (optional)
+- Saturday: Recovery exercises (optional)
+- Sunday: Long Run
+
+IMPORTANT: Only generate detailed workouts for the 3 running days (Tuesday, Thursday, Sunday). For recovery days, just note "Recovery exercises - generate day-of with workout button".
+
+Each running workout should have detailed blocks with:
+- Warm-up protocol (distance, pace, HR guidance)
+- Main set with precise distances, target paces, rest intervals
+- Cool-down protocol
+- Estimated total distance and time
+- Key coaching cues for execution
+
+The plan should be challenging but safe, pushing the athlete while preventing injury. Base intensity adjustments on the rating analysis above.
+
+Return the response in this exact JSON format:
+{
+  "weekTitle": "Week [X] Training Plan - [Date Range]",
+  "monday": null,
+  "tuesday": {
+    "title": "Easy Run",
+    "type": "easy",
+    "blocks": [
+      {
+        "title": "Warm-up",
+        "distance": "1.5 miles",
+        "pace": "10:30-11:00/mile",
+        "duration": "15-17 minutes",
+        "notes": "Easy conversational pace, focus on form"
+      },
+      {
+        "title": "Main Set",
+        "distance": "3-4 miles", 
+        "pace": "10:00-10:30/mile",
+        "duration": "30-40 minutes",
+        "heartRate": "150-160 bpm",
+        "notes": "Maintain conversational effort, HR in Zone 2-3"
+      },
+      {
+        "title": "Cool-down",
+        "distance": "0.5 miles",
+        "pace": "11:00+/mile",
+        "duration": "5-6 minutes",
+        "notes": "Easy walking/jogging, light stretching"
+      }
+    ]
+  },
+  "wednesday": null,
+  "thursday": {
+    "title": "Speed Work",
+    "type": "speed",
+    "blocks": [...]
+  },
+  "friday": null,
+  "saturday": null,
+  "sunday": {
+    "title": "Long Run",
+    "type": "long",
+    "blocks": [...]
+  }
+}`;
+
+  const response = await fetch(OPENAI_API_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: basePrompt }, 
+        { role: 'user', content: 'Generate this week\'s complete training plan with detailed workouts for Tuesday, Thursday, and Sunday. Adjust intensity based on the rating analysis provided.' }
+      ],
+      temperature: 0.7,
+      max_tokens: 2000
+    })
+  });
+
+  if (!response.ok) throw new Error(`OpenAI API error: ${response.status}`);
+  
+  const data = await response.json();
+  const content = data.choices[0].message.content;
+  
+  try {
+    // Try to parse JSON response
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const plan = JSON.parse(jsonMatch[0]);
+      // Attach rating analysis for later use in weekly analysis
+      plan._ratingAnalysis = ratingAnalysis;
+      return plan;
+    }
+    throw new Error('No JSON found in response');
+  } catch (parseError) {
+    console.error('Failed to parse weekly plan JSON:', parseError);
+    // Fallback to simple structure if JSON parsing fails
+    const today = new Date();
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+    
+    const fallbackPlan = {
+      weekTitle: `Week Training Plan - ${monday.toLocaleDateString()}`,
+      monday: null,
+      tuesday: { title: "Easy Run", type: "easy", blocks: [{ title: "Easy 4-5 miles", notes: "Conversational pace, HR 150-160 bpm" }] },
+      wednesday: null,
+      thursday: { title: "Speed Work", type: "speed", blocks: [{ title: "Track Intervals", notes: "4x400m with 90s rest, warm-up and cool-down" }] },
+      friday: null,
+      saturday: null,
+      sunday: { title: "Long Run", type: "long", blocks: [{ title: "Long 8-9 miles", notes: "Steady aerobic pace, build endurance" }] }
+    };
+    fallbackPlan._ratingAnalysis = ratingAnalysis;
+    return fallbackPlan;
+  }
+};
+
+// Match Strava activities to assigned workouts
+export const matchActivitiesToWorkouts = (activities, weeklyPlan, weekStart) => {
+  if (!weeklyPlan || !activities || activities.length === 0) {
+    return {};
+  }
+
+  const matches = {};
+  const dayNameMap = {
+    'monday': 0,
+    'tuesday': 1,
+    'wednesday': 2,
+    'thursday': 3,
+    'friday': 4,
+    'saturday': 5,
+    'sunday': 6
+  };
+
+  // Group activities by date
+  const activitiesByDate = new Map();
+  activities.forEach(activity => {
+    if (activity.type === 'Run') {
+      const activityDate = new Date(activity.start_date);
+      activityDate.setHours(0, 0, 0, 0);
+      const dateKey = activityDate.toISOString().split('T')[0];
+      
+      if (!activitiesByDate.has(dateKey)) {
+        activitiesByDate.set(dateKey, []);
+      }
+      activitiesByDate.get(dateKey).push(activity);
+    }
+  });
+
+  // For each day with a planned workout, try to match activities
+  Object.keys(dayNameMap).forEach(dayName => {
+    const plannedWorkout = weeklyPlan[dayName];
+    if (!plannedWorkout) return;
+
+    // Calculate the date for this day of the week
+    const dayOffset = dayNameMap[dayName];
+    const workoutDate = new Date(weekStart);
+    workoutDate.setDate(weekStart.getDate() + dayOffset);
+    workoutDate.setHours(0, 0, 0, 0);
+    const dateKey = workoutDate.toISOString().split('T')[0];
+
+    const dayActivities = activitiesByDate.get(dateKey) || [];
+
+    if (dayActivities.length === 0) {
+      // No activities on this day
+      return;
+    }
+
+    // If multiple activities on the same day, check if they're within 10 minutes
+    if (dayActivities.length > 1) {
+      // Sort by start time
+      dayActivities.sort((a, b) => 
+        new Date(a.start_date).getTime() - new Date(b.start_date).getTime()
+      );
+
+      // Group activities that are within 10 minutes of each other
+      const groupedActivities = [];
+      let currentGroup = [dayActivities[0]];
+
+      for (let i = 1; i < dayActivities.length; i++) {
+        const prevTime = new Date(dayActivities[i - 1].start_date).getTime();
+        const currTime = new Date(dayActivities[i].start_date).getTime();
+        const timeDiff = (currTime - prevTime) / (1000 * 60); // minutes
+
+        if (timeDiff <= 10) {
+          // Within 10 minutes, add to current group
+          currentGroup.push(dayActivities[i]);
+        } else {
+          // More than 10 minutes apart, start new group
+          groupedActivities.push(currentGroup);
+          currentGroup = [dayActivities[i]];
+        }
+      }
+      groupedActivities.push(currentGroup);
+
+      // Use the first group (or largest group if multiple)
+      const matchedGroup = groupedActivities.reduce((largest, group) => 
+        group.length > largest.length ? group : largest
+      , groupedActivities[0]);
+
+      // Match the workout to the first activity in the group (or combine them)
+      matches[dayName] = {
+        workout: plannedWorkout,
+        activities: matchedGroup,
+        matchedActivityIds: matchedGroup.map(a => a.id)
+      };
+    } else {
+      // Single activity on the workout day - match it
+      matches[dayName] = {
+        workout: plannedWorkout,
+        activities: [dayActivities[0]],
+        matchedActivityIds: [dayActivities[0].id]
+      };
+    }
+  });
+
+  return matches;
+};
+
+export const generateWeeklyAnalysis = async (apiKey, activities = [], weeklyPlan = null) => {
+  const today = new Date();
+  const lastMonday = new Date(today);
+  lastMonday.setDate(today.getDate() - ((today.getDay() + 6) % 7) - 7); // Last week's Monday
+  lastMonday.setHours(0, 0, 0, 0); // Start of Monday
+  const lastSunday = new Date(lastMonday);
+  lastSunday.setDate(lastMonday.getDate() + 6);
+  lastSunday.setHours(23, 59, 59, 999); // End of Sunday
+  
+  // Get activities from last week (Monday-Sunday only)
+  const lastWeekActivities = activities.filter(a => {
+    const activityDate = new Date(a.start_date);
+    // Only include activities that fall within the Monday-Sunday range
+    return activityDate >= lastMonday && activityDate <= lastSunday && a.type === 'Run';
+  });
+  
+  // Calculate metrics
+  const totalMiles = lastWeekActivities.reduce((sum, a) => sum + (a.distance / 1609.34), 0);
+  const totalTime = lastWeekActivities.reduce((sum, a) => sum + a.moving_time, 0);
+  const runCount = lastWeekActivities.length;
+  const expectedRuns = 3; // Tuesday, Thursday, Sunday
+  
+  // Get ratings for last week's activities
+  const { getActivityRating } = await import('./supabase');
+  const ratings = [];
+  for (const activity of lastWeekActivities) {
+    const rating = await getActivityRating(activity.id);
+    if (rating) {
+      ratings.push(rating.rating);
+    }
+  }
+  
+  const avgRating = ratings.length > 0 
+    ? ratings.reduce((sum, r) => sum + r, 0) / ratings.length 
+    : null;
+  
+  // Build analysis context
+  let analysisContext = `Analyze the athlete's training week and provide an encouraging, positive message.
+
+WEEK SUMMARY:
+- Total Runs: ${runCount}/${expectedRuns}${runCount === expectedRuns ? ' (Perfect!)' : runCount === 0 ? ' (No runs completed)' : ' (Some runs missed)'}
+- Total Mileage: ${totalMiles.toFixed(1)} miles
+- Total Time: ${Math.floor(totalTime / 60)} minutes
+${avgRating ? `- Average Difficulty Rating: ${avgRating.toFixed(1)}/5 (1=too easy, 3=perfect, 5=too hard)` : '- No difficulty ratings provided'}
+
+GENERATE AN ENCOURAGING MESSAGE:
+- Always be positive and supportive
+- Acknowledge what they accomplished
+- If they missed runs, encourage them gently
+- If they completed all runs, celebrate their consistency
+- If mileage is increasing, note the progress
+- Keep it brief (2-3 sentences max)
+- Use encouraging language like "Great job!", "Nice work!", "Keep it up!", "You're building consistency!"
+
+Examples of good messages:
+- "Excellent work this week! You completed all 3 runs and hit your mileage target. Keep building that base!"
+- "Great consistency! You're showing real dedication to your training. Keep pushing forward!"
+- "Nice job getting your runs in! Every week you're building strength and endurance. Keep it up!"
+- "You're making progress! Even though you missed a run, you're still building consistency. Keep trying!"
+
+Generate ONLY the encouraging message, nothing else.`;
+
+  try {
+    const response = await fetch(OPENAI_API_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: 'You are an encouraging running coach who always provides positive, supportive feedback.' },
+          { role: 'user', content: analysisContext }
+        ],
+        temperature: 0.8,
+        max_tokens: 150
+      })
+    });
+
+    if (!response.ok) throw new Error(`OpenAI API error: ${response.status}`);
+    
+    const data = await response.json();
+    const message = data.choices[0].message.content.trim();
+    
+    return {
+      message,
+      metrics: {
+        runCount,
+        expectedRuns,
+        totalMiles: totalMiles.toFixed(1),
+        totalTime: Math.floor(totalTime / 60),
+        avgRating: avgRating ? avgRating.toFixed(1) : null
+      }
+    };
+  } catch (error) {
+    console.error('Failed to generate weekly analysis:', error);
+    // Fallback to simple message
+    let fallbackMessage = '';
+    if (runCount === expectedRuns) {
+      fallbackMessage = `Excellent work this week! You completed all ${runCount} runs and logged ${totalMiles.toFixed(1)} miles. Keep building that consistency!`;
+    } else if (runCount > 0) {
+      fallbackMessage = `Nice job getting ${runCount} run${runCount > 1 ? 's' : ''} in this week! You logged ${totalMiles.toFixed(1)} miles. Keep pushing forward!`;
+    } else {
+      fallbackMessage = `Keep trying! Every week is a new opportunity to build consistency. You've got this!`;
+    }
+    
+    return {
+      message: fallbackMessage,
+      metrics: {
+        runCount,
+        expectedRuns,
+        totalMiles: totalMiles.toFixed(1),
+        totalTime: Math.floor(totalTime / 60),
+        avgRating: avgRating ? avgRating.toFixed(1) : null
+      }
+    };
+  }
+};
+
 export const generateWeeklyPlan = async (apiKey, activities = [], isInjured = false) => {
   const savedPrompt = localStorage.getItem('coaching_prompt') || 'You are an expert running coach.';
   let basePrompt = updatePromptWithCurrentData(savedPrompt, activities);

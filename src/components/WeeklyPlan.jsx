@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { dataService } from '../services/supabase';
 
-const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey }) => {
+const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, onActivitiesChange }) => {
   const [weeklyPlan, setWeeklyPlan] = useState(null);
   const [currentWeek, setCurrentWeek] = useState(null);
 
@@ -48,6 +48,43 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey }
     loadWeeklyPlan();
   }, [apiKey]); // Removed onGenerateWeeklyPlan from dependencies to prevent infinite loops
 
+  // Re-match activities when they change and reload plan
+  useEffect(() => {
+    if (weeklyPlan && activities.length > 0 && currentWeek && onActivitiesChange) {
+      // Create a simple hash of activity IDs to detect changes
+      const activityIds = activities.map(a => a.id).sort().join(',');
+      const lastActivityIds = localStorage.getItem(`last_activity_ids_${currentWeek.key}`);
+      
+      // Only update if activities actually changed
+      if (activityIds !== lastActivityIds) {
+        localStorage.setItem(`last_activity_ids_${currentWeek.key}`, activityIds);
+        
+        // Trigger matching in parent, then reload plan
+        const updateMatches = async () => {
+          await onActivitiesChange();
+          // Small delay to ensure plan is saved, then reload
+          setTimeout(async () => {
+            try {
+              const storedPlan = await dataService.get(`weekly_plan_${currentWeek.key}`);
+              if (storedPlan) {
+                const parsedPlan = JSON.parse(storedPlan);
+                setWeeklyPlan(parsedPlan);
+              } else {
+                const localPlan = localStorage.getItem(`weekly_plan_${currentWeek.key}`);
+                if (localPlan) {
+                  setWeeklyPlan(JSON.parse(localPlan));
+                }
+              }
+            } catch (error) {
+              console.error('Error reloading weekly plan:', error);
+            }
+          }, 100);
+        };
+        updateMatches();
+      }
+    }
+  }, [activities, currentWeek?.key, weeklyPlan, onActivitiesChange]);
+
   const getDayInfo = (dayOffset) => {
     if (!currentWeek) return null;
     
@@ -61,20 +98,29 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey }
     const isToday = date.getTime() === today.getTime();
     const isPast = date < today;
     
-    // Check if there's an activity for this day
+    // Check if there's a matched workout for this day
+    const dayName = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'][dayOffset];
+    const activityMatches = weeklyPlan?._activityMatches || {};
+    const dayMatch = activityMatches[dayName];
+    
+    // Check if workout is matched to an activity
+    const hasMatchedWorkout = !!dayMatch && dayMatch.activities && dayMatch.activities.length > 0;
+    
+    // Also check if there's any activity for this day (fallback)
     const dayActivities = activities.filter(activity => {
       const activityDate = new Date(activity.start_date);
       activityDate.setHours(0, 0, 0, 0);
       return activityDate.getTime() === date.getTime() && activity.type === 'Run';
     });
     
-    const hasRun = dayActivities.length > 0;
+    const hasRun = hasMatchedWorkout || dayActivities.length > 0;
     
     return {
       date,
       isToday,
       isPast,
       hasRun,
+      hasMatchedWorkout,
       dayName: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][dayOffset],
       fullDayName: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][dayOffset]
     };
@@ -173,13 +219,15 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey }
             fontSize: '12px',
             cursor: (isRunDay && plannedWorkout && !dayInfo.hasRun) ? 'pointer' : 'default',
             border: dayInfo.isToday ? '2px solid var(--accent)' : '1px solid var(--border-color)',
-            backgroundColor: dayInfo.hasRun 
+            backgroundColor: dayInfo.hasMatchedWorkout 
               ? 'var(--accent)' 
-              : isRunDay && plannedWorkout
-                ? 'var(--card-bg)'
-                : 'var(--grid-color)',
-            color: dayInfo.hasRun ? 'white' : 'var(--text-color)',
-            opacity: dayInfo.isPast && !dayInfo.hasRun && isRunDay ? 0.6 : 1
+              : dayInfo.hasRun
+                ? 'var(--accent)'
+                : isRunDay && plannedWorkout
+                  ? 'var(--card-bg)'
+                  : 'var(--grid-color)',
+            color: (dayInfo.hasMatchedWorkout || dayInfo.hasRun) ? 'white' : 'var(--text-color)',
+            opacity: dayInfo.isPast && !dayInfo.hasRun && !dayInfo.hasMatchedWorkout && isRunDay ? 0.6 : 1
           };
           
           const handleClick = () => {

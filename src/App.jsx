@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import WorkoutDisplay from './components/WorkoutDisplay';
 import WorkoutDetail from './components/WorkoutDetail';
 import WeeklyPlan from './components/WeeklyPlan';
+import WeeklyAnalysis from './components/WeeklyAnalysis';
 import ActivitiesDisplay from './components/ActivitiesDisplay';
 import InsightsDisplay from './components/InsightsDisplay';
 import StravaCallback from './components/StravaCallback';
@@ -10,7 +11,7 @@ import CoachingPromptEditor from './components/CoachingPromptEditor';
 import WorkoutFeedback from './components/WorkoutFeedback';
 import PostponeWorkout from './components/PostponeWorkout';
 import PullToRefresh from './components/PullToRefresh';
-import { generateWorkout, generateWeeklyPlan, syncWithStrava, generateInsights } from './services/api';
+import { generateWorkout, generateWeeklyPlan, generateDataDrivenWeeklyPlan, generateWeeklyAnalysis, matchActivitiesToWorkouts, syncWithStrava, generateInsights } from './services/api';
 import { dataService, setupRealtimeSync, syncAllDataFromSupabase, enableSupabase } from './services/supabase';
 
 function App() {
@@ -30,6 +31,7 @@ function App() {
   const [darkMode, setDarkMode] = useState(localStorage.getItem('darkMode') === 'true');
   const [isInjured, setIsInjured] = useState(localStorage.getItem('isInjured') === 'true');
   const [supabaseEnabled, setSupabaseEnabled] = useState(dataService.useSupabase || localStorage.getItem('use_supabase') === 'true');
+  const [weeklyAnalysis, setWeeklyAnalysis] = useState(null);
 
   // Track daily button usage
   const [dailyUsage, setDailyUsage] = useState(() => {
@@ -285,15 +287,60 @@ function App() {
           }
         }
         
-        // Load saved workout
+        // Load saved workout, but check if weekly plan has a better match for today
         console.log('Loading current workout...');
-        const workoutData = await dataService.get('current_workout');
-        if (workoutData) {
-          setWorkout(JSON.parse(workoutData));
+        
+        // First, check if we have a weekly plan and should use today's workout
+        const today = new Date();
+        const monday = new Date(today);
+        monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+        monday.setHours(0, 0, 0, 0);
+        const weekKey = `${monday.getFullYear()}-${monday.getMonth()}-${monday.getDate()}`;
+        
+        const weeklyPlanData = await dataService.get(`weekly_plan_${weekKey}`);
+        let todayWorkout = null;
+        
+        if (weeklyPlanData) {
+          const parsedPlan = JSON.parse(weeklyPlanData);
+          const dayOfWeek = today.getDay();
+          const dayNameMap = {
+            0: 'sunday',
+            1: 'monday',
+            2: 'tuesday',
+            3: 'wednesday',
+            4: 'thursday',
+            5: 'friday',
+            6: 'saturday'
+          };
+          todayWorkout = parsedPlan[dayNameMap[dayOfWeek]];
+        }
+        
+        // Use today's workout from weekly plan if available, otherwise use stored current workout
+        if (todayWorkout) {
+          setWorkout(todayWorkout);
+          await dataService.set('current_workout', JSON.stringify(todayWorkout));
+          localStorage.setItem('current_workout', JSON.stringify(todayWorkout));
         } else {
-          const localWorkout = localStorage.getItem('current_workout');
-          if (localWorkout) {
-            setWorkout(JSON.parse(localWorkout));
+          const workoutData = await dataService.get('current_workout');
+          if (workoutData) {
+            setWorkout(JSON.parse(workoutData));
+          } else {
+            const localWorkout = localStorage.getItem('current_workout');
+            if (localWorkout) {
+              setWorkout(JSON.parse(localWorkout));
+            }
+          }
+        }
+        
+        // Load weekly analysis (reuse weekKey from above)
+        
+        const analysisData = await dataService.get(`weekly_analysis_${weekKey}`);
+        if (analysisData) {
+          setWeeklyAnalysis(JSON.parse(analysisData));
+        } else {
+          const localAnalysis = localStorage.getItem(`weekly_analysis_${weekKey}`);
+          if (localAnalysis) {
+            setWeeklyAnalysis(JSON.parse(localAnalysis));
           }
         }
         
@@ -341,13 +388,6 @@ function App() {
       });
     }
 
-    // Cleanup on unmount
-    return () => {
-      if (cleanupSync) {
-        cleanupSync();
-      }
-    };
-    
     // Check for postponed workout on page load
     const postponedWorkout = localStorage.getItem('postponed_workout');
     const currentWorkout = localStorage.getItem('current_workout');
@@ -373,18 +413,74 @@ function App() {
 
     // Auto-sync with Strava on page load if we have tokens
     const hasTokens = localStorage.getItem('strava_access_token') && localStorage.getItem('strava_refresh_token');
-    if (hasTokens && !currentWorkout) {
-      // Only auto-sync if there's no current workout
+    if (hasTokens) {
+      // Always auto-sync on page refresh to get latest activities
       // Small delay to let the page load first
       setTimeout(() => {
         handleStravaSync(false); // Don't show loading for background sync
       }, 1000);
     }
 
+    // Cleanup on unmount
     return () => {
       window.removeEventListener('popstate', handlePopState);
+      if (cleanupSync) {
+        cleanupSync();
+      }
     };
-  }, []);
+  }, [isStravaCallback]);
+
+  // Check for Sunday auto-generation when activities change
+  useEffect(() => {
+    const checkSundayAutoGeneration = async () => {
+      const today = new Date();
+      const dayOfWeek = today.getDay(); // 0 = Sunday
+      
+      // Only check on Sundays
+      if (dayOfWeek !== 0) return;
+      
+      // Check if we already generated a plan today
+      const lastGenerationDate = localStorage.getItem('last_plan_generation_date');
+      const todayStr = today.toISOString().split('T')[0];
+      if (lastGenerationDate === todayStr) {
+        console.log('Plan already generated today');
+        return;
+      }
+      
+      // Check if long run was completed today
+      const todayStart = new Date(today);
+      todayStart.setHours(0, 0, 0, 0);
+      const todayEnd = new Date(today);
+      todayEnd.setHours(23, 59, 59, 999);
+      
+      const sundayActivities = activities.filter(a => {
+        const activityDate = new Date(a.start_date);
+        return activityDate >= todayStart && activityDate <= todayEnd && a.type === 'Run';
+      });
+      
+      const hasLongRun = sundayActivities.length > 0;
+      
+      if (hasLongRun) {
+        console.log('Sunday long run detected, auto-generating weekly plan...');
+        // Auto-generate plan
+        const availableApiKey = import.meta.env.VITE_OPENAI_API_KEY || apiKey;
+        if (availableApiKey) {
+          try {
+            await handleGenerateWeeklyPlan(true); // Pass true to indicate auto-generation
+          } catch (err) {
+            console.error('Auto-generation failed:', err);
+          }
+        }
+      } else {
+        console.log('Sunday detected but no long run completed yet. Plan will generate after long run.');
+      }
+    };
+    
+    // Only check if we have activities loaded
+    if (activities.length > 0) {
+      checkSundayAutoGeneration();
+    }
+  }, [activities, apiKey]);
   
   // Separate useEffect for polling for Strava auth code (mobile Browser callback)
   useEffect(() => {
@@ -443,11 +539,13 @@ function App() {
     return () => clearInterval(pollInterval);
   }, [isStravaCallback]);
 
-  const handleGenerateWeeklyPlan = async () => {
+  const handleGenerateWeeklyPlan = async (isAutoGeneration = false) => {
     const availableApiKey = import.meta.env.VITE_OPENAI_API_KEY || apiKey;
     
     if (!availableApiKey) {
-      setError('Please enter your OpenAI API key first');
+      if (!isAutoGeneration) {
+        setError('Please enter your OpenAI API key first');
+      }
       return;
     }
 
@@ -455,7 +553,18 @@ function App() {
     setError(null);
     
     try {
-      const weeklyPlan = await generateWeeklyPlan(availableApiKey, activities, isInjured);
+      // Use data-driven plan generation
+      const weeklyPlan = await generateDataDrivenWeeklyPlan(availableApiKey, activities, isInjured);
+      
+      // Generate weekly analysis
+      let analysis = null;
+      try {
+        analysis = await generateWeeklyAnalysis(availableApiKey, activities, weeklyPlan);
+        weeklyPlan.weeklyAnalysis = analysis;
+      } catch (err) {
+        console.error('Failed to generate weekly analysis:', err);
+        // Continue without analysis
+      }
       
       // Store weekly plan
       const today = new Date();
@@ -464,27 +573,81 @@ function App() {
       monday.setHours(0, 0, 0, 0);
       const weekKey = `${monday.getFullYear()}-${monday.getMonth()}-${monday.getDate()}`;
       
-      localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(weeklyPlan));
-      console.log('Saving weekly plan to Supabase:', weekKey, weeklyPlan);
-      await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(weeklyPlan));
-      localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(weeklyPlan)); // Keep local copy
+      // Match activities to workouts
+      const activityMatches = matchActivitiesToWorkouts(activities, weeklyPlan, monday);
       
-      // Set today's workout if it exists
-      const today_day = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][today.getDay()];
-      const todaysWorkout = weeklyPlan[today_day];
+      // Remove internal data before saving
+      const planToSave = { ...weeklyPlan };
+      delete planToSave._ratingAnalysis;
+      // Store activity matches with the plan
+      planToSave._activityMatches = activityMatches;
       
-      if (todaysWorkout) {
-        setWorkout(todaysWorkout);
-        localStorage.setItem('current_workout', JSON.stringify(todaysWorkout));
+      localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(planToSave));
+      console.log('Saving weekly plan to Supabase:', weekKey, planToSave);
+      await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(planToSave));
+      
+      // Store analysis separately for easy access
+      if (analysis) {
+        setWeeklyAnalysis(analysis);
+        localStorage.setItem(`weekly_analysis_${weekKey}`, JSON.stringify(analysis));
+        await dataService.set(`weekly_analysis_${weekKey}`, JSON.stringify(analysis));
       }
       
-      setError('Weekly plan generated successfully!');
-      setTimeout(() => setError(null), 3000);
+      // Mark generation date
+      localStorage.setItem('last_plan_generation_date', today.toISOString().split('T')[0]);
+      
+      // Set current workout based on today's day of the week
+      const dayOfWeek = today.getDay(); // 0=Sunday, 1=Monday, 2=Tuesday, 4=Thursday
+      const dayNameMap = {
+        0: 'sunday',
+        1: 'monday',
+        2: 'tuesday',
+        3: 'wednesday',
+        4: 'thursday',
+        5: 'friday',
+        6: 'saturday'
+      };
+      
+      const todayWorkout = weeklyPlan[dayNameMap[dayOfWeek]];
+      
+      // Clear current workout first
+      setWorkout(null);
+      await dataService.set('current_workout', null);
+      localStorage.removeItem('current_workout');
+      
+      // Set today's workout if it exists
+      if (todayWorkout) {
+        setWorkout(todayWorkout);
+        await dataService.set('current_workout', JSON.stringify(todayWorkout));
+        localStorage.setItem('current_workout', JSON.stringify(todayWorkout));
+      } else if (weeklyPlan.tuesday) {
+        // Fallback to Tuesday if today doesn't have a workout
+        setWorkout(weeklyPlan.tuesday);
+        await dataService.set('current_workout', JSON.stringify(weeklyPlan.tuesday));
+        localStorage.setItem('current_workout', JSON.stringify(weeklyPlan.tuesday));
+      }
+      
+      if (!isAutoGeneration) {
+        setError('Weekly plan generated successfully!');
+        setTimeout(() => setError(null), 3000);
+      }
     } catch (err) {
-      setError(`Failed to generate weekly plan: ${err.message}`);
+      if (!isAutoGeneration) {
+        setError(`Failed to generate weekly plan: ${err.message}`);
+      } else {
+        console.error('Auto-generation failed:', err);
+      }
     } finally {
       setLoading(false);
     }
+  };
+
+  // Helper function to check if today is a scheduled run day
+  const isScheduledRunDay = () => {
+    const today = new Date();
+    const dayOfWeek = today.getDay(); // 0=Sunday, 1=Monday, 2=Tuesday, 4=Thursday
+    // Scheduled run days: Tuesday (2), Thursday (4), Sunday (0)
+    return dayOfWeek === 0 || dayOfWeek === 2 || dayOfWeek === 4;
   };
 
   const handlePlannedWorkoutClick = (plannedWorkout, dayName) => {
@@ -612,6 +775,24 @@ function App() {
         await dataService.set('strava_activities', JSON.stringify(syncedActivities));
         localStorage.setItem('strava_activities', JSON.stringify(syncedActivities)); // Keep local copy
         
+        // Re-match activities to workouts after sync
+        const today = new Date();
+        const monday = new Date(today);
+        monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+        monday.setHours(0, 0, 0, 0);
+        const weekKey = `${monday.getFullYear()}-${monday.getMonth()}-${monday.getDate()}`;
+        
+        const storedPlan = await dataService.get(`weekly_plan_${weekKey}`);
+        if (storedPlan) {
+          const parsedPlan = JSON.parse(storedPlan);
+          const activityMatches = matchActivitiesToWorkouts(syncedActivities, parsedPlan, monday);
+          parsedPlan._activityMatches = activityMatches;
+          
+          // Save updated plan with matches
+          await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan));
+          localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan));
+        }
+        
         // Generate insights for most recent activity
         if (syncedActivities.length > 0 && apiKey) {
           try {
@@ -674,6 +855,22 @@ function App() {
     
     console.log('Showing workout detail:', { workoutToShow, title, selectedPlannedWorkout });
     
+    // Check if this workout can be postponed
+    // For planned workouts, check if today matches the workout's scheduled day
+    // For current workout, check if today is a scheduled run day
+    let canPostpone = false;
+    if (selectedPlannedWorkout) {
+      // For planned workouts, check if today is the scheduled day
+      const today = new Date();
+      const dayOfWeek = today.getDay();
+      const dayNameMap = { 'Monday': 1, 'Tuesday': 2, 'Wednesday': 3, 'Thursday': 4, 'Friday': 5, 'Saturday': 6, 'Sunday': 0 };
+      const scheduledDay = dayNameMap[selectedPlannedWorkout.dayName];
+      canPostpone = scheduledDay === dayOfWeek;
+    } else {
+      // For current workout, check if today is a scheduled run day
+      canPostpone = isScheduledRunDay();
+    }
+    
     return (
       <WorkoutDetail 
         workout={{ ...workoutToShow, title }}
@@ -686,7 +883,8 @@ function App() {
           updateDailyUsage('postponed');
           window.history.pushState({ view: 'postpone' }, '', window.location.pathname);
         }}
-        postponeDisabled={dailyUsage.postponed}
+        postponeDisabled={dailyUsage.postponed || !canPostpone}
+        postponeReason={dailyUsage.postponed ? 'already_postponed' : (!canPostpone ? 'not_run_day' : null)}
       />
     );
   }
@@ -990,11 +1188,32 @@ function App() {
           </div>
         )}
 
+        <WeeklyAnalysis analysis={weeklyAnalysis} />
+
         <WeeklyPlan 
           activities={activities}
           onWorkoutClick={handlePlannedWorkoutClick}
           onGenerateWeeklyPlan={handleGenerateWeeklyPlan}
           apiKey={apiKey}
+          onActivitiesChange={async () => {
+            // When activities change, re-match them to workouts
+            const today = new Date();
+            const monday = new Date(today);
+            monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+            monday.setHours(0, 0, 0, 0);
+            const weekKey = `${monday.getFullYear()}-${monday.getMonth()}-${monday.getDate()}`;
+            
+            const storedPlan = await dataService.get(`weekly_plan_${weekKey}`);
+            if (storedPlan) {
+              const parsedPlan = JSON.parse(storedPlan);
+              const activityMatches = matchActivitiesToWorkouts(activities, parsedPlan, monday);
+              parsedPlan._activityMatches = activityMatches;
+              
+              // Save updated plan with matches
+              await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan));
+              localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan));
+            }
+          }}
         />
 
         <div className="buttons">

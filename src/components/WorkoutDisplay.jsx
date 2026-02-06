@@ -37,8 +37,59 @@ const WorkoutDisplay = ({ workout, onWorkoutClick }) => {
   // Calculate workout summary
   const totalDistance = workout.blocks?.reduce((sum, block) => {
     if (block.distance) {
-      const distance = parseFloat(block.distance.replace(/[^\d.]/g, ''));
-      return sum + (isNaN(distance) ? 0 : distance);
+      const distanceStr = block.distance.toLowerCase().trim();
+      
+      // Handle interval formats like "4x800m" or "6x400m"
+      if (distanceStr.includes('x') && (distanceStr.includes('m') || distanceStr.includes('meter'))) {
+        const intervalMatch = distanceStr.match(/(\d+)\s*x\s*(\d+)\s*m/);
+        if (intervalMatch) {
+          const reps = parseFloat(intervalMatch[1]);
+          const meters = parseFloat(intervalMatch[2]);
+          const totalMeters = reps * meters;
+          const miles = totalMeters / 1609.34; // Convert meters to miles
+          return sum + miles;
+        }
+      }
+      
+      // Handle meters (e.g., "800m", "1600 meters")
+      if (distanceStr.includes('m') && !distanceStr.includes('mile')) {
+        const meterMatch = distanceStr.match(/(\d+\.?\d*)\s*m/);
+        if (meterMatch) {
+          const meters = parseFloat(meterMatch[1]);
+          const miles = meters / 1609.34; // Convert meters to miles
+          return sum + miles;
+        }
+      }
+      
+      // Handle range in miles (e.g., "3-4 miles")
+      if (distanceStr.includes('-') && distanceStr.includes('mile')) {
+        const rangeMatch = distanceStr.match(/(\d+\.?\d*)\s*-\s*(\d+\.?\d*)\s*mile/);
+        if (rangeMatch) {
+          const min = parseFloat(rangeMatch[1]);
+          const max = parseFloat(rangeMatch[2]);
+          return sum + ((min + max) / 2); // Use average of range
+        }
+      }
+      
+      // Handle single value in miles (e.g., "1.5 miles", "0.5 miles", "1 mile")
+      if (distanceStr.includes('mile')) {
+        const mileMatch = distanceStr.match(/(\d+\.?\d*)\s*mile/);
+        if (mileMatch) {
+          const miles = parseFloat(mileMatch[1]);
+          return sum + (isNaN(miles) ? 0 : miles);
+        }
+      }
+      
+      // Fallback: try to extract any number (assume miles if no unit specified)
+      const numberMatch = distanceStr.match(/(\d+\.?\d*)/);
+      if (numberMatch) {
+        const distance = parseFloat(numberMatch[1]);
+        // If it's a large number (>20) and no unit, might be meters - but be conservative
+        // Only assume miles if it's a reasonable number
+        if (distance <= 20) {
+          return sum + distance;
+        }
+      }
     }
     return sum;
   }, 0) || 0;
@@ -62,10 +113,35 @@ const WorkoutDisplay = ({ workout, onWorkoutClick }) => {
     return sum;
   }, 0) || 0;
 
-  const workoutType = workout.blocks?.[0]?.title?.includes('Warm') ? 
-    (workout.blocks.find(b => b.title?.includes('Interval') || b.title?.includes('Tempo')) ? 'Speed Work' :
-     workout.blocks.find(b => b.title?.includes('Long') || b.title?.includes('Steady')) ? 'Long Run' : 'Easy Run') :
-    'Easy Run';
+  // Determine workout type - check workout.type first, then title, then blocks
+  let workoutType = 'Easy Run';
+  if (workout.type) {
+    // Use the type field if available
+    if (workout.type === 'speed' || workout.type === 'Speed Work') {
+      workoutType = 'Speed Work';
+    } else if (workout.type === 'long' || workout.type === 'Long Run') {
+      workoutType = 'Long Run';
+    } else if (workout.type === 'easy' || workout.type === 'Easy Run') {
+      workoutType = 'Easy Run';
+    }
+  } else if (workout.title) {
+    // Check title for workout type
+    const titleLower = workout.title.toLowerCase();
+    if (titleLower.includes('speed') || titleLower.includes('interval') || titleLower.includes('tempo')) {
+      workoutType = 'Speed Work';
+    } else if (titleLower.includes('long')) {
+      workoutType = 'Long Run';
+    } else if (titleLower.includes('easy')) {
+      workoutType = 'Easy Run';
+    }
+  } else if (workout.blocks?.[0]?.title?.includes('Warm')) {
+    // Fallback to checking blocks
+    if (workout.blocks.find(b => b.title?.includes('Interval') || b.title?.includes('Tempo') || b.title?.includes('Speed'))) {
+      workoutType = 'Speed Work';
+    } else if (workout.blocks.find(b => b.title?.includes('Long') || b.title?.includes('Steady'))) {
+      workoutType = 'Long Run';
+    }
+  }
 
   return (
     <div className="workout-display">

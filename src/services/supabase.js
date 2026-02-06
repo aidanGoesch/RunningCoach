@@ -97,6 +97,14 @@ export class DataService {
               .eq('user_id', user.id)
               .eq('week_start_date', weekStart)
               .single()
+          } else if (key.startsWith('weekly_analysis_')) {
+            const weekStart = key.replace('weekly_analysis_', '')
+            dataPromise = supabase
+              .from('weekly_plans')
+              .select('weekly_analysis')
+              .eq('user_id', user.id)
+              .eq('week_start_date', weekStart)
+              .single()
           } else if (key.startsWith('activity_insights_')) {
             const activityId = key.replace('activity_insights_', '')
             dataPromise = supabase
@@ -131,7 +139,9 @@ export class DataService {
         case 'current_workout':
           return data ? JSON.stringify(data.workout_data) : null;
         default:
-          if (key.startsWith('weekly_plan_')) {
+          if (key.startsWith('weekly_analysis_')) {
+            return data?.weekly_analysis || null;
+          } else if (key.startsWith('weekly_plan_')) {
             return data ? JSON.stringify(data.plan_data) : null;
           } else if (key.startsWith('activity_insights_')) {
             return data?.insights_text || null;
@@ -177,38 +187,74 @@ export class DataService {
         }
         break
 
-      case 'current_workout':
-        await supabase
-          .from('current_workouts')
-          .upsert({
-            user_id: user.id,
-            workout_date: new Date().toISOString().split('T')[0],
-            workout_data: JSON.parse(value)
-          })
-        break
+        case 'current_workout':
+          if (value === null || value === 'null') {
+            // Clear current workout
+            await supabase
+              .from('current_workouts')
+              .delete()
+              .eq('user_id', user.id)
+          } else {
+            await supabase
+              .from('current_workouts')
+              .upsert({
+                user_id: user.id,
+                workout_date: new Date().toISOString().split('T')[0],
+                workout_data: JSON.parse(value)
+              })
+          }
+          break
 
-      default:
-        if (key.startsWith('weekly_plan_')) {
-          const weekStart = key.replace('weekly_plan_', '')
-          await supabase
-            .from('weekly_plans')
-            .upsert({
-              user_id: user.id,
-              week_start_date: weekStart,
-              plan_data: JSON.parse(value)
-            })
-        } else if (key.startsWith('activity_insights_')) {
-          const activityId = key.replace('activity_insights_', '')
-          await supabase
-            .from('activity_insights')
-            .upsert({
-              user_id: user.id,
-              strava_activity_id: parseInt(activityId),
-              insights_text: value
-            })
-        } else {
-          localStorage.setItem(key, value)
-        }
+        default:
+          if (key.startsWith('weekly_plan_')) {
+            const weekStart = key.replace('weekly_plan_', '')
+            await supabase
+              .from('weekly_plans')
+              .upsert({
+                user_id: user.id,
+                week_start_date: weekStart,
+                plan_data: JSON.parse(value)
+              })
+          } else if (key.startsWith('weekly_analysis_')) {
+            const weekStart = key.replace('weekly_analysis_', '')
+            // Store analysis in weekly_plans table's weekly_analysis column
+            // First check if plan exists, then update or create
+            const { data: existing } = await supabase
+              .from('weekly_plans')
+              .select('id')
+              .eq('user_id', user.id)
+              .eq('week_start_date', weekStart)
+              .single()
+            
+            if (existing) {
+              // Update existing plan with analysis
+              await supabase
+                .from('weekly_plans')
+                .update({ weekly_analysis: value })
+                .eq('id', existing.id)
+            } else {
+              // Create new plan entry with just analysis
+              await supabase
+                .from('weekly_plans')
+                .insert({
+                  user_id: user.id,
+                  week_start_date: weekStart,
+                  weekly_analysis: value,
+                  plan_data: null
+                })
+            }
+          } else if (key.startsWith('activity_insights_')) {
+            const activityId = key.replace('activity_insights_', '')
+            await supabase
+              .from('activity_insights')
+              .upsert({
+                user_id: user.id,
+                strava_activity_id: parseInt(activityId),
+                insights_text: value
+              })
+          } else {
+            localStorage.setItem(key, value)
+          }
     }
   }
 
@@ -648,25 +694,75 @@ export const saveActivityInsights = async (activityId, insights) => {
     })
 }
 
-export const saveActivityRating = async (activityId, rating, feedback, isInjured, injuryDetails) => {
-  if (!dataService.useSupabase) {
-    const ratings = JSON.parse(localStorage.getItem('activity_ratings') || '{}')
-    ratings[activityId] = { rating, feedback, isInjured, injuryDetails }
-    localStorage.setItem('activity_ratings', JSON.stringify(ratings))
-    return
+export const getActivityRating = async (activityId) => {
+  // First check localStorage
+  const localRatings = JSON.parse(localStorage.getItem('activity_ratings') || '{}');
+  if (localRatings[activityId]) {
+    return localRatings[activityId];
   }
   
-  const user = await ensureUser()
-  await supabase
-    .from('workout_ratings')
-    .upsert({
-      user_id: user.id,
-      strava_activity_id: activityId,
-      rating,
-      feedback,
-      is_injured: isInjured,
-      injury_details: injuryDetails
-    })
+  // If using Supabase, check there too
+  if (dataService.useSupabase) {
+    try {
+      const user = await ensureUser();
+      const { data, error } = await supabase
+        .from('workout_ratings')
+        .select('rating, feedback, is_injured, injury_details')
+        .eq('user_id', user.id)
+        .eq('strava_activity_id', parseInt(activityId))
+        .single();
+      
+      if (error && error.code !== 'PGRST116') { // PGRST116 is "not found"
+        console.error('Error fetching rating:', error);
+        return null;
+      }
+      
+      if (data) {
+        return {
+          rating: data.rating,
+          feedback: data.feedback,
+          isInjured: data.is_injured,
+          injuryDetails: data.injury_details
+        };
+      }
+    } catch (err) {
+      console.error('Error getting activity rating:', err);
+    }
+  }
+  
+  return null;
+};
+
+export const saveActivityRating = async (activityId, rating, feedback, isInjured, injuryDetails) => {
+  // Always save to localStorage first
+  const ratings = JSON.parse(localStorage.getItem('activity_ratings') || '{}')
+  ratings[activityId] = { rating, feedback, isInjured, injuryDetails }
+  localStorage.setItem('activity_ratings', JSON.stringify(ratings))
+  
+  // If using Supabase, also save there
+  if (dataService.useSupabase) {
+    try {
+      const user = await ensureUser()
+      const { error } = await supabase
+        .from('workout_ratings')
+        .upsert({
+          user_id: user.id,
+          strava_activity_id: parseInt(activityId),
+          rating,
+          feedback,
+          is_injured: isInjured,
+          injury_details: injuryDetails
+        })
+      
+      if (error) {
+        console.error('Error saving rating to Supabase:', error);
+        throw error;
+      }
+    } catch (err) {
+      console.error('Failed to save rating to Supabase:', err);
+      // Don't throw - we've already saved to localStorage
+    }
+  }
 }
 
 // Initialize on load - check if user has explicitly enabled Supabase

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { getActivityDetails, getActivityStreams, generateInsights, getActivityRating } from '../services/api';
-import { getActivityInsights, saveActivityInsights } from '../services/supabase';
+import { getActivityDetails, getActivityStreams, generateInsights } from '../services/api';
+import { getActivityInsights, saveActivityInsights, saveActivityRating, getActivityRating } from '../services/supabase';
 import { useSwipeBack } from '../hooks/useSwipeBack';
 
 const ActivityDetail = ({ activityId, onBack }) => {
@@ -11,6 +11,12 @@ const ActivityDetail = ({ activityId, onBack }) => {
   const [insights, setInsights] = useState(null);
   const [generatingInsights, setGeneratingInsights] = useState(false);
   const [rating, setRating] = useState(null);
+  const [showRatingForm, setShowRatingForm] = useState(false);
+  const [ratingValue, setRatingValue] = useState(null);
+  const [ratingComment, setRatingComment] = useState('');
+  const [isInjured, setIsInjured] = useState(false);
+  const [injuryDetails, setInjuryDetails] = useState('');
+  const [savingRating, setSavingRating] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -76,7 +82,7 @@ const ActivityDetail = ({ activityId, onBack }) => {
             setStreams(streamData);
             
             // Get rating for this activity
-            const activityRating = getActivityRating(activityId);
+            const activityRating = await getActivityRating(activityId);
             setRating(activityRating);
             
             // Only check for cached insights, don't generate new ones
@@ -121,7 +127,7 @@ const ActivityDetail = ({ activityId, onBack }) => {
         setStreams(streamData);
         
         // Get rating for this activity
-        const activityRating = getActivityRating(activityId);
+        const activityRating = await getActivityRating(activityId);
         setRating(activityRating);
         
         // Only check for cached insights, don't generate new ones
@@ -155,7 +161,7 @@ const ActivityDetail = ({ activityId, onBack }) => {
     setGeneratingInsights(true);
     try {
       console.log('Manually generating insights for', activityId);
-      const activityRating = getActivityRating(activityId);
+      const activityRating = await getActivityRating(activityId);
       
       const insightsPromise = generateInsights(apiKey, [activity], streams, activityRating);
       const timeoutPromise = new Promise((_, reject) => 
@@ -294,8 +300,8 @@ const ActivityDetail = ({ activityId, onBack }) => {
         )}
       </div>
 
-      {/* Workout Rating */}
-      {rating && (
+      {/* Activity Rating */}
+      {rating && !showRatingForm ? (
         <div className="workout-display" style={{ marginBottom: '20px' }}>
           <div className="workout-title">📝 Your Rating</div>
           <div className="workout-block">
@@ -304,22 +310,183 @@ const ActivityDetail = ({ activityId, onBack }) => {
                 <span className="detail-label">Rating</span>
                 <span className="detail-value">{'⭐'.repeat(rating.rating)} ({rating.rating}/5)</span>
               </div>
-              <div className="detail-item">
-                <span className="detail-label">Workout</span>
-                <span className="detail-value">{rating.workoutTitle}</span>
-              </div>
+              {rating.feedback && (
+                <div className="detail-item">
+                  <span className="detail-label">Comment</span>
+                  <span className="detail-value">{rating.feedback}</span>
+                </div>
+              )}
               {rating.isInjured && (
                 <div className="detail-item">
                   <span className="detail-label">Injury</span>
-                  <span className="detail-value">⚠️ {rating.injuryDetails}</span>
+                  <span className="detail-value">⚠️ {rating.injuryDetails || 'Reported'}</span>
                 </div>
               )}
             </div>
-            {rating.notes && (
-              <div style={{ marginTop: '10px', fontSize: '14px', color: 'var(--label-color)' }}>
-                <strong>Notes:</strong> {rating.notes}
+            <button
+              className="btn btn-secondary"
+              onClick={() => {
+                setShowRatingForm(true);
+                setRatingValue(rating.rating);
+                setRatingComment(rating.feedback || '');
+                setIsInjured(rating.isInjured || false);
+                setInjuryDetails(rating.injuryDetails || '');
+              }}
+              style={{ marginTop: '10px', width: '100%' }}
+            >
+              Edit Rating
+            </button>
+          </div>
+        </div>
+      ) : showRatingForm ? (
+        <div className="workout-display" style={{ marginBottom: '20px' }}>
+          <div className="workout-title">📝 Rate This Activity</div>
+          <div className="workout-block">
+            <div className="block-title">How was this run?</div>
+            
+            {/* Rating */}
+            <div style={{ marginBottom: '20px' }}>
+              <div className="detail-label" style={{ marginBottom: '10px' }}>Rate this activity:</div>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                {[1, 2, 3, 4, 5].map(star => (
+                  <button
+                    key={star}
+                    onClick={() => setRatingValue(star)}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      fontSize: '24px',
+                      cursor: 'pointer',
+                      color: ratingValue >= star ? '#f39c12' : '#ddd'
+                    }}
+                  >
+                    ⭐
+                  </button>
+                ))}
               </div>
-            )}
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '5px' }}>
+                1 = Too easy, 3 = Perfect, 5 = Too hard
+              </div>
+            </div>
+
+            {/* Comment */}
+            <div style={{ marginBottom: '20px' }}>
+              <div className="detail-label" style={{ marginBottom: '8px' }}>Comments (optional):</div>
+              <textarea
+                value={ratingComment}
+                onChange={(e) => setRatingComment(e.target.value)}
+                placeholder="How did this run feel? Any notes..."
+                style={{
+                  width: '100%',
+                  padding: '8px',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '4px',
+                  fontSize: '14px',
+                  minHeight: '60px',
+                  backgroundColor: 'var(--card-bg)',
+                  color: 'var(--text-color)'
+                }}
+              />
+            </div>
+
+            {/* Injury Status */}
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={isInjured}
+                  onChange={(e) => setIsInjured(e.target.checked)}
+                />
+                <span className="detail-label">I'm currently injured or experiencing pain</span>
+              </label>
+              
+              {isInjured && (
+                <textarea
+                  value={injuryDetails}
+                  onChange={(e) => setInjuryDetails(e.target.value)}
+                  placeholder="Describe your injury or pain (e.g., 'knee pain', 'shin splints', 'general fatigue')"
+                  style={{
+                    width: '100%',
+                    marginTop: '10px',
+                    padding: '8px',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '4px',
+                    fontSize: '14px',
+                    minHeight: '60px',
+                    backgroundColor: 'var(--card-bg)',
+                    color: 'var(--text-color)'
+                  }}
+                />
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                className="btn btn-primary"
+                onClick={async () => {
+                  if (!ratingValue) return;
+                  setSavingRating(true);
+                  try {
+                    await saveActivityRating(
+                      activityId,
+                      ratingValue,
+                      ratingComment || null,
+                      isInjured,
+                      isInjured ? injuryDetails : null
+                    );
+                    // Update local rating state
+                    const updatedRating = {
+                      rating: ratingValue,
+                      feedback: ratingComment || null,
+                      isInjured,
+                      injuryDetails: isInjured ? injuryDetails : null
+                    };
+                    setRating(updatedRating);
+                    setShowRatingForm(false);
+                    // Also update localStorage for immediate access
+                    const ratings = JSON.parse(localStorage.getItem('activity_ratings') || '{}');
+                    ratings[activityId] = updatedRating;
+                    localStorage.setItem('activity_ratings', JSON.stringify(ratings));
+                  } catch (err) {
+                    console.error('Failed to save rating:', err);
+                    setError('Failed to save rating. Please try again.');
+                  } finally {
+                    setSavingRating(false);
+                  }
+                }}
+                disabled={!ratingValue || savingRating}
+                style={{ flex: 1 }}
+              >
+                {savingRating ? 'Saving...' : 'Save Rating'}
+              </button>
+              <button
+                className="btn btn-secondary"
+                onClick={() => {
+                  setShowRatingForm(false);
+                  setRatingValue(null);
+                  setRatingComment('');
+                  setIsInjured(false);
+                  setInjuryDetails('');
+                }}
+                disabled={savingRating}
+                style={{ flex: 1 }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="workout-display" style={{ marginBottom: '20px' }}>
+          <div className="workout-title">📝 Rate This Activity</div>
+          <div className="workout-block">
+            <button
+              className="btn btn-primary"
+              onClick={() => setShowRatingForm(true)}
+              style={{ width: '100%' }}
+            >
+              Rate This Activity
+            </button>
           </div>
         </div>
       )}
