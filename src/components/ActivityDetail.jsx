@@ -256,7 +256,34 @@ const ActivityDetail = ({ activityId, onBack }) => {
     }
   };
 
-  if (loading) return <div className="loading">Loading activity details...</div>;
+  if (loading) {
+    return (
+      <div style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        width: '100vw',
+        height: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'var(--bg-color)',
+        zIndex: 9999
+      }}>
+        <div style={{
+          width: '48px',
+          height: '48px',
+          border: '4px solid var(--border-color)',
+          borderTop: '4px solid var(--accent)',
+          borderRadius: '50%',
+          animation: 'spin 1s linear infinite',
+          marginBottom: '16px'
+        }} />
+        <p style={{ color: 'var(--text-secondary)', fontSize: '16px' }}>Loading...</p>
+      </div>
+    );
+  }
   if (error) return <div className="error">Error: {error}</div>;
   if (!activity) return <div className="error">Activity not found</div>;
 
@@ -535,7 +562,16 @@ const ActivityDetail = ({ activityId, onBack }) => {
       <div className="workout-display" style={{ marginBottom: '20px' }}>
         <div className="workout-title">AI Insights</div>
         {insights ? (
-          <div className="workout-block">
+          <div
+            className="workout-block"
+            data-ai-insights-panel="true"
+            style={{
+              height: 'var(--chart-height)',
+              overflowY: 'auto',
+              WebkitOverflowScrolling: 'touch',
+              paddingRight: '12px'
+            }}
+          >
             {insights === '[object Object]' || insights.includes('[object Object]') ? (
               <div style={{ textAlign: 'center', padding: '20px' }}>
                 <div style={{ color: 'var(--text-secondary)', marginBottom: '15px' }}>
@@ -555,7 +591,8 @@ const ActivityDetail = ({ activityId, onBack }) => {
                 style={{ 
                   whiteSpace: 'normal', 
                   lineHeight: '1.6',
-                  color: 'var(--text-color)'
+                  color: 'var(--text-color)',
+                  paddingBottom: '8px'
                 }}
               >
                 {insights}
@@ -563,15 +600,21 @@ const ActivityDetail = ({ activityId, onBack }) => {
             )}
           </div>
         ) : (
-          <div className="workout-block" style={{ 
-            backgroundColor: '#000', 
-            color: '#888', 
-            textAlign: 'center', 
-            padding: '40px 20px',
-            cursor: generatingInsights ? 'default' : 'pointer',
-            border: '1px solid #333',
-            position: 'relative'
-          }}
+          <div
+            className="workout-block"
+            style={{ 
+              backgroundColor: '#000', 
+              color: '#888', 
+              textAlign: 'center', 
+              padding: '40px 20px',
+              cursor: generatingInsights ? 'default' : 'pointer',
+              border: '1px solid #333',
+              position: 'relative',
+              height: 'var(--chart-height)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}
           onClick={generatingInsights ? undefined : handleGenerateInsights}>
             {generatingInsights ? (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
@@ -764,12 +807,269 @@ const ActivityCharts = ({ streams }) => {
           <PaceChart data={streams} xAxisMode={xAxisMode} />
         </div>
       )}
+      {streams.distance && streams.time && (
+        <div style={{ marginBottom: '20px' }}>
+          <MileSplitPaceBarChart data={streams} />
+        </div>
+      )}
       {streams.cadence && (
         <div style={{ marginBottom: '20px' }}>
           <CadenceChart data={streams} xAxisMode={xAxisMode} />
         </div>
       )}
     </>
+  );
+};
+
+const MileSplitPaceBarChart = ({ data }) => {
+  const canvasRef = useRef(null);
+  const [tooltip, setTooltip] = useState(null);
+
+  const computeMileSplits = () => {
+    const distanceM = data.distance?.data;
+    const timeS = data.time?.data;
+    if (!distanceM || !timeS || distanceM.length === 0 || timeS.length === 0) return [];
+
+    const miles = distanceM.map((d) => d / 1609.34);
+    const maxMiles = miles[miles.length - 1];
+    const mileCount = Math.floor(maxMiles);
+    if (mileCount <= 0) return [];
+
+    // Linear interpolation helper for time at a target mile.
+    const timeAtMile = (targetMile) => {
+      // Find first index where miles[i] >= targetMile
+      let i = 0;
+      while (i < miles.length && miles[i] < targetMile) i++;
+      if (i <= 0) return timeS[0];
+      if (i >= miles.length) return timeS[timeS.length - 1];
+
+      const m0 = miles[i - 1];
+      const m1 = miles[i];
+      const t0 = timeS[i - 1];
+      const t1 = timeS[i];
+      if (m1 === m0) return t1;
+      const frac = (targetMile - m0) / (m1 - m0);
+      return t0 + frac * (t1 - t0);
+    };
+
+    const splits = [];
+    for (let mile = 1; mile <= mileCount; mile++) {
+      const startMile = mile - 1;
+      const endMile = mile;
+      const tStart = timeAtMile(startMile);
+      const tEnd = timeAtMile(endMile);
+      const durationS = Math.max(0, tEnd - tStart);
+      const paceMinPerMile = durationS / 60; // exactly 1 mile
+      splits.push({
+        label: String(mile),
+        distanceMi: 1,
+        pace: paceMinPerMile
+      });
+    }
+
+    // Add final partial split (remainder), if any (e.g. last 0.32 mi)
+    const remainderMi = maxMiles - mileCount;
+    if (remainderMi >= 0.05) {
+      const tStart = timeAtMile(mileCount);
+      const tEnd = timeAtMile(maxMiles);
+      const durationS = Math.max(0, tEnd - tStart);
+      const paceMinPerMile = remainderMi > 0 ? (durationS / 60) / remainderMi : 0;
+      splits.push({
+        label: remainderMi.toFixed(2),
+        distanceMi: remainderMi,
+        pace: paceMinPerMile
+      });
+    }
+    return splits;
+  };
+
+  const formatPaceLabel = (paceMin) => {
+    if (!Number.isFinite(paceMin) || paceMin <= 0) return '--:--';
+    const mins = Math.floor(paceMin);
+    const secs = Math.round((paceMin - mins) * 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const handleMouseMove = (e) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const splits = computeMileSplits();
+    if (splits.length === 0) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    const paddingLeft = 80;
+    const paddingRight = 20;
+    const paddingTop = 20;
+    const paddingBottom = 30;
+    const height = rect.height || 250;
+    const plotHeight = height - paddingTop - paddingBottom;
+    const rowHeight = plotHeight / splits.length;
+
+    // Only show tooltip inside plot area
+    if (x < paddingLeft || x > rect.width - paddingRight || y < paddingTop || y > height - paddingBottom) {
+      setTooltip(null);
+      return;
+    }
+
+    const idx = Math.floor((y - paddingTop) / rowHeight);
+    if (idx < 0 || idx >= splits.length) {
+      setTooltip(null);
+      return;
+    }
+
+    const s = splits[idx];
+    setTooltip({
+      x: e.clientX,
+      y: e.clientY - 80,
+      text: `${idx === splits.length - 1 && s.distanceMi < 1 ? `${s.distanceMi.toFixed(2)} mi` : `Mile ${s.label}`}: ${formatPaceLabel(s.pace)}/mi`
+    });
+  };
+
+  const handleMouseLeave = () => setTooltip(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const splits = computeMileSplits();
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+
+    const cssWidth = rect.width || 0;
+    const cssHeight = rect.height || 250;
+    canvas.width = cssWidth * dpr;
+    canvas.height = cssHeight * dpr;
+
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.scale(dpr, dpr);
+
+    const width = cssWidth;
+    const height = cssHeight;
+
+    ctx.clearRect(0, 0, width, height);
+
+    if (splits.length === 0) {
+      ctx.fillStyle = 'var(--text-secondary)';
+      ctx.font = '14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Not enough distance data for mile splits', width / 2, height / 2);
+      return;
+    }
+
+    // First mile should be on top, last mile on bottom (natural order).
+    // Bar length: further right = faster -> use speed (1/pace) normalization.
+    const speeds = splits.map((s) => (s.pace > 0 ? 1 / s.pace : 0)).filter((v) => v > 0);
+    const minSpeed = Math.min(...speeds);
+    const maxSpeed = Math.max(...speeds);
+
+    const paddingLeft = 80;
+    const paddingRight = 20;
+    const paddingTop = 20;
+    const paddingBottom = 30;
+    const plotWidth = width - paddingLeft - paddingRight;
+    const plotHeight = height - paddingTop - paddingBottom;
+    const rowHeight = plotHeight / splits.length;
+    const barGap = Math.min(8, rowHeight * 0.25);
+    const barHeight = Math.max(6, rowHeight - barGap);
+    const minBarLen = Math.max(8, plotWidth * 0.06); // ensure even slowest mile has a visible bar
+
+    // Axes
+    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--axis-color').trim();
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(paddingLeft, paddingTop);
+    ctx.lineTo(paddingLeft, height - paddingBottom);
+    ctx.lineTo(width - paddingRight, height - paddingBottom);
+    ctx.stroke();
+
+    // Y-axis label
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--label-color').trim();
+    ctx.font = '12px sans-serif';
+    ctx.save();
+    ctx.translate(18, paddingTop + plotHeight / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.textAlign = 'center';
+    ctx.fillText('Mile', 0, 0);
+    ctx.restore();
+
+    // Bars + labels
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--label-color').trim();
+
+    splits.forEach((s, idx) => {
+      const speed = s.pace > 0 ? 1 / s.pace : 0;
+      const norm = maxSpeed === minSpeed ? 0.7 : (speed - minSpeed) / (maxSpeed - minSpeed);
+      const barLen = minBarLen + norm * (plotWidth - minBarLen);
+
+      const yTop = paddingTop + idx * rowHeight + (rowHeight - barHeight) / 2;
+      const yMid = yTop + barHeight / 2;
+
+      // Mile label on left
+      ctx.fillText(`${s.label}`, paddingLeft - 10, yMid + 4);
+
+      // Bar
+      ctx.fillStyle = '#3498db';
+      ctx.fillRect(paddingLeft, yTop, barLen, barHeight);
+
+      // Pace label at end of bar
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-color').trim();
+      ctx.textAlign = 'left';
+      ctx.fillText(`${formatPaceLabel(s.pace)}`, Math.min(width - paddingRight - 50, paddingLeft + barLen + 8), yMid + 4);
+
+      // Reset for next left label
+      ctx.textAlign = 'right';
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--label-color').trim();
+    });
+
+    // X-axis label
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--label-color').trim();
+    ctx.textAlign = 'center';
+    ctx.fillText('Faster →', paddingLeft + plotWidth / 2, height - 8);
+  }, [data]);
+
+  return (
+    <div className="workout-display">
+      <div className="workout-title">Mile Splits (Pace)</div>
+      <div style={{ position: 'relative' }}>
+        <canvas
+          ref={canvasRef}
+          onMouseMove={handleMouseMove}
+          onMouseLeave={handleMouseLeave}
+          onTouchMove={(e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            handleMouseMove({ clientX: touch.clientX, clientY: touch.clientY });
+          }}
+          onTouchEnd={handleMouseLeave}
+          style={{ width: '100%', height: 'var(--chart-height)', borderRadius: '8px', cursor: 'crosshair' }}
+        />
+        {tooltip && (
+          <div
+            style={{
+              position: 'fixed',
+              left: tooltip.x,
+              top: tooltip.y,
+              background: 'var(--card-bg)',
+              border: '1px solid var(--border-color)',
+              borderRadius: '4px',
+              padding: '4px 8px',
+              fontSize: '12px',
+              color: 'var(--text-color)',
+              pointerEvents: 'none',
+              zIndex: 1000,
+              boxShadow: '0 2px 8px var(--shadow)'
+            }}
+          >
+            {tooltip.text}
+          </div>
+        )}
+      </div>
+    </div>
   );
 };
 
@@ -840,12 +1140,16 @@ const HeartRateChart = ({ data, xAxisMode = 'time' }) => {
     const rect = canvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     
-    canvas.width = rect.width * dpr;
-    canvas.height = 250 * dpr;
+    const cssWidth = rect.width || 0;
+    const cssHeight = rect.height || 250;
+    
+    canvas.width = cssWidth * dpr;
+    canvas.height = cssHeight * dpr;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.scale(dpr, dpr);
     
-    const width = rect.width;
-    const height = 250;
+    const width = cssWidth;
+    const height = cssHeight;
     const padding = 60;
     
     ctx.clearRect(0, 0, width, height);
@@ -1000,7 +1304,7 @@ const HeartRateChart = ({ data, xAxisMode = 'time' }) => {
             handleMouseMove({ clientX: touch.clientX, clientY: touch.clientY });
           }}
           onTouchEnd={handleMouseLeave}
-          style={{ width: '100%', height: '250px', borderRadius: '8px', cursor: 'crosshair' }}
+          style={{ width: '100%', height: 'var(--chart-height)', borderRadius: '8px', cursor: 'crosshair' }}
         />
         {tooltip && (
           <div
@@ -1103,12 +1407,16 @@ const PaceChart = ({ data, xAxisMode = 'time' }) => {
     const rect = canvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     
-    canvas.width = rect.width * dpr;
-    canvas.height = 250 * dpr;
+    const cssWidth = rect.width || 0;
+    const cssHeight = rect.height || 250;
+    
+    canvas.width = cssWidth * dpr;
+    canvas.height = cssHeight * dpr;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.scale(dpr, dpr);
     
-    const width = rect.width;
-    const height = 250;
+    const width = cssWidth;
+    const height = cssHeight;
     const padding = 60;
     
     ctx.clearRect(0, 0, width, height);
@@ -1280,7 +1588,7 @@ const PaceChart = ({ data, xAxisMode = 'time' }) => {
             handleMouseMove({ clientX: touch.clientX, clientY: touch.clientY });
           }}
           onTouchEnd={handleMouseLeave}
-          style={{ width: '100%', height: '250px', borderRadius: '8px', cursor: 'crosshair' }}
+          style={{ width: '100%', height: 'var(--chart-height)', borderRadius: '8px', cursor: 'crosshair' }}
         />
         {tooltip && (
           <div
@@ -1429,12 +1737,16 @@ const CadenceChart = ({ data, xAxisMode = 'time' }) => {
     const rect = canvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     
-    canvas.width = rect.width * dpr;
-    canvas.height = 250 * dpr;
+    const cssWidth = rect.width || 0;
+    const cssHeight = rect.height || 250;
+    
+    canvas.width = cssWidth * dpr;
+    canvas.height = cssHeight * dpr;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.scale(dpr, dpr);
     
-    const width = rect.width;
-    const height = 250;
+    const width = cssWidth;
+    const height = cssHeight;
     const padding = 60;
     
     ctx.clearRect(0, 0, width, height);
@@ -1619,7 +1931,7 @@ const CadenceChart = ({ data, xAxisMode = 'time' }) => {
             handleMouseMove({ clientX: touch.clientX, clientY: touch.clientY });
           }}
           onTouchEnd={handleMouseLeave}
-          style={{ width: '100%', height: '250px', borderRadius: '8px', cursor: 'crosshair' }}
+          style={{ width: '100%', height: 'var(--chart-height)', borderRadius: '8px', cursor: 'crosshair' }}
         />
         {tooltip && (
           <div

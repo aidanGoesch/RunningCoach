@@ -358,10 +358,25 @@ function App() {
           }
         }
         
-        // Detect new activities after sync
+        // Detect new activities after sync (compare against last known IDs BEFORE updating them)
         let newActivities = [];
         if (syncedActivities && syncedActivities.length > 0) {
-          newActivities = detectNewActivities(syncedActivities);
+          const hasBaseline = localStorage.getItem('last_known_activity_ids') !== null;
+          const lastKnownIds = hasBaseline
+            ? JSON.parse(localStorage.getItem('last_known_activity_ids') || '[]')
+            : [];
+
+          newActivities = detectNewActivities(syncedActivities, lastKnownIds);
+
+          // Update baseline to current activities after we compare (and only after sync succeeds)
+          const currentIds = syncedActivities.map((a) => a.id);
+          localStorage.setItem('last_known_activity_ids', JSON.stringify(currentIds));
+
+          // If this is the very first baseline, do NOT prompt for everything historical
+          if (!hasBaseline) {
+            newActivities = [];
+          }
+
           if (newActivities.length > 0) {
             console.log('New activities detected:', newActivities.length);
           }
@@ -792,6 +807,11 @@ function App() {
     
     try {
       console.log('Calling syncWithStrava...');
+      const hasBaseline = localStorage.getItem('last_known_activity_ids') !== null;
+      const lastKnownIds = hasBaseline
+        ? JSON.parse(localStorage.getItem('last_known_activity_ids') || '[]')
+        : [];
+
       const syncedActivities = await syncWithStrava();
       console.log('Sync result:', syncedActivities);
       
@@ -801,6 +821,23 @@ function App() {
         // Save activities to Supabase
         await dataService.set('strava_activities', JSON.stringify(syncedActivities));
         localStorage.setItem('strava_activities', JSON.stringify(syncedActivities)); // Keep local copy
+
+        // Detect new activities and prompt for rating (only if baseline exists)
+        let newActivities = detectNewActivities(syncedActivities, lastKnownIds);
+
+        // Update baseline AFTER comparison
+        const currentIds = syncedActivities.map((a) => a.id);
+        localStorage.setItem('last_known_activity_ids', JSON.stringify(currentIds));
+
+        // If this is the first time we establish baseline, don't prompt historical activities
+        if (!hasBaseline) {
+          newActivities = [];
+        }
+
+        if (newActivities.length > 0) {
+          setNewActivityQueue(newActivities);
+          setCurrentActivityForRating(newActivities[0]);
+        }
         
         // Re-match activities to workouts after sync
         const today = new Date();
