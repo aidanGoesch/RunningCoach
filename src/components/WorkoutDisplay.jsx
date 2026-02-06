@@ -145,20 +145,52 @@ const WorkoutDisplay = ({ workout, onWorkoutClick, isCompleted = false }) => {
 
   return (
     <div className="workout-display">
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
-        <div className="workout-title">{workout.title}</div>
+      <div style={{ marginBottom: isCompleted ? '14px' : 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+          <div className="workout-title">{workout.title}</div>
+          {isCompleted && (
+            <div style={{
+              padding: '8px 12px',
+              borderRadius: '999px',
+              background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.30), rgba(16, 185, 129, 0.18))',
+              border: '1px solid rgba(34, 197, 94, 0.50)',
+              color: 'var(--text-color)',
+              fontSize: '12px',
+              fontWeight: 800,
+              letterSpacing: '0.02em',
+              whiteSpace: 'nowrap',
+              boxShadow: '0 10px 30px rgba(34, 197, 94, 0.18)',
+              animation: 'completedPulse 1.8s ease-in-out infinite'
+            }}>
+              ✅ Completed
+            </div>
+          )}
+        </div>
+
         {isCompleted && (
           <div style={{
-            padding: '6px 10px',
-            borderRadius: '999px',
-            backgroundColor: 'rgba(34, 197, 94, 0.15)',
-            border: '1px solid rgba(34, 197, 94, 0.35)',
-            color: 'var(--text-color)',
-            fontSize: '12px',
-            fontWeight: 700,
-            whiteSpace: 'nowrap'
+            marginTop: '12px',
+            padding: '14px 14px',
+            borderRadius: '14px',
+            background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.18), rgba(59, 130, 246, 0.12))',
+            border: '1px solid rgba(34, 197, 94, 0.25)',
+            boxShadow: '0 12px 40px rgba(34, 197, 94, 0.12)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px'
           }}>
-            Completed
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <div style={{ fontSize: '14px', fontWeight: 900, color: 'var(--text-color)' }}>
+                Workout Completed
+              </div>
+              <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                You showed up today. That’s how fitness is built.
+              </div>
+            </div>
+            <div style={{ fontSize: '22px', lineHeight: 1 }}>
+              🏁
+            </div>
           </div>
         )}
       </div>
@@ -166,7 +198,15 @@ const WorkoutDisplay = ({ workout, onWorkoutClick, isCompleted = false }) => {
       <div 
         className="workout-block clickable"
         onClick={() => onWorkoutClick && onWorkoutClick()}
-        style={{ cursor: 'pointer' }}
+        style={{
+          cursor: 'pointer',
+          ...(isCompleted
+            ? {
+                border: '1px solid rgba(34, 197, 94, 0.35)',
+                boxShadow: '0 16px 48px rgba(34, 197, 94, 0.10)'
+              }
+            : {})
+        }}
       >
         <div className="block-title">Workout Overview</div>
         <div className="block-details">
@@ -195,15 +235,24 @@ const WorkoutDisplay = ({ workout, onWorkoutClick, isCompleted = false }) => {
         <div style={{ 
           marginTop: '15px',
           padding: '12px',
-          backgroundColor: 'var(--grid-color)',
+          background: isCompleted
+            ? 'linear-gradient(135deg, rgba(34, 197, 94, 0.16), rgba(34, 197, 94, 0.08))'
+            : 'var(--grid-color)',
           borderRadius: '8px',
           fontSize: '14px',
           color: 'var(--text-secondary)',
           textAlign: 'center'
         }}>
-          {isCompleted ? 'Nice work — workout completed today.' : 'Click to view detailed workout instructions →'}
+          {isCompleted ? 'Tap to review the plan + details →' : 'Click to view detailed workout instructions →'}
         </div>
       </div>
+
+      <style>{`
+        @keyframes completedPulse {
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.04); }
+        }
+      `}</style>
     </div>
   );
 };

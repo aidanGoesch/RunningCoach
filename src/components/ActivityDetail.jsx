@@ -900,7 +900,7 @@ const MileSplitPaceBarChart = ({ data }) => {
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    const paddingLeft = 80;
+    const paddingLeft = 92;
     const paddingRight = 20;
     const paddingTop = 20;
     const paddingBottom = 30;
@@ -966,7 +966,7 @@ const MileSplitPaceBarChart = ({ data }) => {
     const minSpeed = Math.min(...speeds);
     const maxSpeed = Math.max(...speeds);
 
-    const paddingLeft = 80;
+    const paddingLeft = 92;
     const paddingRight = 20;
     const paddingTop = 20;
     const paddingBottom = 30;
@@ -990,7 +990,7 @@ const MileSplitPaceBarChart = ({ data }) => {
     ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--label-color').trim();
     ctx.font = '12px sans-serif';
     ctx.save();
-    ctx.translate(18, paddingTop + plotHeight / 2);
+    ctx.translate(26, paddingTop + plotHeight / 2);
     ctx.rotate(-Math.PI / 2);
     ctx.textAlign = 'center';
     ctx.fillText('Mile', 0, 0);
