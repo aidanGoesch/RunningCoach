@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { dataService } from '../services/supabase';
 
 const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, onActivitiesChange }) => {
   const [weeklyPlan, setWeeklyPlan] = useState(null);
   const [currentWeek, setCurrentWeek] = useState(null);
+  const weeklyPlanRef = useRef(null);
 
   useEffect(() => {
     // Get current week (Monday-Sunday)
@@ -19,16 +20,27 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
     const loadWeeklyPlan = async () => {
       console.log('Loading weekly plan for key:', weekKey);
       try {
-        const storedPlan = await dataService.get(`weekly_plan_${weekKey}`);
-        console.log('Supabase weekly plan result:', storedPlan);
-        if (storedPlan) {
-          const parsedPlan = JSON.parse(storedPlan);
-          console.log('Parsed weekly plan:', parsedPlan);
+        // Check localStorage first (most up-to-date), then Supabase as fallback
+        const localPlan = localStorage.getItem(`weekly_plan_${weekKey}`);
+        if (localPlan) {
+          const parsedPlan = JSON.parse(localPlan);
+          console.log('Parsed weekly plan from localStorage:', parsedPlan);
           setWeeklyPlan(parsedPlan);
-          console.log('Weekly plan state set successfully');
+          weeklyPlanRef.current = parsedPlan;
+          console.log('Weekly plan state set successfully from localStorage');
         } else {
-          console.log('No weekly plan found - NOT auto-generating to avoid API spam');
-          // Removed auto-generation to prevent API rate limiting
+          // Fallback to Supabase
+          const storedPlan = await dataService.get(`weekly_plan_${weekKey}`);
+          console.log('Supabase weekly plan result:', storedPlan);
+          if (storedPlan) {
+            const parsedPlan = JSON.parse(storedPlan);
+            console.log('Parsed weekly plan from Supabase:', parsedPlan);
+            setWeeklyPlan(parsedPlan);
+            weeklyPlanRef.current = parsedPlan;
+            console.log('Weekly plan state set successfully from Supabase');
+          } else {
+            console.log('No weekly plan found - NOT auto-generating to avoid API spam');
+          }
         }
       } catch (error) {
         console.error('Error loading weekly plan from Supabase:', error);
@@ -37,15 +49,51 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
         const localPlan = localStorage.getItem(`weekly_plan_${weekKey}`);
         console.log('localStorage weekly plan:', localPlan);
         if (localPlan) {
-          setWeeklyPlan(JSON.parse(localPlan));
+          const parsedPlan = JSON.parse(localPlan);
+          setWeeklyPlan(parsedPlan);
+          weeklyPlanRef.current = parsedPlan;
         } else {
           console.log('No weekly plan found in localStorage either - use Generate Weekly Plan button');
-          // Removed auto-generation to prevent API rate limiting
         }
       }
     };
 
     loadWeeklyPlan();
+    
+    // Set up interval to check for plan updates (e.g., after postponement)
+    const checkInterval = setInterval(async () => {
+      try {
+        // Check localStorage first (most up-to-date), then Supabase as fallback
+        // This ensures we get the latest plan even if Supabase save failed
+        let planToCheck = null;
+        const localPlan = localStorage.getItem(`weekly_plan_${weekKey}`);
+        if (localPlan) {
+          planToCheck = localPlan;
+        } else {
+          const storedPlan = await dataService.get(`weekly_plan_${weekKey}`).catch(() => null);
+          if (storedPlan) {
+            planToCheck = storedPlan;
+          }
+        }
+        
+        if (planToCheck) {
+          const parsedPlan = typeof planToCheck === 'string' ? JSON.parse(planToCheck) : planToCheck;
+          // Only update if plan actually changed (compare with ref to avoid dependency issues)
+          const currentPlanStr = JSON.stringify(weeklyPlanRef.current);
+          const newPlanStr = JSON.stringify(parsedPlan);
+          
+          if (currentPlanStr !== newPlanStr) {
+            console.log('Weekly plan updated detected in polling');
+            setWeeklyPlan(parsedPlan);
+            weeklyPlanRef.current = parsedPlan;
+          }
+        }
+      } catch (e) {
+        console.error('Error checking plan updates in interval:', e);
+      }
+    }, 1000); // Check every second
+    
+    return () => clearInterval(checkInterval);
   }, [apiKey]); // Removed onGenerateWeeklyPlan from dependencies to prevent infinite loops
 
   // Re-match activities when they change and reload plan
@@ -115,12 +163,19 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
     
     const hasRun = hasMatchedWorkout || dayActivities.length > 0;
     
+    // Check for postpone status
+    const postponements = weeklyPlan?._postponements || {};
+    const postponeInfo = postponements[dayName];
+    const isPostponed = !!postponeInfo && postponeInfo.postponed;
+    
     return {
       date,
       isToday,
       isPast,
       hasRun,
       hasMatchedWorkout,
+      isPostponed,
+      postponeInfo,
       dayName: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][dayOffset],
       fullDayName: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][dayOffset]
     };
@@ -212,26 +267,38 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
           
           if (!dayInfo) return null;
           
+          // Determine card styling based on state
+          let backgroundColor = 'var(--grid-color)';
+          let borderColor = dayInfo.isToday ? '2px solid var(--accent)' : '1px solid var(--border-color)';
+          let textColor = 'var(--text-color)';
+          
+          if (dayInfo.isPostponed) {
+            backgroundColor = 'rgba(255, 165, 0, 0.3)'; // Orange tint for postponed
+            borderColor = '2px solid rgba(255, 165, 0, 0.8)';
+            textColor = 'var(--text-color)';
+          } else if (dayInfo.hasMatchedWorkout || dayInfo.hasRun) {
+            backgroundColor = 'var(--accent)';
+            textColor = 'white';
+          } else if (plannedWorkout) {
+            // Show workout on any day, not just running days (for redistributed workouts)
+            backgroundColor = 'var(--card-bg)';
+          }
+          
           const cardStyle = {
             padding: '12px 8px',
             borderRadius: '8px',
             textAlign: 'center',
             fontSize: '12px',
-            cursor: (isRunDay && plannedWorkout && !dayInfo.hasRun) ? 'pointer' : 'default',
-            border: dayInfo.isToday ? '2px solid var(--accent)' : '1px solid var(--border-color)',
-            backgroundColor: dayInfo.hasMatchedWorkout 
-              ? 'var(--accent)' 
-              : dayInfo.hasRun
-                ? 'var(--accent)'
-                : isRunDay && plannedWorkout
-                  ? 'var(--card-bg)'
-                  : 'var(--grid-color)',
-            color: (dayInfo.hasMatchedWorkout || dayInfo.hasRun) ? 'white' : 'var(--text-color)',
-            opacity: dayInfo.isPast && !dayInfo.hasRun && !dayInfo.hasMatchedWorkout && isRunDay ? 0.6 : 1
+            cursor: (plannedWorkout && !dayInfo.hasRun && !dayInfo.isPostponed) ? 'pointer' : 'default',
+            border: borderColor,
+            backgroundColor: backgroundColor,
+            color: textColor,
+            opacity: dayInfo.isPast && !dayInfo.hasRun && !dayInfo.hasMatchedWorkout && isRunDay && !dayInfo.isPostponed ? 0.6 : 1,
+            position: 'relative'
           };
           
           const handleClick = () => {
-            if (isRunDay && plannedWorkout && !dayInfo.hasRun && onWorkoutClick) {
+            if (plannedWorkout && !dayInfo.hasRun && onWorkoutClick) {
               console.log('Clicking on planned workout:', plannedWorkout);
               onWorkoutClick(plannedWorkout, dayInfo.fullDayName);
             }
@@ -245,19 +312,42 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
               <div style={{ fontSize: '10px', marginBottom: '4px' }}>
                 {dayInfo.date.getDate()}
               </div>
-              <div style={{ fontSize: '10px', color: dayInfo.hasRun ? 'white' : 'var(--text-secondary)' }}>
-                {dayInfo.hasRun ? (
+              <div style={{ fontSize: '10px', color: dayInfo.hasRun ? 'white' : (dayInfo.isPostponed ? 'rgba(255, 140, 0, 1)' : 'var(--text-secondary)') }}>
+                {dayInfo.isPostponed ? (
+                  'Postponed'
+                ) : dayInfo.hasRun ? (
                   'Completed'
+                ) : plannedWorkout ? (
+                  // Show workout type for any day that has a workout (including redistributed ones)
+                  plannedWorkout.type === 'easy' ? 'Easy' : 
+                  plannedWorkout.type === 'speed' ? 'Speed' : 
+                  plannedWorkout.type === 'long' ? 'Long' : 
+                  plannedWorkout.title || 'Run'
                 ) : isRunDay ? (
-                  plannedWorkout ? (
-                    dayOffset === 1 ? 'Easy' : dayOffset === 3 ? 'Speed' : 'Long'
-                  ) : (
-                    weeklyPlan ? 'Rest' : '?'
-                  )
+                  'Rest'
                 ) : (
                   'Recovery'
                 )}
               </div>
+              {dayInfo.isPostponed && dayInfo.postponeInfo && (
+                <div 
+                  style={{ 
+                    fontSize: '9px', 
+                    color: 'rgba(255, 140, 0, 0.9)',
+                    marginTop: '4px',
+                    fontStyle: 'italic',
+                    lineHeight: '1.2',
+                    maxHeight: '24px',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis'
+                  }}
+                  title={dayInfo.postponeInfo.reason}
+                >
+                  {dayInfo.postponeInfo.reason.length > 15 
+                    ? dayInfo.postponeInfo.reason.substring(0, 15) + '...' 
+                    : dayInfo.postponeInfo.reason}
+                </div>
+              )}
             </div>
           );
         })}

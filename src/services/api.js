@@ -307,22 +307,6 @@ Do NOT include any conversational text. Return ONLY the JSON structure above wit
         ]
       };
 
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/6638e027-4723-4b24-b270-caaa7c40bae9', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId: 'debug-session',
-          runId: 'pre-fix-1',
-          hypothesisId: 'H9',
-          location: 'api.js:generateWorkout:networkFallbackRecovery',
-          message: 'Using built-in fallback recovery workout after network error',
-          data: {},
-          timestamp: Date.now()
-        })
-      }).catch(() => {});
-      // #endregion
-
       return fallback;
     }
 
@@ -541,16 +525,21 @@ Generate a complete weekly training plan for Monday through Sunday. The week fol
 
 IMPORTANT: Only generate detailed workouts for the 3 running days (Tuesday, Thursday, Sunday). For recovery days, just note "Recovery exercises - generate day-of with workout button".
 
+CRITICAL REQUIREMENT - EVERY WORKOUT BLOCK MUST HAVE:
+- "distance" field: MUST be present for EVERY block (e.g., "1.5 miles", "3-4 miles", "0.5 miles")
+- "pace" field: MUST be present for EVERY block (e.g., "10:30-11:00/mile", "8:00-8:30/mile", "11:00+/mile")
+- These fields are REQUIRED and NON-OPTIONAL for all blocks in all running workouts
+
 Each running workout should have detailed blocks with:
-- Warm-up protocol (distance, pace, HR guidance)
-- Main set with precise distances, target paces, rest intervals
-- Cool-down protocol
-- Estimated total distance and time
+- Warm-up protocol (REQUIRED: distance AND pace, plus HR guidance)
+- Main set with precise distances, target paces, rest intervals (REQUIRED: distance AND pace)
+- Cool-down protocol (REQUIRED: distance AND pace)
+- Duration and heart rate guidance (optional but recommended)
 - Key coaching cues for execution
 
 The plan should be challenging but safe, pushing the athlete while preventing injury. Base intensity adjustments on the rating analysis above.
 
-Return the response in this exact JSON format:
+Return the response in this exact JSON format (NOTE: distance and pace are REQUIRED for every block):
 {
   "weekTitle": "Week [X] Training Plan - [Date Range]",
   "monday": null,
@@ -586,16 +575,62 @@ Return the response in this exact JSON format:
   "thursday": {
     "title": "Speed Work",
     "type": "speed",
-    "blocks": [...]
+    "blocks": [
+      {
+        "title": "Warm-up",
+        "distance": "1.5 miles",
+        "pace": "10:00-10:30/mile",
+        "duration": "15 minutes",
+        "notes": "Easy jog to warm up"
+      },
+      {
+        "title": "Main Set",
+        "distance": "2 miles",
+        "pace": "7:30-8:00/mile",
+        "duration": "15-16 minutes",
+        "notes": "4x400m intervals at target pace"
+      },
+      {
+        "title": "Cool-down",
+        "distance": "1 mile",
+        "pace": "11:00+/mile",
+        "duration": "10 minutes",
+        "notes": "Easy jog and stretch"
+      }
+    ]
   },
   "friday": null,
   "saturday": null,
   "sunday": {
     "title": "Long Run",
     "type": "long",
-    "blocks": [...]
+    "blocks": [
+      {
+        "title": "Warm-up",
+        "distance": "1 mile",
+        "pace": "10:30-11:00/mile",
+        "duration": "10-11 minutes",
+        "notes": "Easy start"
+      },
+      {
+        "title": "Main Set",
+        "distance": "7-8 miles",
+        "pace": "9:30-10:00/mile",
+        "duration": "75-80 minutes",
+        "notes": "Steady aerobic pace"
+      },
+      {
+        "title": "Cool-down",
+        "distance": "0.5 miles",
+        "pace": "11:00+/mile",
+        "duration": "5 minutes",
+        "notes": "Easy walk/jog"
+      }
+    ]
   }
-}`;
+}
+
+REMINDER: Every single block in every running workout MUST have both "distance" and "pace" fields. Do not omit these fields under any circumstances.`;
 
   const response = await fetch(OPENAI_API_URL, {
     method: 'POST',
@@ -616,21 +651,125 @@ Return the response in this exact JSON format:
 
   if (!response.ok) throw new Error(`OpenAI API error: ${response.status}`);
   
-  const data = await response.json();
-  const content = data.choices[0].message.content;
+  // Validation function to check all blocks have distance and pace
+  const validatePlanBlocks = (plan) => {
+    const runningDays = ['tuesday', 'thursday', 'sunday'];
+    const missingFields = [];
+    
+    for (const day of runningDays) {
+      const workout = plan[day];
+      if (!workout || !workout.blocks || !Array.isArray(workout.blocks)) {
+        continue;
+      }
+      
+      for (let i = 0; i < workout.blocks.length; i++) {
+        const block = workout.blocks[i];
+        if (!block.distance || block.distance.trim() === '') {
+          missingFields.push(`${day}.blocks[${i}].distance`);
+        }
+        if (!block.pace || block.pace.trim() === '') {
+          missingFields.push(`${day}.blocks[${i}].pace`);
+        }
+      }
+    }
+    
+    return {
+      isValid: missingFields.length === 0,
+      missingFields
+    };
+  };
   
-  try {
-    // Try to parse JSON response
+  // Function to parse and validate a plan from content
+  const parseAndValidatePlan = (content) => {
     const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const plan = JSON.parse(jsonMatch[0]);
-      // Attach rating analysis for later use in weekly analysis
+    if (!jsonMatch) {
+      throw new Error('No JSON found in response');
+    }
+    
+    const plan = JSON.parse(jsonMatch[0]);
+    const validation = validatePlanBlocks(plan);
+    
+    return { plan, validation, content };
+  };
+  
+  // Function to generate plan with retry logic
+  const generatePlanWithRetry = async (messages, retryCount = 0) => {
+    const maxRetries = 2;
+    
+    try {
+      const apiResponse = await fetch(OPENAI_API_URL, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: messages,
+          temperature: 0.7,
+          max_tokens: 2000
+        })
+      });
+      
+      if (!apiResponse.ok) {
+        throw new Error(`OpenAI API error: ${apiResponse.status}`);
+      }
+      
+      const apiData = await apiResponse.json();
+      const responseContent = apiData.choices[0].message.content;
+      
+      const { plan, validation } = parseAndValidatePlan(responseContent);
+      
+      if (!validation.isValid && retryCount < maxRetries) {
+        console.warn(`Plan validation failed. Missing fields: ${validation.missingFields.join(', ')}. Retrying... (${retryCount + 1}/${maxRetries})`);
+        
+        // Create a fix prompt
+        const fixPrompt = `The previous plan was missing required fields. Please regenerate the plan ensuring EVERY block has both "distance" and "pace" fields.
+
+MISSING FIELDS TO FIX:
+${validation.missingFields.map(field => `- ${field}`).join('\n')}
+
+CRITICAL: Every single block in every running workout (Tuesday, Thursday, Sunday) MUST have:
+- "distance" field (e.g., "1.5 miles", "3-4 miles")
+- "pace" field (e.g., "10:30-11:00/mile", "8:00-8:30/mile")
+
+Do not omit these fields. Return the complete corrected plan in the same JSON format.`;
+        
+        // Retry with fix prompt - add to conversation history
+        const retryMessages = [
+          ...messages,
+          { role: 'assistant', content: responseContent },
+          { role: 'user', content: fixPrompt }
+        ];
+        
+        return generatePlanWithRetry(retryMessages, retryCount + 1);
+      }
+      
+      // Plan is valid or we've exhausted retries
       plan._ratingAnalysis = ratingAnalysis;
       return plan;
+      
+    } catch (error) {
+      if (retryCount < maxRetries && error.message.includes('No JSON found')) {
+        console.warn(`JSON parsing failed. Retrying... (${retryCount + 1}/${maxRetries})`);
+        // Retry with same messages
+        return generatePlanWithRetry(messages, retryCount + 1);
+      }
+      throw error;
     }
-    throw new Error('No JSON found in response');
+  };
+  
+  // Initial messages
+  const initialMessages = [
+    { role: 'system', content: basePrompt },
+    { role: 'user', content: 'Generate this week\'s complete training plan with detailed workouts for Tuesday, Thursday, and Sunday. Adjust intensity based on the rating analysis provided.' }
+  ];
+  
+  try {
+    const plan = await generatePlanWithRetry(initialMessages);
+    return plan;
   } catch (parseError) {
-    console.error('Failed to parse weekly plan JSON:', parseError);
+    console.error('Failed to parse weekly plan JSON after retries:', parseError);
     // Fallback to simple structure if JSON parsing fails
     const today = new Date();
     const monday = new Date(today);
@@ -639,12 +778,45 @@ Return the response in this exact JSON format:
     const fallbackPlan = {
       weekTitle: `Week Training Plan - ${monday.toLocaleDateString()}`,
       monday: null,
-      tuesday: { title: "Easy Run", type: "easy", blocks: [{ title: "Easy 4-5 miles", notes: "Conversational pace, HR 150-160 bpm" }] },
+      tuesday: { 
+        title: "Easy Run", 
+        type: "easy", 
+        blocks: [
+          { 
+            title: "Easy Run", 
+            distance: "4-5 miles",
+            pace: "10:00-10:30/mile",
+            notes: "Conversational pace, HR 150-160 bpm" 
+          }
+        ] 
+      },
       wednesday: null,
-      thursday: { title: "Speed Work", type: "speed", blocks: [{ title: "Track Intervals", notes: "4x400m with 90s rest, warm-up and cool-down" }] },
+      thursday: { 
+        title: "Speed Work", 
+        type: "speed", 
+        blocks: [
+          { 
+            title: "Track Intervals", 
+            distance: "2 miles",
+            pace: "7:30-8:00/mile",
+            notes: "4x400m with 90s rest, warm-up and cool-down" 
+          }
+        ] 
+      },
       friday: null,
       saturday: null,
-      sunday: { title: "Long Run", type: "long", blocks: [{ title: "Long 8-9 miles", notes: "Steady aerobic pace, build endurance" }] }
+      sunday: { 
+        title: "Long Run", 
+        type: "long", 
+        blocks: [
+          { 
+            title: "Long Run", 
+            distance: "8-9 miles",
+            pace: "9:30-10:00/mile",
+            notes: "Steady aerobic pace, build endurance" 
+          }
+        ] 
+      }
     };
     fallbackPlan._ratingAnalysis = ratingAnalysis;
     return fallbackPlan;
@@ -870,6 +1042,257 @@ Generate ONLY the encouraging message, nothing else.`;
         avgRating: avgRating ? avgRating.toFixed(1) : null
       }
     };
+  }
+};
+
+export const adjustWeeklyPlanForPostponement = async (apiKey, currentPlan, postponedDay, postponeReason, postponeAdjustment, activities = []) => {
+  const savedPrompt = localStorage.getItem('coaching_prompt') || 'You are an expert running coach.';
+  let basePrompt = updatePromptWithCurrentData(savedPrompt, activities);
+  
+  // Get the postponed workout details - check postpone info first for original workout
+  const postponeInfo = currentPlan._postponements?.[postponedDay];
+  const postponedWorkout = postponeInfo?.originalWorkout || currentPlan[postponedDay];
+  
+  // Determine which workouts are already completed or scheduled
+  const today = new Date();
+  const dayOfWeek = today.getDay();
+  const dayNameMap = {
+    0: 'sunday',
+    1: 'monday',
+    2: 'tuesday',
+    3: 'wednesday',
+    4: 'thursday',
+    5: 'friday',
+    6: 'saturday'
+  };
+  const currentDayName = dayNameMap[dayOfWeek];
+  
+  // Build context about current plan state - show what the plan was BEFORE postponement
+  // This helps the AI understand what needs to be redistributed
+  const planContext = {
+    weekTitle: currentPlan.weekTitle || 'Weekly Training Plan',
+    monday: currentPlan.monday,
+    tuesday: currentPlan.tuesday,
+    wednesday: currentPlan.wednesday,
+    thursday: currentPlan.thursday,
+    friday: currentPlan.friday,
+    saturday: currentPlan.saturday,
+    sunday: currentPlan.sunday
+  };
+  
+  // CRITICAL: If the postponed day is already null, restore it temporarily for context
+  // so the AI knows what workout was postponed and needs to be redistributed
+  if (!planContext[postponedDay] && postponedWorkout) {
+    planContext[postponedDay] = postponedWorkout;
+  }
+  
+  // Determine which days are in the past (already passed)
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+  monday.setHours(0, 0, 0, 0);
+  
+  const pastDays = [];
+  const futureDays = [];
+  Object.keys(dayNameMap).forEach(dayNum => {
+    const dayName = dayNameMap[dayNum];
+    const dayDate = new Date(monday);
+    dayDate.setDate(monday.getDate() + parseInt(dayNum));
+    dayDate.setHours(0, 0, 0, 0);
+    
+    if (dayDate < today) {
+      pastDays.push(dayName);
+    } else if (dayDate > today) {
+      futureDays.push(dayName);
+    }
+  });
+  
+  // Safely stringify plan context and postponed workout
+  let planContextStr = '{}';
+  let postponedWorkoutStr = 'null';
+  
+  try {
+    planContextStr = JSON.stringify(planContext, null, 2);
+  } catch (e) {
+    console.error('Error stringifying planContext:', e);
+    planContextStr = JSON.stringify({
+      weekTitle: planContext.weekTitle,
+      monday: planContext.monday,
+      tuesday: planContext.tuesday,
+      wednesday: planContext.wednesday,
+      thursday: planContext.thursday,
+      friday: planContext.friday,
+      saturday: planContext.saturday,
+      sunday: planContext.sunday
+    }, null, 2);
+  }
+  
+  try {
+    postponedWorkoutStr = postponedWorkout ? JSON.stringify(postponedWorkout, null, 2) : 'null';
+  } catch (e) {
+    console.error('Error stringifying postponedWorkout:', e);
+    postponedWorkoutStr = 'null';
+  }
+  
+  basePrompt += `\n\nWEEKLY PLAN ADJUSTMENT FOR POSTPONEMENT:
+
+The athlete postponed their ${postponedDay} workout with reason: "${postponeReason}"
+Adjustment type: ${postponeAdjustment || 'same'}
+
+CURRENT WEEKLY PLAN:
+${planContextStr}
+
+POSTPONED WORKOUT DETAILS:
+${postponedWorkoutStr}
+
+IMPORTANT CONTEXT:
+- Today is ${currentDayName} (day ${dayOfWeek})
+- Past days (cannot reschedule to): ${pastDays.join(', ')}
+- Future days available: ${futureDays.join(', ')}
+- Preferred workout days: Tuesday, Thursday, Sunday (try to maintain this structure)
+- If needed, workouts can be moved to other days to avoid overtraining
+- **CRITICAL**: The athlete will be fine the next day - do NOT cancel or reduce other scheduled workouts unless absolutely necessary for overtraining prevention. The postpone reason (e.g., being sick today) does NOT mean they need extra rest days beyond the postponed day.
+
+ADJUSTMENT REQUIREMENTS:
+1. **CRITICAL**: The postponed ${postponedDay} workout (shown in POSTPONED WORKOUT DETAILS above) MUST be redistributed to other days in the week. Do NOT simply remove it or return the same plan.
+2. **MAINTAIN SAME NUMBER OF WORKOUTS**: The adjusted plan must have the SAME total number of workouts as the original plan. If the original had 3 workouts (Tuesday, Thursday, Sunday), the adjusted plan must also have 3 workouts total. Do NOT add the postponed workout as a 4th workout - it must be MOVED or COMBINED with existing workouts.
+3. **REDISTRIBUTION STRATEGY**: 
+   - Start by moving the postponed workout to the next available workout day (e.g., if ${postponedDay} is postponed, move it to the next scheduled run day, REPLACING or COMBINING with that day's workout)
+   - If adding it to the next day would create too much load (e.g., two hard workouts back-to-back), then rearrange the rest of the week to distribute the load more evenly
+   - You can: (a) Move the postponed workout to replace another day's workout, (b) Combine the postponed workout with an existing workout (making it longer), or (c) Split the postponed workout and distribute parts to multiple days
+   - DO NOT simply add the postponed workout as an additional workout - it must replace, combine with, or be split into existing workouts
+4. **CRITICAL - PRESERVE ALL EXISTING WORKOUTS**: All workouts that exist in the CURRENT WEEKLY PLAN (except the postponed ${postponedDay}) MUST be accounted for in your adjusted plan. You can move them to different days, combine them with the postponed workout, or modify them, but the total number of distinct workout days should remain the same (typically 3: Tuesday/Thursday/Sunday or redistributed to maintain 3 total).
+5. **DO NOT cancel other scheduled workouts** - the athlete will be fine the next day. Only redistribute, don't remove workouts.
+6. Maintain weekly training volume and intensity goals - redistribute the postponed workout, don't reduce overall training
+7. Avoid overtraining - don't stack too many hard workouts together, but DO redistribute the postponed workout
+8. Consider the postpone reason when adjusting intensity:
+   ${postponeAdjustment === 'easier' ? '- Reduce intensity by 10-15% due to fatigue/soreness' : ''}
+   ${postponeAdjustment === 'reduce' ? '- Significantly reduce volume (20-30% less) - athlete found workout too challenging' : ''}
+   ${postponeAdjustment === 'recovery' ? '- Convert to easy recovery run or recovery exercises' : ''}
+   ${postponeAdjustment === 'same' ? '- Keep similar intensity since postpone was due to external factors (busy, weather, temporary illness)' : ''}
+7. Prefer keeping Tuesday, Thursday, Sunday structure, but allow flexibility if needed
+8. Don't push workouts to next week - keep everything within this week
+9. **IMPORTANT**: The adjusted plan MUST be different from the original - workouts must be moved, combined, or redistributed. Do not return the same plan structure.
+10. **DO NOT interpret the postpone reason as needing extra rest days** - if the athlete postponed ${postponedDay} due to being sick, they will be fine the next day. Redistribute ${postponedDay}'s workout, don't cancel other scheduled workouts.
+
+Return the adjusted plan in the exact same JSON format:
+{
+  "weekTitle": "[Updated Week Title]",
+  "monday": null or { workout },
+  "tuesday": { workout } or null,
+  "wednesday": null,
+  "thursday": { workout } or null,
+  "friday": null,
+  "saturday": null,
+  "sunday": { workout } or null
+}
+
+IMPORTANT: The ${postponedDay} day in your response MUST be null (since it was postponed), but the workout content from ${postponedDay} MUST appear on other days in the week.
+
+EXAMPLE: If ${postponedDay}'s "Easy Run" (3 miles) was postponed, and the original plan had:
+- Tuesday: Easy Run (3 miles) - POSTPONED
+- Thursday: Speed Work (1.5 miles)
+- Sunday: Long Run (6 miles)
+Total: 3 workouts
+
+Your adjusted plan should have EXACTLY 3 workouts total (not 4):
+- Tuesday: null (postponed)
+- Wednesday: Easy Run (3 miles) - moved from Tuesday (REPLACES Tuesday, not added)
+- Thursday: Speed Work (1.5 miles) - KEEP THIS
+- Sunday: Long Run (6 miles) - KEEP THIS
+Total: 3 workouts (Wednesday, Thursday, Sunday)
+
+OR if combining is better:
+- Tuesday: null (postponed)
+- Thursday: Speed Work (1.5 miles) + Easy Run (3 miles combined) - combined into one longer workout
+- Sunday: Long Run (6 miles) - KEEP THIS
+Total: 2 workouts (but this reduces volume, so prefer the first option)
+
+**CRITICAL**: The total number of workout days must remain the same (typically 3). Do NOT add the postponed workout as a 4th workout - it must REPLACE or COMBINE with existing workouts.
+
+CRITICAL: Every workout block MUST have both "distance" and "pace" fields. Do not omit these fields.`;
+
+  try {
+    const requestBody = {
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: basePrompt },
+        { role: 'user', content: `Adjust the weekly plan to account for the postponed ${postponedDay} workout. Redistribute workouts intelligently while maintaining training goals and avoiding overtraining.` }
+      ],
+      temperature: 0.7,
+      max_tokens: 2000
+    };
+    
+    
+    const response = await fetch(OPENAI_API_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(requestBody)
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('OpenAI API error response:', errorText);
+      throw new Error(`OpenAI API error: ${response.status} - ${errorText.substring(0, 200)}`);
+    }
+    
+    const data = await response.json();
+    const content = data.choices[0].message.content;
+    
+    try {
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const adjustedPlan = JSON.parse(jsonMatch[0]);
+        
+        console.log('Parsed adjusted plan from AI:', adjustedPlan);
+        
+        // Preserve postpone information and other metadata
+        adjustedPlan._postponements = currentPlan._postponements || {};
+        adjustedPlan._activityMatches = currentPlan._activityMatches || {};
+        adjustedPlan._ratingAnalysis = currentPlan._ratingAnalysis;
+        
+        // Validate that the plan actually changed
+        const originalPlanStr = JSON.stringify({
+          monday: currentPlan.monday,
+          tuesday: currentPlan.tuesday,
+          wednesday: currentPlan.wednesday,
+          thursday: currentPlan.thursday,
+          friday: currentPlan.friday,
+          saturday: currentPlan.saturday,
+          sunday: currentPlan.sunday
+        });
+        const adjustedPlanStr = JSON.stringify({
+          monday: adjustedPlan.monday,
+          tuesday: adjustedPlan.tuesday,
+          wednesday: adjustedPlan.wednesday,
+          thursday: adjustedPlan.thursday,
+          friday: adjustedPlan.friday,
+          saturday: adjustedPlan.saturday,
+          sunday: adjustedPlan.sunday
+        });
+        
+        
+        if (originalPlanStr === adjustedPlanStr) {
+          console.warn('Adjusted plan is identical to original. AI may not have redistributed workouts.');
+        } else {
+          console.log('Plan successfully adjusted. Workouts redistributed.');
+        }
+        
+        return adjustedPlan;
+      }
+      throw new Error('No JSON found in response');
+    } catch (parseError) {
+      console.error('Failed to parse adjusted plan JSON:', parseError);
+      console.error('Response content:', content);
+      // Return original plan if parsing fails
+      return currentPlan;
+    }
+  } catch (error) {
+    console.error('Failed to adjust weekly plan for postponement:', error);
+    // Return original plan on error
+    return currentPlan;
   }
 };
 

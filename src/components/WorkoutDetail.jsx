@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useSwipeBack } from '../hooks/useSwipeBack';
 
-const WorkoutDetail = ({ workout, onBack, onPostpone, postponeDisabled, postponeReason }) => {
+const WorkoutDetail = ({ workout, onBack, onPostpone, postponeDisabled, postponeReason, pendingPostpone }) => {
   const [completedBlocks, setCompletedBlocks] = useState(new Set());
   const swipeBackRef = useSwipeBack(onBack);
 
@@ -160,15 +160,29 @@ const WorkoutDetail = ({ workout, onBack, onPostpone, postponeDisabled, postpone
                 fontSize: '14px', 
                 padding: '12px 20px',
                 opacity: postponeDisabled ? 0.5 : 1,
-                cursor: postponeDisabled ? 'not-allowed' : 'pointer'
+                cursor: postponeDisabled ? 'not-allowed' : 'pointer',
+                backgroundColor: pendingPostpone ? 'var(--accent)' : undefined,
+                color: pendingPostpone ? 'white' : undefined
               }}
             >
-              {postponeDisabled 
-                ? (postponeReason === 'not_run_day' 
-                    ? 'Can Only Postpone on Scheduled Run Day' 
-                    : 'Postponed Today')
-                : 'Postpone Workout'}
+              {pendingPostpone 
+                ? 'Postpone Pending - Exit to Confirm'
+                : postponeDisabled 
+                  ? (postponeReason === 'not_run_day' 
+                      ? 'Can Only Postpone on Scheduled Run Day' 
+                      : 'Postponed Today')
+                  : 'Postpone Workout'}
             </button>
+            {pendingPostpone && (
+              <div style={{ 
+                marginTop: '8px', 
+                fontSize: '12px', 
+                color: 'var(--text-secondary)',
+                fontStyle: 'italic'
+              }}>
+                Click the back button to confirm postponement
+              </div>
+            )}
             {postponeDisabled && postponeReason === 'not_run_day' && (
               <div style={{ 
                 marginTop: '8px', 
