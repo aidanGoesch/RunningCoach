@@ -50,6 +50,7 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
         if (parsedPlan) {
           // CRITICAL: If Supabase plan doesn't have postpone info, check if localStorage does and merge it
           // This handles the case where postpone was set on one device but Supabase doesn't have it yet
+          // MUST happen BEFORE setWeeklyPlan so state includes postpone info
           if (!parsedPlan._postponements || Object.keys(parsedPlan._postponements).length === 0) {
             const localPlanWithPostpone = localStorage.getItem(`weekly_plan_${weekKey}`);
             // #region agent log
@@ -66,6 +67,8 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
                   parsedPlan._postponements = localParsed._postponements;
                   // Save merged plan to Supabase
                   await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan)).catch(() => {});
+                  // Also update localStorage to keep them in sync
+                  localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan));
                   console.log('Merged postpone info from localStorage into Supabase plan');
                   // #region agent log
                   fetch('http://127.0.0.1:7242/ingest/6638e027-4723-4b24-b270-caaa7c40bae9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'WeeklyPlan.jsx:63','message':'Merged postpone info from localStorage',data:{weekKey,postponementsKeys:Object.keys(parsedPlan._postponements)},timestamp:Date.now(),runId:'merge-postpone',hypothesisId:'I'})}).catch(()=>{});
@@ -120,6 +123,11 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
             }
           }
           
+          // Log postpone info before setting state to verify merge worked
+          console.log('Setting weekly plan state with postpone info:', !!parsedPlan._postponements, parsedPlan._postponements);
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/6638e027-4723-4b24-b270-caaa7c40bae9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'WeeklyPlan.jsx:126','message':'Setting weekly plan state',data:{hasPostponements:!!parsedPlan._postponements,postponementsKeys:parsedPlan._postponements?Object.keys(parsedPlan._postponements):[],planHasTuesday:!!parsedPlan.tuesday},timestamp:Date.now(),runId:'set-state',hypothesisId:'I'})}).catch(()=>{});
+          // #endregion
           setWeeklyPlan(parsedPlan);
           weeklyPlanRef.current = parsedPlan;
           console.log('Weekly plan state set successfully');
@@ -182,8 +190,15 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
           const currentPlanStr = JSON.stringify(weeklyPlanRef.current);
           const newPlanStr = JSON.stringify(parsedPlan);
           
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/6638e027-4723-4b24-b270-caaa7c40bae9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'WeeklyPlan.jsx:185','message':'Polling check',data:{currentHasPostponements:!!weeklyPlanRef.current?._postponements,newHasPostponements:!!parsedPlan._postponements,plansEqual:currentPlanStr===newPlanStr},timestamp:Date.now(),runId:'polling-check',hypothesisId:'I'})}).catch(()=>{});
+          // #endregion
+          
           if (currentPlanStr !== newPlanStr) {
             console.log('Weekly plan updated detected in polling');
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/6638e027-4723-4b24-b270-caaa7c40bae9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'WeeklyPlan.jsx:190','message':'Polling updating state',data:{hasPostponements:!!parsedPlan._postponements,postponementsKeys:parsedPlan._postponements?Object.keys(parsedPlan._postponements):[]},timestamp:Date.now(),runId:'polling-update',hypothesisId:'I'})}).catch(()=>{});
+            // #endregion
             setWeeklyPlan(parsedPlan);
             weeklyPlanRef.current = parsedPlan;
           }
