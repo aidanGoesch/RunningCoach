@@ -356,12 +356,21 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
       const localPlan = localStorage.getItem(`weekly_plan_${weekKey}`);
       if (localPlan) {
         try {
+          const parsedLocal = JSON.parse(localPlan);
+          console.log('Uploading plan to Supabase with postpone info:', !!parsedLocal._postponements, parsedLocal._postponements);
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/6638e027-4723-4b24-b270-caaa7c40bae9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'WeeklyPlan.jsx:356','message':'Uploading plan to Supabase',data:{weekKey,hasPostponements:!!parsedLocal._postponements,postponementsKeys:parsedLocal._postponements?Object.keys(parsedLocal._postponements):[]},timestamp:Date.now(),runId:'manual-upload',hypothesisId:'I'})}).catch(()=>{});
+          // #endregion
           await dataService.set(`weekly_plan_${weekKey}`, localPlan);
           console.log('Successfully uploaded weekly plan to Supabase!');
-          // Reload the plan
+          // Reload the plan to verify it was saved correctly
           const storedPlan = await dataService.get(`weekly_plan_${weekKey}`);
           if (storedPlan) {
             const parsedPlan = JSON.parse(storedPlan);
+            console.log('Verified uploaded plan has postpone info:', !!parsedPlan._postponements, parsedPlan._postponements);
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/6638e027-4723-4b24-b270-caaa7c40bae9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'WeeklyPlan.jsx:365','message':'Verified uploaded plan',data:{hasPostponements:!!parsedPlan._postponements,postponementsKeys:parsedPlan._postponements?Object.keys(parsedPlan._postponements):[]},timestamp:Date.now(),runId:'verify-upload',hypothesisId:'I'})}).catch(()=>{});
+            // #endregion
             setWeeklyPlan(parsedPlan);
             weeklyPlanRef.current = parsedPlan;
           }
