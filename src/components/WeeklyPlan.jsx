@@ -22,28 +22,31 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
       try {
         // Prioritize Supabase (shared across devices), then localStorage as fallback
         let parsedPlan = null;
-        const storedPlan = await dataService.get(`weekly_plan_${weekKey}`).catch(() => null);
+        let storedPlan = null;
+        try {
+          storedPlan = await dataService.get(`weekly_plan_${weekKey}`);
+        } catch (error) {
+          console.log('Supabase get failed, falling back to localStorage:', error.message);
+        }
         
         if (storedPlan) {
           parsedPlan = JSON.parse(storedPlan);
           console.log('Loaded weekly plan from Supabase:', parsedPlan);
           console.log('Supabase plan has postpone info:', !!parsedPlan._postponements, parsedPlan._postponements);
-          
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/6638e027-4723-4b24-b270-caaa7c40bae9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'WeeklyPlan.jsx:28','message':'Loaded plan from Supabase',data:{weekKey,hasPostponements:!!parsedPlan._postponements,postponementsKeys:parsedPlan._postponements?Object.keys(parsedPlan._postponements):[],hasLocalStoragePlan:!!localStorage.getItem(`weekly_plan_${weekKey}`)},timestamp:Date.now(),runId:'supabase-load',hypothesisId:'I'})}).catch(()=>{});
-          // #endregion
-        } else {
-          // Fallback to localStorage
+          console.log('Supabase plan postpone keys:', parsedPlan._postponements ? Object.keys(parsedPlan._postponements) : 'none');
+          console.log('Supabase plan tuesday postpone:', parsedPlan._postponements?.tuesday);
+          console.log('Supabase plan_data keys:', Object.keys(parsedPlan));
+        }
+        
+        // If Supabase failed or returned null, fallback to localStorage
+        if (!parsedPlan) {
           const localPlan = localStorage.getItem(`weekly_plan_${weekKey}`);
           if (localPlan) {
             parsedPlan = JSON.parse(localPlan);
             console.log('Loaded weekly plan from localStorage (fallback):', parsedPlan);
             console.log('LocalStorage plan has postpone info:', !!parsedPlan._postponements, parsedPlan._postponements);
-            // Upload to Supabase so it's available on other devices
-            await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan)).catch(() => {});
-            // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/6638e027-4723-4b24-b270-caaa7c40bae9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'WeeklyPlan.jsx:35','message':'Uploaded localStorage plan to Supabase',data:{weekKey,hasPostponements:!!parsedPlan._postponements,postponementsKeys:parsedPlan._postponements?Object.keys(parsedPlan._postponements):[]},timestamp:Date.now(),runId:'upload-to-supabase',hypothesisId:'I'})}).catch(()=>{});
-            // #endregion
+            // Try to upload to Supabase in background (don't wait for it)
+            dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan)).catch(() => {});
           }
         }
         
@@ -53,15 +56,9 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
           // MUST happen BEFORE setWeeklyPlan so state includes postpone info
           if (!parsedPlan._postponements || Object.keys(parsedPlan._postponements).length === 0) {
             const localPlanWithPostpone = localStorage.getItem(`weekly_plan_${weekKey}`);
-            // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/6638e027-4723-4b24-b270-caaa7c40bae9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'WeeklyPlan.jsx:52','message':'Checking for postpone info in localStorage',data:{weekKey,hasLocalPlan:!!localPlanWithPostpone},timestamp:Date.now(),runId:'merge-check',hypothesisId:'I'})}).catch(()=>{});
-            // #endregion
             if (localPlanWithPostpone) {
               try {
                 const localParsed = JSON.parse(localPlanWithPostpone);
-                // #region agent log
-                fetch('http://127.0.0.1:7242/ingest/6638e027-4723-4b24-b270-caaa7c40bae9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'WeeklyPlan.jsx:56','message':'Parsed localStorage plan',data:{hasPostponements:!!localParsed._postponements,postponementsKeys:localParsed._postponements?Object.keys(localParsed._postponements):[]},timestamp:Date.now(),runId:'merge-check',hypothesisId:'I'})}).catch(()=>{});
-                // #endregion
                 if (localParsed._postponements && Object.keys(localParsed._postponements).length > 0) {
                   // localStorage has postpone info but Supabase plan doesn't - merge it
                   parsedPlan._postponements = localParsed._postponements;
@@ -70,9 +67,6 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
                   // Also update localStorage to keep them in sync
                   localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan));
                   console.log('Merged postpone info from localStorage into Supabase plan');
-                  // #region agent log
-                  fetch('http://127.0.0.1:7242/ingest/6638e027-4723-4b24-b270-caaa7c40bae9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'WeeklyPlan.jsx:63','message':'Merged postpone info from localStorage',data:{weekKey,postponementsKeys:Object.keys(parsedPlan._postponements)},timestamp:Date.now(),runId:'merge-postpone',hypothesisId:'I'})}).catch(()=>{});
-                  // #endregion
                 }
               } catch (e) {
                 console.error('Failed to check localStorage plan:', e);
@@ -123,11 +117,6 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
             }
           }
           
-          // Log postpone info before setting state to verify merge worked
-          console.log('Setting weekly plan state with postpone info:', !!parsedPlan._postponements, parsedPlan._postponements);
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/6638e027-4723-4b24-b270-caaa7c40bae9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'WeeklyPlan.jsx:126','message':'Setting weekly plan state',data:{hasPostponements:!!parsedPlan._postponements,postponementsKeys:parsedPlan._postponements?Object.keys(parsedPlan._postponements):[],planHasTuesday:!!parsedPlan.tuesday},timestamp:Date.now(),runId:'set-state',hypothesisId:'I'})}).catch(()=>{});
-          // #endregion
           setWeeklyPlan(parsedPlan);
           weeklyPlanRef.current = parsedPlan;
           console.log('Weekly plan state set successfully');
@@ -190,15 +179,8 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
           const currentPlanStr = JSON.stringify(weeklyPlanRef.current);
           const newPlanStr = JSON.stringify(parsedPlan);
           
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/6638e027-4723-4b24-b270-caaa7c40bae9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'WeeklyPlan.jsx:185','message':'Polling check',data:{currentHasPostponements:!!weeklyPlanRef.current?._postponements,newHasPostponements:!!parsedPlan._postponements,plansEqual:currentPlanStr===newPlanStr},timestamp:Date.now(),runId:'polling-check',hypothesisId:'I'})}).catch(()=>{});
-          // #endregion
-          
           if (currentPlanStr !== newPlanStr) {
             console.log('Weekly plan updated detected in polling');
-            // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/6638e027-4723-4b24-b270-caaa7c40bae9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'WeeklyPlan.jsx:190','message':'Polling updating state',data:{hasPostponements:!!parsedPlan._postponements,postponementsKeys:parsedPlan._postponements?Object.keys(parsedPlan._postponements):[]},timestamp:Date.now(),runId:'polling-update',hypothesisId:'I'})}).catch(()=>{});
-            // #endregion
             setWeeklyPlan(parsedPlan);
             weeklyPlanRef.current = parsedPlan;
           }
@@ -341,9 +323,6 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
 
   const weeklyStats = getWeeklyStats();
 
-  console.log('WeeklyPlan render - weeklyPlan:', weeklyPlan);
-  console.log('WeeklyPlan render - currentWeek:', currentWeek);
-  console.log('WeeklyPlan render - _postponements:', weeklyPlan?._postponements);
   
   // Expose function to manually upload plan to Supabase (for debugging)
   useEffect(() => {
@@ -358,9 +337,6 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
         try {
           const parsedLocal = JSON.parse(localPlan);
           console.log('Uploading plan to Supabase with postpone info:', !!parsedLocal._postponements, parsedLocal._postponements);
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/6638e027-4723-4b24-b270-caaa7c40bae9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'WeeklyPlan.jsx:356','message':'Uploading plan to Supabase',data:{weekKey,hasPostponements:!!parsedLocal._postponements,postponementsKeys:parsedLocal._postponements?Object.keys(parsedLocal._postponements):[]},timestamp:Date.now(),runId:'manual-upload',hypothesisId:'I'})}).catch(()=>{});
-          // #endregion
           await dataService.set(`weekly_plan_${weekKey}`, localPlan);
           console.log('Successfully uploaded weekly plan to Supabase!');
           // Reload the plan to verify it was saved correctly
@@ -368,9 +344,6 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
           if (storedPlan) {
             const parsedPlan = JSON.parse(storedPlan);
             console.log('Verified uploaded plan has postpone info:', !!parsedPlan._postponements, parsedPlan._postponements);
-            // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/6638e027-4723-4b24-b270-caaa7c40bae9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'WeeklyPlan.jsx:365','message':'Verified uploaded plan',data:{hasPostponements:!!parsedPlan._postponements,postponementsKeys:parsedPlan._postponements?Object.keys(parsedPlan._postponements):[]},timestamp:Date.now(),runId:'verify-upload',hypothesisId:'I'})}).catch(()=>{});
-            // #endregion
             setWeeklyPlan(parsedPlan);
             weeklyPlanRef.current = parsedPlan;
           }
