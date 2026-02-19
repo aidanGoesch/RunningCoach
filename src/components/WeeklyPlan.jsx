@@ -52,9 +52,15 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
           // This handles the case where postpone was set on one device but Supabase doesn't have it yet
           if (!parsedPlan._postponements || Object.keys(parsedPlan._postponements).length === 0) {
             const localPlanWithPostpone = localStorage.getItem(`weekly_plan_${weekKey}`);
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/6638e027-4723-4b24-b270-caaa7c40bae9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'WeeklyPlan.jsx:52','message':'Checking for postpone info in localStorage',data:{weekKey,hasLocalPlan:!!localPlanWithPostpone},timestamp:Date.now(),runId:'merge-check',hypothesisId:'I'})}).catch(()=>{});
+            // #endregion
             if (localPlanWithPostpone) {
               try {
                 const localParsed = JSON.parse(localPlanWithPostpone);
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/6638e027-4723-4b24-b270-caaa7c40bae9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'WeeklyPlan.jsx:56','message':'Parsed localStorage plan',data:{hasPostponements:!!localParsed._postponements,postponementsKeys:localParsed._postponements?Object.keys(localParsed._postponements):[]},timestamp:Date.now(),runId:'merge-check',hypothesisId:'I'})}).catch(()=>{});
+                // #endregion
                 if (localParsed._postponements && Object.keys(localParsed._postponements).length > 0) {
                   // localStorage has postpone info but Supabase plan doesn't - merge it
                   parsedPlan._postponements = localParsed._postponements;
@@ -62,7 +68,7 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
                   await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan)).catch(() => {});
                   console.log('Merged postpone info from localStorage into Supabase plan');
                   // #region agent log
-                  fetch('http://127.0.0.1:7242/ingest/6638e027-4723-4b24-b270-caaa7c40bae9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'WeeklyPlan.jsx:52','message':'Merged postpone info from localStorage',data:{weekKey,postponementsKeys:Object.keys(parsedPlan._postponements)},timestamp:Date.now(),runId:'merge-postpone',hypothesisId:'I'})}).catch(()=>{});
+                  fetch('http://127.0.0.1:7242/ingest/6638e027-4723-4b24-b270-caaa7c40bae9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'WeeklyPlan.jsx:63','message':'Merged postpone info from localStorage',data:{weekKey,postponementsKeys:Object.keys(parsedPlan._postponements)},timestamp:Date.now(),runId:'merge-postpone',hypothesisId:'I'})}).catch(()=>{});
                   // #endregion
                 }
               } catch (e) {

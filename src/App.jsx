@@ -415,6 +415,27 @@ function App() {
         let parsedPlanForState = null;
         if (weeklyPlanData) {
           parsedPlanForState = JSON.parse(weeklyPlanData);
+          // CRITICAL: If Supabase plan doesn't have postpone info, check localStorage and merge it
+          if (!parsedPlanForState._postponements || Object.keys(parsedPlanForState._postponements).length === 0) {
+            const localPlan = localStorage.getItem(`weekly_plan_${weekKey}`);
+            if (localPlan) {
+              try {
+                const localParsed = JSON.parse(localPlan);
+                if (localParsed._postponements && Object.keys(localParsed._postponements).length > 0) {
+                  // localStorage has postpone info but Supabase plan doesn't - merge it
+                  parsedPlanForState._postponements = localParsed._postponements;
+                  // Save merged plan to Supabase
+                  await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlanForState)).catch(() => {});
+                  console.log('App.jsx: Merged postpone info from localStorage into Supabase plan');
+                  // #region agent log
+                  fetch('http://127.0.0.1:7242/ingest/6638e027-4723-4b24-b270-caaa7c40bae9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:418','message':'Merged postpone info in preload',data:{weekKey,postponementsKeys:Object.keys(parsedPlanForState._postponements)},timestamp:Date.now(),runId:'preload-merge',hypothesisId:'I'})}).catch(()=>{});
+                  // #endregion
+                }
+              } catch (e) {
+                console.error('Failed to merge postpone info in preload:', e);
+              }
+            }
+          }
         } else {
           // Fallback to localStorage if Supabase doesn't have it
           const localPlan = localStorage.getItem(`weekly_plan_${weekKey}`);
