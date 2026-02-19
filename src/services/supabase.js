@@ -154,7 +154,10 @@ export class DataService {
           if (key.startsWith('weekly_analysis_')) {
             return data?.weekly_analysis || null;
           } else if (key.startsWith('weekly_plan_')) {
-            return data ? JSON.stringify(data.plan_data) : null;
+            if (data && data.plan_data) {
+              return JSON.stringify(data.plan_data);
+            }
+            return null;
           } else if (key.startsWith('activity_insights_')) {
             return data?.insights_text || null;
           } else if (key.startsWith('recovery_workout_')) {
@@ -230,7 +233,7 @@ export class DataService {
               .upsert({
                 user_id: user.id,
                 week_start_date: weekStart,
-                plan_data: JSON.parse(value)
+                plan_data: parsedPlan
               })
           } else if (key.startsWith('weekly_analysis_')) {
             const weekStart = key.replace('weekly_analysis_', '')

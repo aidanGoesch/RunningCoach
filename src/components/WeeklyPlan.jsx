@@ -25,6 +25,49 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
         if (localPlan) {
           const parsedPlan = JSON.parse(localPlan);
           console.log('Parsed weekly plan from localStorage:', parsedPlan);
+          
+          // Try to recover postpone info from old localStorage entry if missing
+          if (!parsedPlan._postponements || Object.keys(parsedPlan._postponements).length === 0) {
+            const oldPostponeData = localStorage.getItem('postponed_workout');
+            if (oldPostponeData) {
+              try {
+                const postponeData = JSON.parse(oldPostponeData);
+                const postponeDate = new Date(postponeData.postponedDate);
+                const today = new Date();
+                const daysDiff = Math.floor((today - postponeDate) / (1000 * 60 * 60 * 24));
+                
+                // Only recover if it's within the last 7 days
+                if (daysDiff >= 0 && daysDiff < 7) {
+                  const dayNameMap = {
+                    0: 'sunday', 1: 'monday', 2: 'tuesday', 3: 'wednesday',
+                    4: 'thursday', 5: 'friday', 6: 'saturday'
+                  };
+                  const postponeDayOfWeek = postponeDate.getDay();
+                  const postponeDayName = dayNameMap[postponeDayOfWeek];
+                  
+                  if (postponeDayName) {
+                    if (!parsedPlan._postponements) {
+                      parsedPlan._postponements = {};
+                    }
+                    parsedPlan._postponements[postponeDayName] = {
+                      postponed: true,
+                      reason: postponeData.reason,
+                      date: postponeData.postponedDate,
+                      originalDay: postponeDayName,
+                      originalWorkout: postponeData.originalWorkout,
+                      adjustment: postponeData.adjustment
+                    };
+                    // Save the recovered plan
+                    localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan));
+                    console.log('Recovered postpone info from old localStorage entry for', postponeDayName);
+                  }
+                }
+              } catch (e) {
+                console.error('Failed to recover postpone info:', e);
+              }
+            }
+          }
+          
           setWeeklyPlan(parsedPlan);
           weeklyPlanRef.current = parsedPlan;
           console.log('Weekly plan state set successfully from localStorage');
@@ -35,6 +78,50 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
           if (storedPlan) {
             const parsedPlan = JSON.parse(storedPlan);
             console.log('Parsed weekly plan from Supabase:', parsedPlan);
+            
+            // Try to recover postpone info from old localStorage entry if missing
+            if (!parsedPlan._postponements || Object.keys(parsedPlan._postponements).length === 0) {
+              const oldPostponeData = localStorage.getItem('postponed_workout');
+              if (oldPostponeData) {
+                try {
+                  const postponeData = JSON.parse(oldPostponeData);
+                  const postponeDate = new Date(postponeData.postponedDate);
+                  const today = new Date();
+                  const daysDiff = Math.floor((today - postponeDate) / (1000 * 60 * 60 * 24));
+                  
+                  // Only recover if it's within the last 7 days
+                  if (daysDiff >= 0 && daysDiff < 7) {
+                    const dayNameMap = {
+                      0: 'sunday', 1: 'monday', 2: 'tuesday', 3: 'wednesday',
+                      4: 'thursday', 5: 'friday', 6: 'saturday'
+                    };
+                    const postponeDayOfWeek = postponeDate.getDay();
+                    const postponeDayName = dayNameMap[postponeDayOfWeek];
+                    
+                    if (postponeDayName) {
+                      if (!parsedPlan._postponements) {
+                        parsedPlan._postponements = {};
+                      }
+                      parsedPlan._postponements[postponeDayName] = {
+                        postponed: true,
+                        reason: postponeData.reason,
+                        date: postponeData.postponedDate,
+                        originalDay: postponeDayName,
+                        originalWorkout: postponeData.originalWorkout,
+                        adjustment: postponeData.adjustment
+                      };
+                      // Save the recovered plan
+                      localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan));
+                      await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan)).catch(() => {});
+                      console.log('Recovered postpone info from old localStorage entry for', postponeDayName);
+                    }
+                  }
+                } catch (e) {
+                  console.error('Failed to recover postpone info:', e);
+                }
+              }
+            }
+            
             setWeeklyPlan(parsedPlan);
             weeklyPlanRef.current = parsedPlan;
             console.log('Weekly plan state set successfully from Supabase');
@@ -78,6 +165,23 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
         
         if (planToCheck) {
           const parsedPlan = typeof planToCheck === 'string' ? JSON.parse(planToCheck) : planToCheck;
+          
+          // CRITICAL: If the new plan doesn't have postpone info but current plan does, preserve it
+          const currentHasPostponements = weeklyPlanRef.current?._postponements && Object.keys(weeklyPlanRef.current._postponements).length > 0;
+          const newHasPostponements = parsedPlan._postponements && Object.keys(parsedPlan._postponements).length > 0;
+          
+          if (currentHasPostponements && !newHasPostponements) {
+            parsedPlan._postponements = weeklyPlanRef.current._postponements;
+            // Save the corrected plan immediately
+            localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan));
+            dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan)).catch(() => {});
+            console.log('Preserved postpone info in polling - plan was missing postpone data');
+            // Update state with preserved postpone info
+            weeklyPlanRef.current = parsedPlan;
+            setWeeklyPlan(parsedPlan);
+            return; // Skip further comparison since we've already updated
+          }
+          
           // Only update if plan actually changed (compare with ref to avoid dependency issues)
           const currentPlanStr = JSON.stringify(weeklyPlanRef.current);
           const newPlanStr = JSON.stringify(parsedPlan);
@@ -184,6 +288,12 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
   const getPlannedWorkout = (dayOffset) => {
     if (!weeklyPlan) return null;
     const dayName = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'][dayOffset];
+    // If this day is postponed, always return null (don't show workout even if AI put one back)
+    const postponements = weeklyPlan._postponements || {};
+    const postponeInfo = postponements[dayName];
+    if (postponeInfo && postponeInfo.postponed) {
+      return null;
+    }
     return weeklyPlan[dayName];
   };
 
@@ -222,6 +332,7 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
 
   console.log('WeeklyPlan render - weeklyPlan:', weeklyPlan);
   console.log('WeeklyPlan render - currentWeek:', currentWeek);
+  console.log('WeeklyPlan render - _postponements:', weeklyPlan?._postponements);
 
   return (
     <div className="workout-display" style={{ marginBottom: '20px' }}>
@@ -267,12 +378,19 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
           
           if (!dayInfo) return null;
           
+          // CRITICAL: Check postpone status first, even if there's a workout
+          // This ensures postponed days always show as postponed, even if AI put a workout back
+          const dayName = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'][dayOffset];
+          const postponements = weeklyPlan?._postponements || {};
+          const postponeInfo = postponements[dayName];
+          const isPostponed = !!postponeInfo && postponeInfo.postponed;
+          
           // Determine card styling based on state
           let backgroundColor = 'var(--grid-color)';
           let borderColor = dayInfo.isToday ? '2px solid var(--accent)' : '1px solid var(--border-color)';
           let textColor = 'var(--text-color)';
           
-          if (dayInfo.isPostponed) {
+          if (isPostponed) {
             backgroundColor = 'rgba(255, 165, 0, 0.3)'; // Orange tint for postponed
             borderColor = '2px solid rgba(255, 165, 0, 0.8)';
             textColor = 'var(--text-color)';
@@ -289,16 +407,16 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
             borderRadius: '8px',
             textAlign: 'center',
             fontSize: '12px',
-            cursor: (plannedWorkout && !dayInfo.hasRun && !dayInfo.isPostponed) ? 'pointer' : 'default',
+            cursor: (plannedWorkout && !dayInfo.hasRun && !isPostponed) ? 'pointer' : 'default',
             border: borderColor,
             backgroundColor: backgroundColor,
             color: textColor,
-            opacity: dayInfo.isPast && !dayInfo.hasRun && !dayInfo.hasMatchedWorkout && isRunDay && !dayInfo.isPostponed ? 0.6 : 1,
+            opacity: dayInfo.isPast && !dayInfo.hasRun && !dayInfo.hasMatchedWorkout && isRunDay && !isPostponed ? 0.6 : 1,
             position: 'relative'
           };
           
           const handleClick = () => {
-            if (plannedWorkout && !dayInfo.hasRun && onWorkoutClick) {
+            if (plannedWorkout && !dayInfo.hasRun && !isPostponed && onWorkoutClick) {
               console.log('Clicking on planned workout:', plannedWorkout);
               onWorkoutClick(plannedWorkout, dayInfo.fullDayName);
             }
@@ -312,8 +430,8 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
               <div style={{ fontSize: '10px', marginBottom: '4px' }}>
                 {dayInfo.date.getDate()}
               </div>
-              <div style={{ fontSize: '10px', color: dayInfo.hasRun ? 'white' : (dayInfo.isPostponed ? 'rgba(255, 140, 0, 1)' : 'var(--text-secondary)') }}>
-                {dayInfo.isPostponed ? (
+              <div style={{ fontSize: '10px', color: dayInfo.hasRun ? 'white' : (isPostponed ? 'rgba(255, 140, 0, 1)' : 'var(--text-secondary)') }}>
+                {isPostponed ? (
                   'Postponed'
                 ) : dayInfo.hasRun ? (
                   'Completed'
@@ -329,25 +447,6 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
                   'Recovery'
                 )}
               </div>
-              {dayInfo.isPostponed && dayInfo.postponeInfo && (
-                <div 
-                  style={{ 
-                    fontSize: '9px', 
-                    color: 'rgba(255, 140, 0, 0.9)',
-                    marginTop: '4px',
-                    fontStyle: 'italic',
-                    lineHeight: '1.2',
-                    maxHeight: '24px',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis'
-                  }}
-                  title={dayInfo.postponeInfo.reason}
-                >
-                  {dayInfo.postponeInfo.reason.length > 15 
-                    ? dayInfo.postponeInfo.reason.substring(0, 15) + '...' 
-                    : dayInfo.postponeInfo.reason}
-                </div>
-              )}
             </div>
           );
         })}

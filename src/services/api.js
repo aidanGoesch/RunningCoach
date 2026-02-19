@@ -1248,10 +1248,24 @@ CRITICAL: Every workout block MUST have both "distance" and "pace" fields. Do no
         
         console.log('Parsed adjusted plan from AI:', adjustedPlan);
         
-        // Preserve postpone information and other metadata
-        adjustedPlan._postponements = currentPlan._postponements || {};
+        // Always preserve postpone information and other metadata (merge to ensure nothing is lost)
+        // CRITICAL: Preserve ALL postpone info from currentPlan, including past postponements
+        adjustedPlan._postponements = {
+          ...(adjustedPlan._postponements || {}),
+          ...(currentPlan._postponements || {})
+        };
+        
+        
         adjustedPlan._activityMatches = currentPlan._activityMatches || {};
         adjustedPlan._ratingAnalysis = currentPlan._ratingAnalysis;
+        
+        // CRITICAL: Ensure any postponed days are explicitly set to null (AI might put workouts back)
+        const postponements = adjustedPlan._postponements || {};
+        for (const dayName in postponements) {
+          if (postponements[dayName] && postponements[dayName].postponed) {
+            adjustedPlan[dayName] = null;
+          }
+        }
         
         // Validate that the plan actually changed
         const originalPlanStr = JSON.stringify({

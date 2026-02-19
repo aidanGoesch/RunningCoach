@@ -507,13 +507,21 @@ function App() {
                 finalActivities
               );
               
-              // Preserve postpone information
-              if (!adjustedPlan._postponements) {
-                adjustedPlan._postponements = parsedPlanForState._postponements;
-              }
+              // Always preserve postpone information (merge, don't replace)
+              // CRITICAL: Preserve ALL postpone info, not just today's
+              adjustedPlan._postponements = {
+                ...(adjustedPlan._postponements || {}),
+                ...(parsedPlanForState._postponements || {})
+              };
               
-              // Ensure postponed day is set to null
-              adjustedPlan[dayNameMap[dayOfWeek]] = null;
+              
+              // CRITICAL: Ensure ALL postponed days are explicitly set to null (AI might put workouts back)
+              const postponements = adjustedPlan._postponements || {};
+              for (const dayName in postponements) {
+                if (postponements[dayName] && postponements[dayName].postponed) {
+                  adjustedPlan[dayName] = null;
+                }
+              }
               
               // Re-match activities to workouts
               const activityMatches = matchActivitiesToWorkouts(finalActivities, adjustedPlan, monday);
@@ -782,23 +790,8 @@ function App() {
     const postponedWorkout = localStorage.getItem('postponed_workout');
     const currentWorkout = localStorage.getItem('current_workout');
     if (postponedWorkout && !currentWorkout) {
-      // If there's a postponed workout but no current workout, show option to generate adjusted workout
-      const postponeData = JSON.parse(postponedWorkout);
-      const postponeDate = new Date(postponeData.postponedDate);
-      const now = new Date();
-      
-      // Only show if postponed within last 2 days
-      if (now - postponeDate < 2 * 24 * 60 * 60 * 1000) {
-        setTimeout(() => {
-          if (confirm(`You postponed a workout: "${postponeData.reason}". Generate an adjusted workout now?`)) {
-            handleGenerateWorkout(false, postponeData);
-          } else {
-            localStorage.removeItem('postponed_workout');
-          }
-        }, 1000);
-      } else {
-        localStorage.removeItem('postponed_workout');
-      }
+      // Clean up old postponed workout data if it exists
+      localStorage.removeItem('postponed_workout');
     }
 
     // Auto-sync with Strava on page load if we have tokens
@@ -1237,6 +1230,7 @@ function App() {
         adjustment: postponeData.adjustment
       };
       
+      
       // Clear the workout for the postponed day (set to null)
       weeklyPlan[currentDayName] = null;
       
@@ -1265,13 +1259,20 @@ function App() {
           
           console.log('Plan regeneration completed. Adjusted plan:', adjustedPlan);
           
-          // Preserve postpone information in adjusted plan
-          if (!adjustedPlan._postponements) {
-            adjustedPlan._postponements = weeklyPlan._postponements;
-          }
+          // Always preserve postpone information (merge, don't replace)
+          adjustedPlan._postponements = {
+            ...(adjustedPlan._postponements || {}),
+            ...(weeklyPlan._postponements || {})
+          };
           
-          // Ensure postponed day is set to null in adjusted plan
-          adjustedPlan[currentDayName] = null;
+          
+          // CRITICAL: Ensure ALL postponed days are explicitly set to null (AI might put workouts back)
+          const postponements = adjustedPlan._postponements || {};
+          for (const dayName in postponements) {
+            if (postponements[dayName] && postponements[dayName].postponed) {
+              adjustedPlan[dayName] = null;
+            }
+          }
           
           // Re-match activities to workouts
           const activityMatches = matchActivitiesToWorkouts(activities, adjustedPlan, monday);
