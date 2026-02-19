@@ -27,19 +27,51 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
         if (storedPlan) {
           parsedPlan = JSON.parse(storedPlan);
           console.log('Loaded weekly plan from Supabase:', parsedPlan);
+          console.log('Supabase plan has postpone info:', !!parsedPlan._postponements, parsedPlan._postponements);
+          
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/6638e027-4723-4b24-b270-caaa7c40bae9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'WeeklyPlan.jsx:28','message':'Loaded plan from Supabase',data:{weekKey,hasPostponements:!!parsedPlan._postponements,postponementsKeys:parsedPlan._postponements?Object.keys(parsedPlan._postponements):[],hasLocalStoragePlan:!!localStorage.getItem(`weekly_plan_${weekKey}`)},timestamp:Date.now(),runId:'supabase-load',hypothesisId:'I'})}).catch(()=>{});
+          // #endregion
         } else {
           // Fallback to localStorage
           const localPlan = localStorage.getItem(`weekly_plan_${weekKey}`);
           if (localPlan) {
             parsedPlan = JSON.parse(localPlan);
             console.log('Loaded weekly plan from localStorage (fallback):', parsedPlan);
+            console.log('LocalStorage plan has postpone info:', !!parsedPlan._postponements, parsedPlan._postponements);
             // Upload to Supabase so it's available on other devices
             await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan)).catch(() => {});
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/6638e027-4723-4b24-b270-caaa7c40bae9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'WeeklyPlan.jsx:35','message':'Uploaded localStorage plan to Supabase',data:{weekKey,hasPostponements:!!parsedPlan._postponements,postponementsKeys:parsedPlan._postponements?Object.keys(parsedPlan._postponements):[]},timestamp:Date.now(),runId:'upload-to-supabase',hypothesisId:'I'})}).catch(()=>{});
+            // #endregion
           }
         }
         
         if (parsedPlan) {
-          // Try to recover postpone info from old localStorage entry if missing
+          // CRITICAL: If Supabase plan doesn't have postpone info, check if localStorage does and merge it
+          // This handles the case where postpone was set on one device but Supabase doesn't have it yet
+          if (!parsedPlan._postponements || Object.keys(parsedPlan._postponements).length === 0) {
+            const localPlanWithPostpone = localStorage.getItem(`weekly_plan_${weekKey}`);
+            if (localPlanWithPostpone) {
+              try {
+                const localParsed = JSON.parse(localPlanWithPostpone);
+                if (localParsed._postponements && Object.keys(localParsed._postponements).length > 0) {
+                  // localStorage has postpone info but Supabase plan doesn't - merge it
+                  parsedPlan._postponements = localParsed._postponements;
+                  // Save merged plan to Supabase
+                  await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan)).catch(() => {});
+                  console.log('Merged postpone info from localStorage into Supabase plan');
+                  // #region agent log
+                  fetch('http://127.0.0.1:7242/ingest/6638e027-4723-4b24-b270-caaa7c40bae9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'WeeklyPlan.jsx:52','message':'Merged postpone info from localStorage',data:{weekKey,postponementsKeys:Object.keys(parsedPlan._postponements)},timestamp:Date.now(),runId:'merge-postpone',hypothesisId:'I'})}).catch(()=>{});
+                  // #endregion
+                }
+              } catch (e) {
+                console.error('Failed to check localStorage plan:', e);
+              }
+            }
+          }
+          
+          // Try to recover postpone info from old localStorage entry if still missing
           if (!parsedPlan._postponements || Object.keys(parsedPlan._postponements).length === 0) {
             const oldPostponeData = localStorage.getItem('postponed_workout');
             if (oldPostponeData) {
@@ -291,6 +323,38 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
   console.log('WeeklyPlan render - weeklyPlan:', weeklyPlan);
   console.log('WeeklyPlan render - currentWeek:', currentWeek);
   console.log('WeeklyPlan render - _postponements:', weeklyPlan?._postponements);
+  
+  // Expose function to manually upload plan to Supabase (for debugging)
+  useEffect(() => {
+    window.uploadWeeklyPlanToSupabase = async () => {
+      if (!currentWeek) {
+        console.error('No current week available');
+        return;
+      }
+      const weekKey = currentWeek.key;
+      const localPlan = localStorage.getItem(`weekly_plan_${weekKey}`);
+      if (localPlan) {
+        try {
+          await dataService.set(`weekly_plan_${weekKey}`, localPlan);
+          console.log('Successfully uploaded weekly plan to Supabase!');
+          // Reload the plan
+          const storedPlan = await dataService.get(`weekly_plan_${weekKey}`);
+          if (storedPlan) {
+            const parsedPlan = JSON.parse(storedPlan);
+            setWeeklyPlan(parsedPlan);
+            weeklyPlanRef.current = parsedPlan;
+          }
+        } catch (e) {
+          console.error('Failed to upload plan to Supabase:', e);
+        }
+      } else {
+        console.error('No plan found in localStorage');
+      }
+    };
+    return () => {
+      delete window.uploadWeeklyPlanToSupabase;
+    };
+  }, [currentWeek]);
 
   return (
     <div className="workout-display" style={{ marginBottom: '20px' }}>
