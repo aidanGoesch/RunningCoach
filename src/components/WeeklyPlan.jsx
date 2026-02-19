@@ -20,12 +20,25 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
     const loadWeeklyPlan = async () => {
       console.log('Loading weekly plan for key:', weekKey);
       try {
-        // Check localStorage first (most up-to-date), then Supabase as fallback
-        const localPlan = localStorage.getItem(`weekly_plan_${weekKey}`);
-        if (localPlan) {
-          const parsedPlan = JSON.parse(localPlan);
-          console.log('Parsed weekly plan from localStorage:', parsedPlan);
-          
+        // Prioritize Supabase (shared across devices), then localStorage as fallback
+        let parsedPlan = null;
+        const storedPlan = await dataService.get(`weekly_plan_${weekKey}`).catch(() => null);
+        
+        if (storedPlan) {
+          parsedPlan = JSON.parse(storedPlan);
+          console.log('Loaded weekly plan from Supabase:', parsedPlan);
+        } else {
+          // Fallback to localStorage
+          const localPlan = localStorage.getItem(`weekly_plan_${weekKey}`);
+          if (localPlan) {
+            parsedPlan = JSON.parse(localPlan);
+            console.log('Loaded weekly plan from localStorage (fallback):', parsedPlan);
+            // Upload to Supabase so it's available on other devices
+            await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan)).catch(() => {});
+          }
+        }
+        
+        if (parsedPlan) {
           // Try to recover postpone info from old localStorage entry if missing
           if (!parsedPlan._postponements || Object.keys(parsedPlan._postponements).length === 0) {
             const oldPostponeData = localStorage.getItem('postponed_workout');
@@ -57,8 +70,9 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
                       originalWorkout: postponeData.originalWorkout,
                       adjustment: postponeData.adjustment
                     };
-                    // Save the recovered plan
+                    // Save the recovered plan to both Supabase and localStorage
                     localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan));
+                    await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan)).catch(() => {});
                     console.log('Recovered postpone info from old localStorage entry for', postponeDayName);
                   }
                 }
@@ -70,64 +84,9 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
           
           setWeeklyPlan(parsedPlan);
           weeklyPlanRef.current = parsedPlan;
-          console.log('Weekly plan state set successfully from localStorage');
+          console.log('Weekly plan state set successfully');
         } else {
-          // Fallback to Supabase
-          const storedPlan = await dataService.get(`weekly_plan_${weekKey}`);
-          console.log('Supabase weekly plan result:', storedPlan);
-          if (storedPlan) {
-            const parsedPlan = JSON.parse(storedPlan);
-            console.log('Parsed weekly plan from Supabase:', parsedPlan);
-            
-            // Try to recover postpone info from old localStorage entry if missing
-            if (!parsedPlan._postponements || Object.keys(parsedPlan._postponements).length === 0) {
-              const oldPostponeData = localStorage.getItem('postponed_workout');
-              if (oldPostponeData) {
-                try {
-                  const postponeData = JSON.parse(oldPostponeData);
-                  const postponeDate = new Date(postponeData.postponedDate);
-                  const today = new Date();
-                  const daysDiff = Math.floor((today - postponeDate) / (1000 * 60 * 60 * 24));
-                  
-                  // Only recover if it's within the last 7 days
-                  if (daysDiff >= 0 && daysDiff < 7) {
-                    const dayNameMap = {
-                      0: 'sunday', 1: 'monday', 2: 'tuesday', 3: 'wednesday',
-                      4: 'thursday', 5: 'friday', 6: 'saturday'
-                    };
-                    const postponeDayOfWeek = postponeDate.getDay();
-                    const postponeDayName = dayNameMap[postponeDayOfWeek];
-                    
-                    if (postponeDayName) {
-                      if (!parsedPlan._postponements) {
-                        parsedPlan._postponements = {};
-                      }
-                      parsedPlan._postponements[postponeDayName] = {
-                        postponed: true,
-                        reason: postponeData.reason,
-                        date: postponeData.postponedDate,
-                        originalDay: postponeDayName,
-                        originalWorkout: postponeData.originalWorkout,
-                        adjustment: postponeData.adjustment
-                      };
-                      // Save the recovered plan
-                      localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan));
-                      await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan)).catch(() => {});
-                      console.log('Recovered postpone info from old localStorage entry for', postponeDayName);
-                    }
-                  }
-                } catch (e) {
-                  console.error('Failed to recover postpone info:', e);
-                }
-              }
-            }
-            
-            setWeeklyPlan(parsedPlan);
-            weeklyPlanRef.current = parsedPlan;
-            console.log('Weekly plan state set successfully from Supabase');
-          } else {
-            console.log('No weekly plan found - NOT auto-generating to avoid API spam');
-          }
+          console.log('No weekly plan found - NOT auto-generating to avoid API spam');
         }
       } catch (error) {
         console.error('Error loading weekly plan from Supabase:', error);
@@ -150,16 +109,15 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
     // Set up interval to check for plan updates (e.g., after postponement)
     const checkInterval = setInterval(async () => {
       try {
-        // Check localStorage first (most up-to-date), then Supabase as fallback
-        // This ensures we get the latest plan even if Supabase save failed
+        // Prioritize Supabase (shared across devices), then localStorage as fallback
         let planToCheck = null;
-        const localPlan = localStorage.getItem(`weekly_plan_${weekKey}`);
-        if (localPlan) {
-          planToCheck = localPlan;
+        const storedPlan = await dataService.get(`weekly_plan_${weekKey}`).catch(() => null);
+        if (storedPlan) {
+          planToCheck = storedPlan;
         } else {
-          const storedPlan = await dataService.get(`weekly_plan_${weekKey}`).catch(() => null);
-          if (storedPlan) {
-            planToCheck = storedPlan;
+          const localPlan = localStorage.getItem(`weekly_plan_${weekKey}`);
+          if (localPlan) {
+            planToCheck = localPlan;
           }
         }
         

@@ -411,13 +411,17 @@ function App() {
         }
         
         // Store weekly plan in state for checking postpone status
+        // Prioritize Supabase data (already loaded above), fallback to localStorage
         let parsedPlanForState = null;
         if (weeklyPlanData) {
           parsedPlanForState = JSON.parse(weeklyPlanData);
         } else {
+          // Fallback to localStorage if Supabase doesn't have it
           const localPlan = localStorage.getItem(`weekly_plan_${weekKey}`);
           if (localPlan) {
             parsedPlanForState = JSON.parse(localPlan);
+            // Upload to Supabase so it's available on other devices
+            await dataService.set(`weekly_plan_${weekKey}`, localPlan).catch(() => {});
           }
         }
         
