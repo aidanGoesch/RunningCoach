@@ -196,14 +196,27 @@ export class DataService {
 
       case 'strava_activities':
         const activities = JSON.parse(value || '[]')
-        for (const activity of activities) {
-          await supabase
+        // Batch upsert all activities at once with proper conflict resolution
+        if (activities.length > 0) {
+          const activityRecords = activities.map(activity => ({
+            user_id: user.id,
+            strava_activity_id: activity.id,
+            activity_data: activity
+          }))
+          
+          // Upsert with conflict resolution - try composite key first (most common pattern)
+          // This will update existing records or insert new ones
+          const { error } = await supabase
             .from('strava_activities')
-            .upsert({
-              user_id: user.id,
-              strava_activity_id: activity.id,
-              activity_data: activity
+            .upsert(activityRecords, {
+              onConflict: 'user_id,strava_activity_id'
             })
+          
+          // 409 errors (duplicate key) are expected when records already exist
+          // Only log actual errors, not conflicts
+          if (error && error.code !== '23505' && error.status !== 409 && error.message && !error.message.includes('duplicate')) {
+            console.error('Error upserting activities:', error)
+          }
         }
         break
 
@@ -233,7 +246,7 @@ export class DataService {
               .upsert({
                 user_id: user.id,
                 week_start_date: weekStart,
-                plan_data: parsedPlan
+                plan_data: JSON.parse(value)
               })
           } else if (key.startsWith('weekly_analysis_')) {
             const weekStart = key.replace('weekly_analysis_', '')
