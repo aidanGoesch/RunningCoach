@@ -27,7 +27,6 @@ function App() {
   const [selectedPlannedWorkout, setSelectedPlannedWorkout] = useState(null);
   const [showFeedback, setShowFeedback] = useState(false);
   const [showPostpone, setShowPostpone] = useState(false);
-  const [pendingPostpone, setPendingPostpone] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [darkMode, setDarkMode] = useState(localStorage.getItem('darkMode') === 'true');
   const [isInjured, setIsInjured] = useState(localStorage.getItem('isInjured') === 'true');
@@ -244,11 +243,6 @@ function App() {
           setShowFeedback(true);
           setSelectedActivityId(null);
           setShowPostpone(false);
-          setShowWorkoutDetail(false);
-        } else if (event.state.view === 'postpone') {
-          setShowPostpone(true);
-          setSelectedActivityId(null);
-          setShowFeedback(false);
           setShowWorkoutDetail(false);
         } else {
           // Main view
@@ -1343,10 +1337,6 @@ function App() {
       setWorkout(null);
       localStorage.removeItem('current_workout');
       
-      setShowPostpone(false);
-      // Update browser history
-      window.history.pushState({ view: 'main' }, '', window.location.pathname);
-      
       // Show confirmation
       setError(null);
       setTimeout(() => {
@@ -1504,19 +1494,15 @@ function App() {
     }
   };
 
-  if (showWorkoutDetail) {
+  // Full-screen workout detail view (with optional postpone sheet)
+  if (showWorkoutDetail && workout) {
     const workoutToShow = selectedPlannedWorkout ? selectedPlannedWorkout.workout : workout;
     const title = selectedPlannedWorkout ? `${selectedPlannedWorkout.dayName} - ${workoutToShow.title}` : workoutToShow.title;
     
-    console.log('Showing workout detail:', { workoutToShow, title, selectedPlannedWorkout });
-    
     // Check if this workout can be postponed
-    // For planned workouts, check if today matches the workout's scheduled day
-    // For current workout, check if today is a scheduled run day
     let canPostpone = false;
     let isTodayPostponed = false;
     
-    // Check if today was postponed in the weekly plan
     const today = new Date();
     const dayOfWeek = today.getDay();
     const dayNameMap = {
@@ -1535,7 +1521,6 @@ function App() {
       isTodayPostponed = !!postponeInfo && postponeInfo.postponed;
     }
     
-    // Also check old localStorage postpone data for backward compatibility
     const oldPostponeData = localStorage.getItem('postponed_workout');
     if (oldPostponeData && !isTodayPostponed) {
       try {
@@ -1545,7 +1530,6 @@ function App() {
         todayStart.setHours(0, 0, 0, 0);
         const todayEnd = new Date(today);
         todayEnd.setHours(23, 59, 59, 999);
-        // Check if postpone was today
         if (postponeDate >= todayStart && postponeDate <= todayEnd) {
           isTodayPostponed = true;
         }
@@ -1555,82 +1539,48 @@ function App() {
     }
     
     if (selectedPlannedWorkout) {
-      // For planned workouts, check if today is the scheduled day
       const dayNameMapFull = { 'Monday': 1, 'Tuesday': 2, 'Wednesday': 3, 'Thursday': 4, 'Friday': 5, 'Saturday': 6, 'Sunday': 0 };
       const scheduledDay = dayNameMapFull[selectedPlannedWorkout.dayName];
       canPostpone = scheduledDay === dayOfWeek;
     } else {
-      // For current workout, check if today is a scheduled run day
       canPostpone = isScheduledRunDay();
     }
     
     const handleBack = () => {
-      if (pendingPostpone) {
-        // Show postpone menu when trying to exit with pending postpone
-        setShowPostpone(true);
-        updateDailyUsage('postponed');
-        window.history.pushState({ view: 'postpone' }, '', window.location.pathname);
-      } else {
-        setShowWorkoutDetail(false);
-        setSelectedPlannedWorkout(null);
-      }
+      setShowWorkoutDetail(false);
+      setSelectedPlannedWorkout(null);
     };
 
     return (
-      <WorkoutDetail 
-        workout={{ ...workoutToShow, title }}
-        onBack={handleBack}
-        onPostpone={() => {
-          // Set pending postpone instead of showing menu immediately
-          setPendingPostpone(true);
-          updateDailyUsage('postponed');
-        }}
-        postponeDisabled={isTodayPostponed || dailyUsage.postponed || !canPostpone}
-        postponeReason={isTodayPostponed || dailyUsage.postponed ? 'already_postponed' : (!canPostpone ? 'not_run_day' : null)}
-        pendingPostpone={pendingPostpone}
-      />
-    );
-  }
+      <div className="app">
+        <WorkoutDetail 
+          workout={{ ...workoutToShow, title }}
+          onBack={handleBack}
+          onPostpone={() => {
+            setShowPostpone(true);
+          }}
+          postponeDisabled={isTodayPostponed || dailyUsage.postponed || !canPostpone}
+          postponeReason={isTodayPostponed || dailyUsage.postponed ? 'already_postponed' : (!canPostpone ? 'not_run_day' : null)}
+        />
 
-  if (showPostpone && workout) {
-    return (
-      <PostponeWorkout 
-        workout={workout}
-        onPostpone={(postponeData) => {
-          handlePostponeWorkout(postponeData);
-          setPendingPostpone(false); // Clear pending state after confirmation
-        }}
-        onCancel={() => {
-          setShowPostpone(false);
-          setPendingPostpone(false); // Clear pending state on cancel
-        }}
-      />
-    );
-  }
-
-  if (showFeedback && workout) {
-    return (
-      <WorkoutFeedback 
-        workout={workout}
-        onSubmit={handleWorkoutFeedback}
-        onBack={() => {
-          setShowFeedback(false);
-          window.history.pushState({ view: 'main' }, '', window.location.pathname);
-        }}
-      />
-    );
-  }
-
-  if (isStravaCallback) {
-    return <StravaCallback onAuthComplete={handleStravaAuthComplete} />;
-  }
-
-  if (selectedActivityId) {
-    return (
-      <ActivityDetail 
-        activityId={selectedActivityId} 
-        onBack={() => setSelectedActivityId(null)} 
-      />
+        {/* Postpone Workout Bottom Sheet (over workout detail) */}
+        {showPostpone && (
+          <PostponeWorkout 
+            workout={workoutToShow}
+            onPostpone={async (postponeData) => {
+              await handlePostponeWorkout(postponeData);
+              updateDailyUsage('postponed');
+              setShowPostpone(false);
+              setShowWorkoutDetail(false);
+              setSelectedPlannedWorkout(null);
+              window.history.pushState({ view: 'main' }, '', window.location.pathname);
+            }}
+            onCancel={() => {
+              setShowPostpone(false);
+            }}
+          />
+        )}
+      </div>
     );
   }
 
