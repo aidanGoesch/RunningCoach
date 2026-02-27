@@ -992,7 +992,7 @@ const MileSplitPaceBarChart = ({ data }) => {
     ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--label-color').trim();
     ctx.font = '12px sans-serif';
     ctx.save();
-    ctx.translate(26, paddingTop + plotHeight / 2);
+    ctx.translate(40, paddingTop + plotHeight / 2);
     ctx.rotate(-Math.PI / 2);
     ctx.textAlign = 'center';
     ctx.fillText('Mile', 0, 0);
@@ -1078,10 +1078,12 @@ const MileSplitPaceBarChart = ({ data }) => {
 
 const HeartRateChart = ({ data, xAxisMode = 'time' }) => {
   const canvasRef = useRef(null);
+  const containerRef = useRef(null);
   const [tooltip, setTooltip] = useState(null);
   const [cursorX, setCursorX] = useState(null);
+  const [isMouseDown, setIsMouseDown] = useState(false);
   
-  const handleMouseMove = (e) => {
+  const updateTooltip = (e) => {
     const canvas = canvasRef.current;
     if (!canvas || !data.heartrate?.data) return;
     if (xAxisMode === 'time' && !data.time?.data) return;
@@ -1119,8 +1121,7 @@ const HeartRateChart = ({ data, xAxisMode = 'time' }) => {
       }
       
       setTooltip({
-        x: e.clientX,
-        y: e.clientY - 80,
+        x: x, // Store relative x position within canvas
         text: `${hr} bpm${xAxisValue ? ` • ${xAxisValue}` : ''}`
       });
       
@@ -1128,7 +1129,46 @@ const HeartRateChart = ({ data, xAxisMode = 'time' }) => {
     }
   };
   
+  const handleMouseDown = (e) => {
+    setIsMouseDown(true);
+    updateTooltip(e);
+  };
+  
+  const handleMouseMove = (e) => {
+    if (isMouseDown) {
+      updateTooltip(e);
+    }
+  };
+  
+  const handleMouseUp = () => {
+    setIsMouseDown(false);
+    setTooltip(null);
+    setCursorX(null);
+  };
+  
   const handleMouseLeave = () => {
+    setIsMouseDown(false);
+    setTooltip(null);
+    setCursorX(null);
+  };
+  
+  const handleTouchStart = (e) => {
+    e.preventDefault();
+    setIsMouseDown(true);
+    const touch = e.touches[0];
+    updateTooltip({ clientX: touch.clientX, clientY: touch.clientY });
+  };
+  
+  const handleTouchMove = (e) => {
+    if (isMouseDown) {
+      e.preventDefault();
+      const touch = e.touches[0];
+      updateTooltip({ clientX: touch.clientX, clientY: touch.clientY });
+    }
+  };
+  
+  const handleTouchEnd = () => {
+    setIsMouseDown(false);
     setTooltip(null);
     setCursorX(null);
   };
@@ -1247,7 +1287,7 @@ const HeartRateChart = ({ data, xAxisMode = 'time' }) => {
     
     ctx.save();
     // Shift Y-axis title right so it doesn't clip on full-bleed mobile charts
-    ctx.translate(28, height / 2);
+    ctx.translate(36, height / 2);
     ctx.rotate(-Math.PI / 2);
     ctx.fillText('Heart Rate (bpm)', 0, 0);
     ctx.restore();
@@ -1303,40 +1343,60 @@ const HeartRateChart = ({ data, xAxisMode = 'time' }) => {
   return (
     <div className="workout-display">
       <div className="workout-title">Heart Rate</div>
-      <div style={{ position: 'relative' }}>
+      <div ref={containerRef} style={{ position: 'relative', marginLeft: '8px' }}>
         <canvas
           className="mobile-wide-chart"
           ref={canvasRef}
+          onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseLeave}
-          onTouchMove={(e) => {
-            e.preventDefault();
-            const touch = e.touches[0];
-            handleMouseMove({ clientX: touch.clientX, clientY: touch.clientY });
-          }}
-          onTouchEnd={handleMouseLeave}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
           style={{ width: '100%', height: 'var(--chart-height)', borderRadius: '8px', cursor: 'crosshair' }}
         />
-        {tooltip && (
-          <div
-            style={{
-              position: 'fixed',
-              left: tooltip.x,
-              top: tooltip.y,
-              background: 'var(--card-bg)',
-              border: '1px solid var(--border-color)',
-              borderRadius: '4px',
-              padding: '4px 8px',
-              fontSize: '12px',
-              color: 'var(--text-color)',
-              pointerEvents: 'none',
-              zIndex: 1000,
-              boxShadow: '0 2px 8px var(--shadow)'
-            }}
-          >
-            {tooltip.text}
-          </div>
-        )}
+        {tooltip && (() => {
+          const container = containerRef.current;
+          const containerWidth = container ? container.getBoundingClientRect().width : 0;
+          const estimatedTooltipWidth = 120; // Estimate for tooltip width
+          const tooltipHalfWidth = estimatedTooltipWidth / 2;
+          const margin = 4; // Small margin to prevent touching edge
+          
+          // Calculate tooltip position to prevent right edge overflow
+          let leftPos = tooltip.x;
+          let transform = 'translateX(-50%)';
+          
+          // Only adjust if tooltip's right edge would overflow container
+          if (tooltip.x + tooltipHalfWidth > containerWidth - margin) {
+            // Tooltip would overflow right edge, align right edge with container right edge
+            leftPos = containerWidth - estimatedTooltipWidth - margin;
+            transform = 'translateX(0)';
+          }
+          
+          return (
+            <div
+              style={{
+                position: 'absolute',
+                left: `${leftPos}px`,
+                top: '-20px',
+                transform: transform,
+                background: 'var(--card-bg)',
+                border: '1px solid var(--border-color)',
+                borderRadius: '4px',
+                padding: '4px 8px',
+                fontSize: '12px',
+                color: 'var(--text-color)',
+                pointerEvents: 'none',
+                zIndex: 1000,
+                boxShadow: '0 2px 8px var(--shadow)',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              {tooltip.text}
+            </div>
+          );
+        })()}
       </div>
     </div>
   );
@@ -1344,10 +1404,12 @@ const HeartRateChart = ({ data, xAxisMode = 'time' }) => {
 
 const PaceChart = ({ data, xAxisMode = 'time' }) => {
   const canvasRef = useRef(null);
+  const containerRef = useRef(null);
   const [tooltip, setTooltip] = useState(null);
   const [cursorX, setCursorX] = useState(null);
+  const [isMouseDown, setIsMouseDown] = useState(false);
   
-  const handleMouseMove = (e) => {
+  const updateTooltip = (e) => {
     const canvas = canvasRef.current;
     if (!canvas || !data.velocity_smooth?.data) return;
     if (xAxisMode === 'time' && !data.time?.data) return;
@@ -1394,8 +1456,7 @@ const PaceChart = ({ data, xAxisMode = 'time' }) => {
       }
       
       setTooltip({
-        x: e.clientX,
-        y: e.clientY - 80,
+        x: x, // Store relative x position within canvas
         text: `${mins}:${secs.toString().padStart(2, '0')}/mile${xAxisValue}`
       });
       
@@ -1403,7 +1464,46 @@ const PaceChart = ({ data, xAxisMode = 'time' }) => {
     }
   };
   
+  const handleMouseDown = (e) => {
+    setIsMouseDown(true);
+    updateTooltip(e);
+  };
+  
+  const handleMouseMove = (e) => {
+    if (isMouseDown) {
+      updateTooltip(e);
+    }
+  };
+  
+  const handleMouseUp = () => {
+    setIsMouseDown(false);
+    setTooltip(null);
+    setCursorX(null);
+  };
+  
   const handleMouseLeave = () => {
+    setIsMouseDown(false);
+    setTooltip(null);
+    setCursorX(null);
+  };
+  
+  const handleTouchStart = (e) => {
+    e.preventDefault();
+    setIsMouseDown(true);
+    const touch = e.touches[0];
+    updateTooltip({ clientX: touch.clientX, clientY: touch.clientY });
+  };
+  
+  const handleTouchMove = (e) => {
+    if (isMouseDown) {
+      e.preventDefault();
+      const touch = e.touches[0];
+      updateTooltip({ clientX: touch.clientX, clientY: touch.clientY });
+    }
+  };
+  
+  const handleTouchEnd = () => {
+    setIsMouseDown(false);
     setTooltip(null);
     setCursorX(null);
   };
@@ -1533,7 +1633,7 @@ const PaceChart = ({ data, xAxisMode = 'time' }) => {
     
     ctx.save();
     // Shift Y-axis title right so it doesn't clip on full-bleed mobile charts
-    ctx.translate(28, height / 2);
+    ctx.translate(36, height / 2);
     ctx.rotate(-Math.PI / 2);
     ctx.fillText('Pace (min/mile)', 0, 0);
     ctx.restore();
@@ -1595,40 +1695,60 @@ const PaceChart = ({ data, xAxisMode = 'time' }) => {
   return (
     <div className="workout-display">
       <div className="workout-title">Pace</div>
-      <div style={{ position: 'relative' }}>
+      <div ref={containerRef} style={{ position: 'relative', marginLeft: '8px' }}>
         <canvas
           className="mobile-wide-chart"
           ref={canvasRef}
+          onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseLeave}
-          onTouchMove={(e) => {
-            e.preventDefault();
-            const touch = e.touches[0];
-            handleMouseMove({ clientX: touch.clientX, clientY: touch.clientY });
-          }}
-          onTouchEnd={handleMouseLeave}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
           style={{ width: '100%', height: 'var(--chart-height)', borderRadius: '8px', cursor: 'crosshair' }}
         />
-        {tooltip && (
-          <div
-            style={{
-              position: 'fixed',
-              left: tooltip.x,
-              top: tooltip.y,
-              background: 'var(--card-bg)',
-              border: '1px solid var(--border-color)',
-              borderRadius: '4px',
-              padding: '4px 8px',
-              fontSize: '12px',
-              color: 'var(--text-color)',
-              pointerEvents: 'none',
-              zIndex: 1000,
-              boxShadow: '0 2px 8px var(--shadow)'
-            }}
-          >
-            {tooltip.text}
-          </div>
-        )}
+        {tooltip && (() => {
+          const container = containerRef.current;
+          const containerWidth = container ? container.getBoundingClientRect().width : 0;
+          const estimatedTooltipWidth = 120; // Estimate for tooltip width
+          const tooltipHalfWidth = estimatedTooltipWidth / 2;
+          const margin = 4; // Small margin to prevent touching edge
+          
+          // Calculate tooltip position to prevent right edge overflow
+          let leftPos = tooltip.x;
+          let transform = 'translateX(-50%)';
+          
+          // Only adjust if tooltip's right edge would overflow container
+          if (tooltip.x + tooltipHalfWidth > containerWidth - margin) {
+            // Tooltip would overflow right edge, align right edge with container right edge
+            leftPos = containerWidth - estimatedTooltipWidth - margin;
+            transform = 'translateX(0)';
+          }
+          
+          return (
+            <div
+              style={{
+                position: 'absolute',
+                left: `${leftPos}px`,
+                top: '-20px',
+                transform: transform,
+                background: 'var(--card-bg)',
+                border: '1px solid var(--border-color)',
+                borderRadius: '4px',
+                padding: '4px 8px',
+                fontSize: '12px',
+                color: 'var(--text-color)',
+                pointerEvents: 'none',
+                zIndex: 1000,
+                boxShadow: '0 2px 8px var(--shadow)',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              {tooltip.text}
+            </div>
+          );
+        })()}
       </div>
     </div>
   );
@@ -1691,10 +1811,12 @@ const formatPace = (speedMs) => {
 
 const CadenceChart = ({ data, xAxisMode = 'time' }) => {
   const canvasRef = useRef(null);
+  const containerRef = useRef(null);
   const [tooltip, setTooltip] = useState(null);
   const [cursorX, setCursorX] = useState(null);
+  const [isMouseDown, setIsMouseDown] = useState(false);
   
-  const handleMouseMove = (e) => {
+  const updateTooltip = (e) => {
     const canvas = canvasRef.current;
     if (!canvas || !data.cadence?.data) return;
     if (xAxisMode === 'time' && !data.time?.data) return;
@@ -1732,8 +1854,7 @@ const CadenceChart = ({ data, xAxisMode = 'time' }) => {
       }
       
       setTooltip({
-        x: e.clientX,
-        y: e.clientY - 80,
+        x: x, // Store relative x position within canvas
         text: `${cadence} spm${xAxisValue}`
       });
       
@@ -1741,7 +1862,46 @@ const CadenceChart = ({ data, xAxisMode = 'time' }) => {
     }
   };
   
+  const handleMouseDown = (e) => {
+    setIsMouseDown(true);
+    updateTooltip(e);
+  };
+  
+  const handleMouseMove = (e) => {
+    if (isMouseDown) {
+      updateTooltip(e);
+    }
+  };
+  
+  const handleMouseUp = () => {
+    setIsMouseDown(false);
+    setTooltip(null);
+    setCursorX(null);
+  };
+  
   const handleMouseLeave = () => {
+    setIsMouseDown(false);
+    setTooltip(null);
+    setCursorX(null);
+  };
+  
+  const handleTouchStart = (e) => {
+    e.preventDefault();
+    setIsMouseDown(true);
+    const touch = e.touches[0];
+    updateTooltip({ clientX: touch.clientX, clientY: touch.clientY });
+  };
+  
+  const handleTouchMove = (e) => {
+    if (isMouseDown) {
+      e.preventDefault();
+      const touch = e.touches[0];
+      updateTooltip({ clientX: touch.clientX, clientY: touch.clientY });
+    }
+  };
+  
+  const handleTouchEnd = () => {
+    setIsMouseDown(false);
     setTooltip(null);
     setCursorX(null);
   };
@@ -1914,7 +2074,7 @@ const CadenceChart = ({ data, xAxisMode = 'time' }) => {
     // Draw Y-axis label
     ctx.save();
     // Shift Y-axis title right so it doesn't clip on full-bleed mobile charts
-    ctx.translate(28, height / 2);
+    ctx.translate(36, height / 2);
     ctx.rotate(-Math.PI / 2);
     ctx.fillText('Cadence (spm)', 0, 0);
     ctx.restore();
@@ -1946,40 +2106,60 @@ const CadenceChart = ({ data, xAxisMode = 'time' }) => {
   return (
     <div className="workout-display">
       <div className="workout-title">Cadence</div>
-      <div style={{ position: 'relative' }}>
+      <div ref={containerRef} style={{ position: 'relative', marginLeft: '8px' }}>
         <canvas
           className="mobile-wide-chart"
           ref={canvasRef}
+          onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseLeave}
-          onTouchMove={(e) => {
-            e.preventDefault();
-            const touch = e.touches[0];
-            handleMouseMove({ clientX: touch.clientX, clientY: touch.clientY });
-          }}
-          onTouchEnd={handleMouseLeave}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
           style={{ width: '100%', height: 'var(--chart-height)', borderRadius: '8px', cursor: 'crosshair' }}
         />
-        {tooltip && (
-          <div
-            style={{
-              position: 'fixed',
-              left: tooltip.x,
-              top: tooltip.y,
-              background: 'var(--card-bg)',
-              border: '1px solid var(--border-color)',
-              borderRadius: '4px',
-              padding: '4px 8px',
-              fontSize: '12px',
-              color: 'var(--text-color)',
-              pointerEvents: 'none',
-              zIndex: 1000,
-              boxShadow: '0 2px 8px var(--shadow)'
-            }}
-          >
-            {tooltip.text}
-          </div>
-        )}
+        {tooltip && (() => {
+          const container = containerRef.current;
+          const containerWidth = container ? container.getBoundingClientRect().width : 0;
+          const estimatedTooltipWidth = 120; // Estimate for tooltip width
+          const tooltipHalfWidth = estimatedTooltipWidth / 2;
+          const margin = 4; // Small margin to prevent touching edge
+          
+          // Calculate tooltip position to prevent right edge overflow
+          let leftPos = tooltip.x;
+          let transform = 'translateX(-50%)';
+          
+          // Only adjust if tooltip's right edge would overflow container
+          if (tooltip.x + tooltipHalfWidth > containerWidth - margin) {
+            // Tooltip would overflow right edge, align right edge with container right edge
+            leftPos = containerWidth - estimatedTooltipWidth - margin;
+            transform = 'translateX(0)';
+          }
+          
+          return (
+            <div
+              style={{
+                position: 'absolute',
+                left: `${leftPos}px`,
+                top: '-20px',
+                transform: transform,
+                background: 'var(--card-bg)',
+                border: '1px solid var(--border-color)',
+                borderRadius: '4px',
+                padding: '4px 8px',
+                fontSize: '12px',
+                color: 'var(--text-color)',
+                pointerEvents: 'none',
+                zIndex: 1000,
+                boxShadow: '0 2px 8px var(--shadow)',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              {tooltip.text}
+            </div>
+          );
+        })()}
       </div>
     </div>
   );

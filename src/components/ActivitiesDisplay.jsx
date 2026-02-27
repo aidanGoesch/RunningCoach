@@ -14,10 +14,19 @@ const ActivityCard = ({ activity, onClick }) => {
     return `${minutes}:${seconds.toString().padStart(2, '0')}/mile`;
   };
 
+  const handleCardClick = (e) => {
+    e.stopPropagation();
+    onClick(activity.id);
+  };
+
   return (
     <div 
       className="workout-block clickable" 
-      onClick={() => onClick(activity.id)}
+      onClick={handleCardClick}
+      style={{
+        position: 'relative',
+        cursor: 'pointer'
+      }}
     >
       <div className="block-title">{activity.name}</div>
       <ActivityMapThumbnail 

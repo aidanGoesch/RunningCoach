@@ -105,6 +105,10 @@ const ActivityMapThumbnail = ({ activityId, onClick, activity }) => {
           keyboard: false
         }).setView(latlng[0], 13);
 
+        // Explicitly disable all click events on the map
+        map.off('click');
+        map.getContainer().style.pointerEvents = 'none';
+        
         // Add route polyline - blue color
         const polyline = L.polyline(latlng, { 
           color: '#3b82f6', 
@@ -114,6 +118,57 @@ const ActivityMapThumbnail = ({ activityId, onClick, activity }) => {
         map.fitBounds(polyline.getBounds(), { padding: [10, 10] });
         
         mapRef.current = map;
+
+        // Function to disable pointer events on all Leaflet elements
+        const disablePointerEvents = () => {
+          const mapContainer = map.getContainer();
+          
+          // Disable pointer events on all panes
+          Object.values(map._panes || {}).forEach((pane) => {
+            if (pane && pane.style) {
+              pane.style.pointerEvents = 'none';
+            }
+          });
+          
+          // Disable pointer events on all canvas elements
+          const canvases = mapContainer.querySelectorAll('canvas');
+          canvases.forEach((canvas) => {
+            canvas.style.pointerEvents = 'none';
+          });
+          
+          // Disable on any SVG elements
+          const svgs = mapContainer.querySelectorAll('svg');
+          svgs.forEach((svg) => {
+            svg.style.pointerEvents = 'none';
+          });
+          
+          // Disable on all divs within the map container (Leaflet creates many divs)
+          const divs = mapContainer.querySelectorAll('div');
+          divs.forEach((div) => {
+            div.style.pointerEvents = 'none';
+          });
+        };
+
+        // Disable pointer events immediately and after a delay
+        disablePointerEvents();
+        setTimeout(disablePointerEvents, 200);
+        setTimeout(disablePointerEvents, 500);
+
+        // Watch for new elements being added and disable pointer events on them
+        const mapContainer = map.getContainer();
+        const elementObserver = new MutationObserver(() => {
+          disablePointerEvents();
+        });
+        
+        elementObserver.observe(mapContainer, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          attributeFilter: ['style']
+        });
+        
+        // Store observer for cleanup
+        mapRef.current._elementObserver = elementObserver;
 
         // Function to update tile layer based on theme
         const updateTileLayer = () => {
@@ -163,9 +218,12 @@ const ActivityMapThumbnail = ({ activityId, onClick, activity }) => {
     return () => {
       clearTimeout(timer);
       if (mapRef.current) {
-        // Cleanup theme observer
+        // Cleanup observers
         if (mapRef.current._themeObserver) {
           mapRef.current._themeObserver.disconnect();
+        }
+        if (mapRef.current._elementObserver) {
+          mapRef.current._elementObserver.disconnect();
         }
         mapRef.current.remove();
         mapRef.current = null;
@@ -180,29 +238,26 @@ const ActivityMapThumbnail = ({ activityId, onClick, activity }) => {
         if (mapRef.current._themeObserver) {
           mapRef.current._themeObserver.disconnect();
         }
+        if (mapRef.current._elementObserver) {
+          mapRef.current._elementObserver.disconnect();
+        }
         mapRef.current.remove();
         mapRef.current = null;
       }
     };
   }, []);
 
-  // Handle click - navigate to activity detail
-  const handleClick = (e) => {
-    e.stopPropagation();
-    if (onClick) {
-      onClick(activityId);
-    }
-  };
+  // Handle click - but don't handle it here, let it bubble to parent ActivityCard
+  // The parent ActivityCard already has onClick handler that will handle the click
+
 
   return (
     <div
       ref={containerRef}
-      onClick={handleClick}
       style={{
         height: '180px',
         borderRadius: '8px',
         overflow: 'hidden',
-        cursor: 'pointer',
         position: 'relative',
         backgroundColor: 'var(--grid-color)',
         marginBottom: '12px'
@@ -210,7 +265,6 @@ const ActivityMapThumbnail = ({ activityId, onClick, activity }) => {
     >
       {isLoading && (
         <div
-          onClick={handleClick}
           style={{
             position: 'absolute',
             top: 0,
@@ -232,7 +286,6 @@ const ActivityMapThumbnail = ({ activityId, onClick, activity }) => {
       
       {hasError && (
         <div
-          onClick={handleClick}
           style={{
             position: 'absolute',
             top: 0,
@@ -260,7 +313,7 @@ const ActivityMapThumbnail = ({ activityId, onClick, activity }) => {
           style={{
             width: '100%',
             height: '100%',
-            pointerEvents: 'none' // Prevent map interactions
+            pointerEvents: 'none' // Prevent map interactions - clicks will pass through to parent
           }}
         />
       )}

@@ -1494,6 +1494,23 @@ function App() {
     }
   };
 
+  // Full-screen activity detail view
+  if (selectedActivityId) {
+    const handleBack = () => {
+      setSelectedActivityId(null);
+      window.history.pushState({ view: 'main' }, '', window.location.pathname);
+    };
+
+    return (
+      <div className="app">
+        <ActivityDetail 
+          activityId={selectedActivityId}
+          onBack={handleBack}
+        />
+      </div>
+    );
+  }
+
   // Full-screen workout detail view (with optional postpone sheet)
   if (showWorkoutDetail && workout) {
     const workoutToShow = selectedPlannedWorkout ? selectedPlannedWorkout.workout : workout;
