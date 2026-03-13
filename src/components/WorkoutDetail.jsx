@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useSwipeBack } from '../hooks/useSwipeBack';
 
-const WorkoutDetail = ({ workout, onBack, onPostpone, postponeDisabled, postponeReason, onFixWorkout, isFixingWorkout = false }) => {
+const WorkoutDetail = ({ workout, onBack, onPostpone, postponeDisabled, postponeReason, onFixWorkout, isFixingWorkout = false, onDoToday, showDoToday = false }) => {
   const [completedBlocks, setCompletedBlocks] = useState(new Set());
   const swipeBackRef = useSwipeBack(onBack);
 
@@ -150,11 +150,24 @@ const WorkoutDetail = ({ workout, onBack, onPostpone, postponeDisabled, postpone
           </div>
         </div>
 
-        {(onPostpone || onFixWorkout) && (
+        {(onPostpone || onFixWorkout || onDoToday) && (
           <div style={{ marginTop: '20px', textAlign: 'center' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
-                {onPostpone && (
+                {showDoToday && onDoToday ? (
+                  <button 
+                    className="btn btn-primary" 
+                    onClick={onDoToday}
+                    style={{ 
+                      flex: 1,
+                      fontSize: '14px', 
+                      padding: '12px 16px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Do Today
+                  </button>
+                ) : onPostpone ? (
                   <button 
                     className="btn btn-secondary" 
                     onClick={onPostpone}
@@ -173,7 +186,7 @@ const WorkoutDetail = ({ workout, onBack, onPostpone, postponeDisabled, postpone
                           : 'Postponed Today')
                       : 'Postpone'}
                   </button>
-                )}
+                ) : null}
                 {onFixWorkout && (
                   <button
                     className="btn btn-primary"

@@ -453,9 +453,9 @@ body {
     padding: 16px !important;
   }
   
-  /* Section label mobile padding */
+  /* Section label mobile padding - standardize vertical spacing */
   .section-label {
-    padding: 0 16px 8px !important;
+    padding: 16px 16px 8px !important;
     padding-left: 0 !important;
     margin-bottom: 10px !important;
   }

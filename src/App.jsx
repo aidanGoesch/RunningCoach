@@ -1645,6 +1645,7 @@ function App() {
     // Check if this workout can be postponed
     let canPostpone = false;
     let isTodayPostponed = false;
+    let isPastIncomplete = false; // Track if workout is from past and incomplete
     
     const today = new Date();
     const dayOfWeek = today.getDay();
@@ -1681,10 +1682,46 @@ function App() {
       }
     }
     
+    // Check if workout is from past and incomplete
     if (selectedPlannedWorkout) {
       const dayNameMapFull = { 'Monday': 1, 'Tuesday': 2, 'Wednesday': 3, 'Thursday': 4, 'Friday': 5, 'Saturday': 6, 'Sunday': 0 };
-      const scheduledDay = dayNameMapFull[selectedPlannedWorkout.dayName];
-      canPostpone = scheduledDay === dayOfWeek;
+      const scheduledDayOfWeek = dayNameMapFull[selectedPlannedWorkout.dayName];
+      canPostpone = scheduledDayOfWeek === dayOfWeek;
+      
+      // Calculate the date of the scheduled workout
+      const todayForCheck = new Date();
+      todayForCheck.setHours(0, 0, 0, 0);
+      const monday = new Date(todayForCheck);
+      monday.setDate(todayForCheck.getDate() - ((todayForCheck.getDay() + 6) % 7)); // Get Monday of current week
+      monday.setHours(0, 0, 0, 0);
+      
+      // Convert day of week to offset from Monday (Monday=0, Tuesday=1, ..., Sunday=6)
+      const dayOffset = scheduledDayOfWeek === 0 ? 6 : scheduledDayOfWeek - 1;
+      
+      // Calculate the date for the scheduled day
+      const scheduledDate = new Date(monday);
+      scheduledDate.setDate(monday.getDate() + dayOffset);
+      scheduledDate.setHours(0, 0, 0, 0);
+      
+      // Check if scheduled date is in the past
+      const isPast = scheduledDate < todayForCheck;
+      
+      // Check if there's an activity for that date (workout was completed)
+      const hasActivityForDate = (activities || []).some(activity => {
+        if (!activity || activity.type !== 'Run' || !activity.start_date) return false;
+        const activityDate = new Date(activity.start_date);
+        activityDate.setHours(0, 0, 0, 0);
+        return activityDate.getTime() === scheduledDate.getTime();
+      });
+      
+      // Also check activity matches from weekly plan
+      const activityMatches = weeklyPlan?._activityMatches || {};
+      const dayNameLower = selectedPlannedWorkout.dayName.toLowerCase();
+      const dayMatch = activityMatches[dayNameLower];
+      const hasMatchedActivity = !!dayMatch && dayMatch.activities && dayMatch.activities.length > 0;
+      
+      // Workout is past and incomplete if it's in the past and has no activity
+      isPastIncomplete = isPast && !hasActivityForDate && !hasMatchedActivity;
     } else {
       canPostpone = isScheduledRunDay();
     }
@@ -1735,6 +1772,77 @@ function App() {
       }
     };
 
+    const handleDoToday = async () => {
+      if (!weeklyPlan || !selectedPlannedWorkout) return;
+      
+      try {
+        const today = new Date();
+        const dayOfWeek = today.getDay();
+        const dayNameMap = {
+          0: 'sunday',
+          1: 'monday',
+          2: 'tuesday',
+          3: 'wednesday',
+          4: 'thursday',
+          5: 'friday',
+          6: 'saturday'
+        };
+        const todayDayName = dayNameMap[dayOfWeek];
+        const originalDayName = selectedPlannedWorkout.dayName.toLowerCase();
+        
+        // Get current week key
+        const monday = new Date(today);
+        monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+        monday.setHours(0, 0, 0, 0);
+        const weekKey = `${monday.getFullYear()}-${monday.getMonth()}-${monday.getDate()}`;
+        
+        // Create a copy of the weekly plan
+        const updatedPlan = { ...weeklyPlan };
+        
+        // Move the workout from original day to today
+        const workoutToMove = updatedPlan[originalDayName];
+        updatedPlan[originalDayName] = null; // Clear original day
+        updatedPlan[todayDayName] = workoutToMove; // Set today's workout
+        
+        // Clear any postpone info for today if it exists
+        if (!updatedPlan._postponements) {
+          updatedPlan._postponements = {};
+        }
+        if (updatedPlan._postponements[todayDayName]) {
+          delete updatedPlan._postponements[todayDayName];
+        }
+        
+        // Save to Supabase and localStorage
+        await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(updatedPlan));
+        localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(updatedPlan));
+        
+        // Update state
+        setWeeklyPlan(updatedPlan);
+        setWeeklyPlanRefreshKey(prev => prev + 1);
+        
+        // Set as current workout
+        setWorkout(workoutToMove);
+        await dataService.set('current_workout', JSON.stringify(workoutToMove));
+        localStorage.setItem('current_workout', JSON.stringify(workoutToMove));
+        
+        // Close workout detail view
+        setShowWorkoutDetail(false);
+        setSelectedPlannedWorkout(null);
+        window.history.pushState({ view: 'main' }, '', window.location.pathname);
+        
+        // Show confirmation
+        setError(null);
+        setTimeout(() => {
+          setError('Workout rescheduled to today!');
+          setTimeout(() => setError(null), 3000);
+        }, 100);
+      } catch (err) {
+        console.error('Error rescheduling workout to today:', err);
+        setError('Failed to reschedule workout. Please try again.');
+        setTimeout(() => setError(null), 4000);
+      }
+    };
+
     return (
       <div className="app">
         <WorkoutDetail 
@@ -1742,11 +1850,13 @@ function App() {
           onBack={handleBack}
           onFixWorkout={selectedPlannedWorkout ? handleFixWorkout : null}
           isFixingWorkout={isFixingWorkout}
-          onPostpone={() => {
+          onPostpone={isPastIncomplete ? null : () => {
             setShowPostpone(true);
           }}
           postponeDisabled={isTodayPostponed || dailyUsage.postponed || !canPostpone}
           postponeReason={isTodayPostponed || dailyUsage.postponed ? 'already_postponed' : (!canPostpone ? 'not_run_day' : null)}
+          onDoToday={isPastIncomplete ? handleDoToday : null}
+          showDoToday={isPastIncomplete}
         />
 
         {/* Postpone Workout Bottom Sheet (over workout detail) */}
