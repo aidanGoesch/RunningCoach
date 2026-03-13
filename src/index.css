@@ -19,6 +19,17 @@
   --accent-hover: #2563eb;
   --chart-height: 250px;
   --splits-chart-height: 200px;
+  
+  /* New design tokens */
+  --color-background-primary: var(--card-bg);
+  --color-background-secondary: var(--grid-color);
+  --color-background-tertiary: var(--bg-color);
+  --color-text-primary: var(--text-color);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--label-color);
+  --color-border-tertiary: rgba(0, 0, 0, 0.15);
+  --color-border-secondary: rgba(0, 0, 0, 0.3);
+  --color-border-primary: rgba(0, 0, 0, 0.4);
 }
 
 [data-theme="dark"] {
@@ -32,6 +43,17 @@
   --label-color: #6b7280;
   --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.3), 0 1px 2px 0 rgba(0, 0, 0, 0.2);
   --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.2);
+  
+  /* Dark mode design tokens */
+  --color-background-primary: var(--card-bg);
+  --color-background-secondary: var(--grid-color);
+  --color-background-tertiary: var(--bg-color);
+  --color-text-primary: var(--text-color);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--label-color);
+  --color-border-tertiary: rgba(255, 255, 255, 0.15);
+  --color-border-secondary: rgba(255, 255, 255, 0.3);
+  --color-border-primary: rgba(255, 255, 255, 0.4);
 }
 
 @media (max-width: 768px) {
@@ -403,6 +425,42 @@ body {
   box-shadow: var(--shadow-lg);
 }
 
+/* Responsive breakpoint at 720px */
+.recovery-entry-container {
+  padding: 0 24px;
+}
+
+@media (max-width: 720px) {
+  .app {
+    padding: calc(20px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-left)) calc(20px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-right));
+  }
+  
+  .recovery-entry-container {
+    padding: 0 16px;
+  }
+  
+  .dashboard-container {
+    padding: 0 16px;
+  }
+  
+  .two-column-grid {
+    grid-template-columns: 1fr !important;
+    padding: 0 16px !important;
+  }
+  
+  /* Hero section mobile padding */
+  .hero-section {
+    padding: 16px !important;
+  }
+  
+  /* Section label mobile padding */
+  .section-label {
+    padding: 0 16px 8px !important;
+    padding-left: 0 !important;
+    margin-bottom: 10px !important;
+  }
+}
+
 @media (max-width: 480px) {
   .app {
     padding: calc(20px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-left)) calc(20px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-right));
@@ -441,4 +499,89 @@ body {
 @keyframes spin {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
+}
+
+/* Typography utilities */
+.section-eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  font-weight: 400;
+}
+
+/* Spacing utilities */
+.dashboard-container {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+@media (max-width: 720px) {
+  .dashboard-container {
+    padding: 0 16px;
+  }
+}
+
+/* Spacing fix: Add margin between week strip and two-column section */
+.below-week {
+  margin-top: 32px;
+}
+
+/* Section label spacing */
+.section-label {
+  padding-top: 0;
+  margin-bottom: 10px;
+}
+
+/* Fix clipping in two-column grid */
+.below-week > * {
+  min-width: 0;
+}
+
+/* Activity list constraints */
+.activity-list {
+  width: 100%;
+  overflow: hidden;
+}
+
+.activity-row {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.act-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.act-right {
+  flex-shrink: 0;
+  min-width: 72px;
+}
+
+/* Border utilities */
+.border-tertiary {
+  border: 0.5px solid var(--color-border-tertiary);
+}
+
+.border-secondary {
+  border: 0.5px solid var(--color-border-secondary);
+}
+
+.border-primary {
+  border: 0.5px solid var(--color-border-primary);
+}
+
+.border-radius-card {
+  border-radius: 10px;
+}
+
+.border-radius-day-card {
+  border-radius: 8px;
+}
+
+.border-radius-tag {
+  border-radius: 5px;
 }

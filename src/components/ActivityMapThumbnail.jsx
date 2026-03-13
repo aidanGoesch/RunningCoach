@@ -111,7 +111,7 @@ const ActivityMapThumbnail = ({ activityId, onClick, activity }) => {
         
         // Add route polyline - blue color
         const polyline = L.polyline(latlng, { 
-          color: '#3b82f6', 
+          color: '#378ADD', 
           weight: 4 
         }).addTo(map);
         
@@ -179,22 +179,12 @@ const ActivityMapThumbnail = ({ activityId, onClick, activity }) => {
             map.removeLayer(tileLayerRef.current);
           }
 
-          // Add appropriate tile layer based on theme
-          if (theme === 'dark') {
-            // Dark Matter tiles for dark mode
-            tileLayerRef.current = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-              attribution: '',
-              subdomains: 'abcd',
-              maxZoom: 19
-            }).addTo(map);
-          } else {
-            // Light tiles for light mode
-            tileLayerRef.current = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-              attribution: '',
-              subdomains: 'abcd',
-              maxZoom: 19
-            }).addTo(map);
-          }
+          // Always use dark tiles for thumbnails
+          tileLayerRef.current = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '',
+            subdomains: 'abcd',
+            maxZoom: 19
+          }).addTo(map);
         };
 
         // Set initial tile layer
@@ -255,12 +245,11 @@ const ActivityMapThumbnail = ({ activityId, onClick, activity }) => {
     <div
       ref={containerRef}
       style={{
-        height: '180px',
-        borderRadius: '8px',
+        height: '100%',
+        width: '100%',
         overflow: 'hidden',
         position: 'relative',
-        backgroundColor: 'var(--grid-color)',
-        marginBottom: '12px'
+        backgroundColor: '#1a1f2e'
       }}
     >
       {isLoading && (
@@ -274,8 +263,8 @@ const ActivityMapThumbnail = ({ activityId, onClick, activity }) => {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            backgroundColor: 'var(--grid-color)',
-            color: 'var(--text-secondary)',
+            backgroundColor: '#1a1f2e',
+            color: '#9ca3af',
             fontSize: '14px',
             zIndex: 1
           }}
@@ -295,8 +284,8 @@ const ActivityMapThumbnail = ({ activityId, onClick, activity }) => {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            backgroundColor: 'var(--grid-color)',
-            color: 'var(--text-secondary)',
+            backgroundColor: '#1a1f2e',
+            color: '#9ca3af',
             fontSize: '12px',
             textAlign: 'center',
             padding: '20px',

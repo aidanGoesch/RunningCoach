@@ -1,119 +1,38 @@
-const WorkoutBlock = ({ block }) => {
-  return (
-    <div className="workout-block">
-      <div className="block-title">{block.title}</div>
-      <div className="block-details">
-        {block.distance && (
-          <div className="detail-item">
-            <span className="detail-label">Distance</span>
-            <span className="detail-value">{block.distance}</span>
-          </div>
-        )}
-        {block.pace && (
-          <div className="detail-item">
-            <span className="detail-label">Pace</span>
-            <span className="detail-value">{block.pace}</span>
-          </div>
-        )}
-        {block.duration && (
-          <div className="detail-item">
-            <span className="detail-label">Duration</span>
-            <span className="detail-value">{block.duration}</span>
-          </div>
-        )}
-      </div>
-      {block.notes && (
-        <div style={{ marginTop: '10px', fontSize: '14px', color: '#7f8c8d' }}>
-          {block.notes}
+import { useState, useEffect, useRef } from 'react';
+
+const WorkoutDisplay = ({ 
+  workout, 
+  onWorkoutClick, 
+  isCompleted = false, 
+  weeklyPlan,
+  onPostpone,
+  onFix,
+  isFixingWorkout = false
+}) => {
+  const [openNoteIndex, setOpenNoteIndex] = useState(null);
+  const cardRef = useRef(null);
+  // Empty state
+  if (!workout) {
+    return (
+      <div style={{
+        border: '0.5px solid var(--color-border-tertiary)',
+        borderRadius: '10px',
+        background: 'var(--color-background-primary)',
+        overflow: 'hidden',
+        padding: '40px 16px',
+        textAlign: 'center'
+      }}>
+        <div style={{
+          fontSize: '13px',
+          color: 'var(--color-text-tertiary)'
+        }}>
+          No workout planned — generate your weekly plan to get started.
         </div>
-      )}
-    </div>
-  );
-};
+      </div>
+    );
+  }
 
-const WorkoutDisplay = ({ workout, onWorkoutClick, isCompleted = false }) => {
-  if (!workout) return null;
-
-  // Calculate workout summary
-  const totalDistance = workout.blocks?.reduce((sum, block) => {
-    if (block.distance) {
-      const distanceStr = block.distance.toLowerCase().trim();
-      
-      // Handle interval formats like "4x800m" or "6x400m"
-      if (distanceStr.includes('x') && (distanceStr.includes('m') || distanceStr.includes('meter'))) {
-        const intervalMatch = distanceStr.match(/(\d+)\s*x\s*(\d+)\s*m/);
-        if (intervalMatch) {
-          const reps = parseFloat(intervalMatch[1]);
-          const meters = parseFloat(intervalMatch[2]);
-          const totalMeters = reps * meters;
-          const miles = totalMeters / 1609.34; // Convert meters to miles
-          return sum + miles;
-        }
-      }
-      
-      // Handle meters (e.g., "800m", "1600 meters")
-      if (distanceStr.includes('m') && !distanceStr.includes('mile')) {
-        const meterMatch = distanceStr.match(/(\d+\.?\d*)\s*m/);
-        if (meterMatch) {
-          const meters = parseFloat(meterMatch[1]);
-          const miles = meters / 1609.34; // Convert meters to miles
-          return sum + miles;
-        }
-      }
-      
-      // Handle range in miles (e.g., "3-4 miles")
-      if (distanceStr.includes('-') && distanceStr.includes('mile')) {
-        const rangeMatch = distanceStr.match(/(\d+\.?\d*)\s*-\s*(\d+\.?\d*)\s*mile/);
-        if (rangeMatch) {
-          const min = parseFloat(rangeMatch[1]);
-          const max = parseFloat(rangeMatch[2]);
-          return sum + ((min + max) / 2); // Use average of range
-        }
-      }
-      
-      // Handle single value in miles (e.g., "1.5 miles", "0.5 miles", "1 mile")
-      if (distanceStr.includes('mile')) {
-        const mileMatch = distanceStr.match(/(\d+\.?\d*)\s*mile/);
-        if (mileMatch) {
-          const miles = parseFloat(mileMatch[1]);
-          return sum + (isNaN(miles) ? 0 : miles);
-        }
-      }
-      
-      // Fallback: try to extract any number (assume miles if no unit specified)
-      const numberMatch = distanceStr.match(/(\d+\.?\d*)/);
-      if (numberMatch) {
-        const distance = parseFloat(numberMatch[1]);
-        // If it's a large number (>20) and no unit, might be meters - but be conservative
-        // Only assume miles if it's a reasonable number
-        if (distance <= 20) {
-          return sum + distance;
-        }
-      }
-    }
-    return sum;
-  }, 0) || 0;
-
-  const totalDuration = workout.blocks?.reduce((sum, block) => {
-    if (block.duration) {
-      // Handle ranges like "30-45 mins" by taking the average
-      const durationStr = block.duration.toLowerCase();
-      if (durationStr.includes('-')) {
-        const range = durationStr.match(/(\d+)-(\d+)/);
-        if (range) {
-          const min = parseFloat(range[1]);
-          const max = parseFloat(range[2]);
-          return sum + ((min + max) / 2);
-        }
-      }
-      // Handle single numbers
-      const duration = parseFloat(durationStr.replace(/[^\d.]/g, ''));
-      return sum + (isNaN(duration) ? 0 : duration);
-    }
-    return sum;
-  }, 0) || 0;
-
-  // Determine workout type - check workout.type first, then title, then blocks
+  // Determine workout type
   let workoutType = 'Easy Run';
   if (workout.type) {
     const type = typeof workout.type === 'string' ? workout.type.toLowerCase() : workout.type;
@@ -126,137 +45,345 @@ const WorkoutDisplay = ({ workout, onWorkoutClick, isCompleted = false }) => {
     } else if (type === 'easy' || type === 'easy run') {
       workoutType = 'Easy Run';
     }
-  } else if (workout.title) {
-    // Check title for workout type
-    const titleLower = workout.title.toLowerCase();
-    if (titleLower.includes('recovery') || titleLower.includes('pt')) {
-      workoutType = 'Recovery / PT';
-    } else if (titleLower.includes('speed') || titleLower.includes('interval') || titleLower.includes('tempo')) {
-      workoutType = 'Speed Work';
-    } else if (titleLower.includes('long')) {
-      workoutType = 'Long Run';
-    } else if (titleLower.includes('easy')) {
-      workoutType = 'Easy Run';
-    }
-  } else if (workout.blocks?.[0]?.title?.includes('Warm')) {
-    // Fallback to checking blocks
-    if (workout.blocks.find(b => b.title?.includes('Interval') || b.title?.includes('Tempo') || b.title?.includes('Speed'))) {
-      workoutType = 'Speed Work';
-    } else if (workout.blocks.find(b => b.title?.includes('Long') || b.title?.includes('Steady'))) {
-      workoutType = 'Long Run';
-    }
   }
 
-  return (
-    <div className="workout-display">
-      <div style={{ marginBottom: isCompleted ? '14px' : 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
-          <div className="workout-title">{workout.title}</div>
-          {isCompleted && (
-            <div style={{
-              padding: '8px 12px',
-              borderRadius: '999px',
-              background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.30), rgba(16, 185, 129, 0.18))',
-              border: '1px solid rgba(34, 197, 94, 0.50)',
-              color: 'var(--text-color)',
-              fontSize: '12px',
-              fontWeight: 800,
-              letterSpacing: '0.02em',
-              whiteSpace: 'nowrap',
-              boxShadow: '0 10px 30px rgba(34, 197, 94, 0.18)',
-              animation: 'completedPulse 1.8s ease-in-out infinite'
-            }}>
-              ✅ Completed
-            </div>
-          )}
-        </div>
+  // Calculate target summary (pace range, zone, duration)
+  const getTargetSummary = () => {
+    if (!workout.blocks || workout.blocks.length === 0) return '';
+    
+    // Try to find pace from first non-warmup block
+    const mainBlock = workout.blocks.find(b => 
+      !b.title?.toLowerCase().includes('warm') && 
+      !b.title?.toLowerCase().includes('cool')
+    ) || workout.blocks[0];
+    
+    const pace = mainBlock.pace || '';
+    const zone = mainBlock.heartRateZone || '';
+    const duration = workout.blocks.reduce((sum, b) => sum + (b.duration || 0), 0);
+    
+    const parts = [];
+    if (pace) parts.push(pace);
+    if (zone) {
+      const zoneMatch = zone.match(/Zone\s*(\d+)/i);
+      if (zoneMatch) parts.push(`Zone ${zoneMatch[1]}`);
+    }
+    if (duration) parts.push(`~${Math.round(duration)} min`);
+    
+    return parts.join(' · ');
+  };
 
-        {isCompleted && (
+  // Check if workout is synced from Strava
+  const isSyncedFromStrava = (() => {
+    if (!weeklyPlan || !weeklyPlan._activityMatches) return false;
+    const today = new Date();
+    const dayOfWeek = today.getDay();
+    const dayNameMap = {
+      0: 'sunday',
+      1: 'monday',
+      2: 'tuesday',
+      3: 'wednesday',
+      4: 'thursday',
+      5: 'friday',
+      6: 'saturday'
+    };
+    const dayName = dayNameMap[dayOfWeek];
+    const dayMatch = weeklyPlan._activityMatches[dayName];
+    return !!dayMatch && dayMatch.activities && dayMatch.activities.length > 0;
+  })();
+
+  // Close popover when clicking outside the card
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (cardRef.current && !cardRef.current.contains(event.target)) {
+        setOpenNoteIndex(null);
+      }
+    };
+
+    if (openNoteIndex !== null) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+      };
+    }
+  }, [openNoteIndex]);
+
+  return (
+    <div 
+      ref={cardRef}
+      style={{
+        border: '0.5px solid var(--color-border-tertiary)',
+        borderRadius: '10px',
+        background: 'var(--color-background-primary)',
+        overflow: 'hidden'
+      }}
+    >
+      {/* Header */}
+      <div style={{
+        padding: '14px 16px 12px',
+        borderBottom: '0.5px solid var(--color-border-tertiary)',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+        gap: '12px'
+      }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {/* Type tag */}
           <div style={{
-            marginTop: '12px',
-            padding: '14px 14px',
-            borderRadius: '14px',
-            background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.18), rgba(59, 130, 246, 0.12))',
-            border: '1px solid rgba(34, 197, 94, 0.25)',
-            boxShadow: '0 12px 40px rgba(34, 197, 94, 0.12)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '12px'
+            fontSize: '10px',
+            fontWeight: 500,
+            color: 'var(--color-text-tertiary)',
+            letterSpacing: '0.08em',
+            textTransform: 'uppercase',
+            marginBottom: '3px'
           }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-              <div style={{ fontSize: '14px', fontWeight: 900, color: 'var(--text-color)' }}>
-                Workout Completed
-              </div>
-              <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-                You showed up today. That’s how fitness is built.
-              </div>
-            </div>
-            <div style={{ fontSize: '22px', lineHeight: 1 }}>
-              🏁
-            </div>
+            {workoutType}
           </div>
-        )}
-      </div>
-      
-      <div 
-        className="workout-block clickable"
-        onClick={() => onWorkoutClick && onWorkoutClick()}
-        style={{
-          cursor: 'pointer',
-          ...(isCompleted
-            ? {
-                border: '1px solid rgba(34, 197, 94, 0.35)',
-                boxShadow: '0 16px 48px rgba(34, 197, 94, 0.10)'
-              }
-            : {})
-        }}
-      >
-        <div className="block-title">Workout Overview</div>
-        <div className="block-details">
-          <div className="detail-item">
-            <span className="detail-label">Type</span>
-            <span className="detail-value">{workoutType}</span>
+          
+          {/* Title */}
+          <div style={{
+            fontSize: '17px',
+            fontWeight: 500,
+            color: 'var(--color-text-primary)',
+            marginBottom: '2px',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis'
+          }}>
+            {workout.title}
           </div>
-          {totalDistance > 0 && (
-            <div className="detail-item">
-              <span className="detail-label">Total Distance</span>
-              <span className="detail-value">{totalDistance.toFixed(1)} mi</span>
-            </div>
-          )}
-          {totalDuration > 0 && (
-            <div className="detail-item">
-              <span className="detail-label">Est. Duration</span>
-              <span className="detail-value">{Math.round(totalDuration)} min</span>
-            </div>
-          )}
-          <div className="detail-item">
-            <span className="detail-label">Blocks</span>
-            <span className="detail-value">{workout.blocks?.length || 0}</span>
+          
+          {/* Target summary */}
+          <div style={{
+            fontSize: '11px',
+            color: 'var(--color-text-secondary)',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis'
+          }}>
+            {getTargetSummary()}
           </div>
         </div>
         
-        <div style={{ 
-          marginTop: '15px',
-          padding: '12px',
-          background: isCompleted
-            ? 'linear-gradient(135deg, rgba(34, 197, 94, 0.16), rgba(34, 197, 94, 0.08))'
-            : 'var(--grid-color)',
-          borderRadius: '8px',
-          fontSize: '14px',
-          color: 'var(--text-secondary)',
-          textAlign: 'center'
-        }}>
-          {isCompleted ? 'Tap to review the plan + details →' : 'Click to view detailed workout instructions →'}
-        </div>
+        {/* Fix button */}
+        {onFix && (
+          <button
+            onClick={onFix}
+            disabled={isFixingWorkout}
+            style={{
+              fontSize: '11px',
+              color: isFixingWorkout ? 'var(--color-text-tertiary)' : 'var(--color-text-tertiary)',
+              border: '0.5px solid var(--color-border-secondary)',
+              borderRadius: '5px',
+              padding: '5px 10px',
+              whiteSpace: 'nowrap',
+              cursor: isFixingWorkout ? 'not-allowed' : 'pointer',
+              flexShrink: 0,
+              background: 'transparent',
+              transition: 'all 0.15s'
+            }}
+            onMouseEnter={(e) => {
+              if (!isFixingWorkout) {
+                e.target.style.color = 'var(--color-text-primary)';
+                e.target.style.borderColor = 'var(--color-border-primary)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!isFixingWorkout) {
+                e.target.style.color = 'var(--color-text-tertiary)';
+                e.target.style.borderColor = 'var(--color-border-secondary)';
+              }
+            }}
+          >
+            {isFixingWorkout ? '...' : '⚡ Fix'}
+          </button>
+        )}
       </div>
 
-      <style>{`
-        @keyframes completedPulse {
-          0%, 100% { transform: scale(1); }
-          50% { transform: scale(1.04); }
-        }
-      `}</style>
+      {/* Workout blocks */}
+      {workout.blocks && workout.blocks.length > 0 && (
+        <div>
+          {workout.blocks.map((block, index) => {
+            const isLast = index === workout.blocks.length - 1;
+            
+            // Format sub text (zone/HR - notes removed, shown in popover)
+            const subParts = [];
+            if (block.heartRateZone) {
+              const zoneMatch = block.heartRateZone.match(/Zone\s*(\d+)(?:\s*[–-]\s*Zone\s*(\d+))?/i);
+              if (zoneMatch) {
+                if (zoneMatch[2]) {
+                  subParts.push(`Z${zoneMatch[1]}–Z${zoneMatch[2]}`);
+                } else {
+                  subParts.push(`Z${zoneMatch[1]}`);
+                }
+              }
+              
+              // Extract HR range
+              const hrMatch = block.heartRateZone.match(/(\d+)\s*[–-]\s*(\d+)\s*bpm/i);
+              if (hrMatch) {
+                subParts.push(`${hrMatch[1]}–${hrMatch[2]} bpm`);
+              }
+            }
+            
+            return (
+              <>
+                <div
+                  key={index}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '10px 16px',
+                    borderBottom: (isLast && openNoteIndex !== index) ? 'none' : '0.5px solid var(--color-border-tertiary)',
+                    gap: '12px'
+                  }}
+                >
+                  {/* Left side */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontSize: '13px',
+                      fontWeight: 500,
+                      color: 'var(--color-text-primary)'
+                    }}>
+                      {block.title}
+                    </div>
+                    {subParts.length > 0 && (
+                      <div style={{
+                        fontSize: '10px',
+                        color: 'var(--color-text-tertiary)',
+                        marginTop: '2px',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        maxWidth: '100%'
+                      }}>
+                        {subParts.join(' · ')}
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Right side */}
+                  <div style={{
+                    textAlign: 'right',
+                    flexShrink: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'flex-end',
+                    gap: '4px',
+                    paddingLeft: '12px'
+                  }}>
+                    {block.pace && (
+                      <div style={{
+                        fontSize: '12px',
+                        fontWeight: 500,
+                        color: 'var(--color-text-primary)'
+                      }}>
+                        {block.pace}
+                      </div>
+                    )}
+                    {(block.distance || block.duration) && (
+                      <div style={{
+                        fontSize: '10px',
+                        color: 'var(--color-text-tertiary)',
+                        marginTop: '1px'
+                      }}>
+                        {[block.distance, block.duration ? `${block.duration} min` : null]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </div>
+                    )}
+                    {block.notes && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpenNoteIndex(openNoteIndex === index ? null : index);
+                        }}
+                        style={{
+                          width: '18px',
+                          height: '18px',
+                          borderRadius: '50%',
+                          border: '0.5px solid var(--color-border-secondary)',
+                          background: 'var(--color-background-secondary)',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          padding: 0,
+                          marginTop: '2px',
+                          flexShrink: 0
+                        }}
+                      >
+                        <span style={{
+                          fontSize: '10px',
+                          fontWeight: 500,
+                          color: 'var(--color-text-tertiary)',
+                          lineHeight: 1
+                        }}>
+                          i
+                        </span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {openNoteIndex === index && block.notes && (
+                  <div style={{
+                    background: 'var(--color-background-secondary)',
+                    borderBottom: isLast ? 'none' : '0.5px solid var(--color-border-tertiary)',
+                    padding: '10px 16px',
+                    fontSize: '12px',
+                    color: 'var(--color-text-secondary)',
+                    lineHeight: '1.6'
+                  }}>
+                    {block.notes}
+                  </div>
+                )}
+              </>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Footer */}
+      <div style={{
+        borderTop: '0.5px solid var(--color-border-tertiary)',
+        padding: '12px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px'
+      }}>
+        {isSyncedFromStrava && (
+          <div style={{
+            fontSize: '10px',
+            color: 'var(--color-text-tertiary)',
+            textAlign: 'center'
+          }}>
+            Synced from Strava
+          </div>
+        )}
+        {onPostpone && (
+          <button
+            onClick={onPostpone}
+            style={{
+              width: '100%',
+              padding: '12px',
+              fontSize: '13px',
+              fontWeight: 500,
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              color: 'var(--color-text-secondary)',
+              transition: 'background 0.15s'
+            }}
+            onMouseEnter={(e) => {
+              e.target.style.background = 'var(--color-background-secondary)';
+            }}
+            onMouseLeave={(e) => {
+              e.target.style.background = 'none';
+            }}
+          >
+            Postpone workout
+          </button>
+        )}
+      </div>
     </div>
   );
 };

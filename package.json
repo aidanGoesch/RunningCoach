@@ -8,8 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "cap:sync": "./node_modules/.bin/cap sync",
-    "build:mobile": "CAPACITOR=true npm run build",
-    "refresh-strava-token": "node scripts/refresh-strava-token.js"
+    "build:mobile": "CAPACITOR=true npm run build"
   },
   "dependencies": {
     "@capacitor/app": "^6.0.0",
@@ -18,7 +17,6 @@
     "@capacitor/keyboard": "^6.0.0",
     "@capacitor/status-bar": "^6.0.0",
     "@supabase/supabase-js": "^2.93.1",
-    "node-fetch": "^3.3.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-markdown": "^10.1.0"

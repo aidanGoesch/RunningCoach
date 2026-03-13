@@ -11,6 +11,7 @@ import WorkoutFeedback from './components/WorkoutFeedback';
 import PostponeWorkout from './components/PostponeWorkout';
 import PullToRefresh from './components/PullToRefresh';
 import NewActivityRatingModal from './components/NewActivityRatingModal';
+import RecoveryPage from './components/RecoveryPage';
 import { generateWorkout, generateWeeklyPlan, generateDataDrivenWeeklyPlan, generateWeeklyAnalysis, matchActivitiesToWorkouts, syncWithStrava, generateInsights, detectNewActivities, adjustWeeklyPlanForPostponement, regenerateDayWorkout, updatePromptWithCurrentData, buildFourWeekSummary } from './services/api';
 import { dataService, setupRealtimeSync, syncAllDataFromSupabase, enableSupabase } from './services/supabase';
 
@@ -41,6 +42,7 @@ function App() {
   const [recoveryLoading, setRecoveryLoading] = useState(false);
   const [recoveryBlockStatus, setRecoveryBlockStatus] = useState({});
   const [isFixingWorkout, setIsFixingWorkout] = useState(false);
+  const [showRecovery, setShowRecovery] = useState(false);
 
   const todayDate = new Date().toISOString().split('T')[0];
 
@@ -235,14 +237,23 @@ function App() {
           setShowFeedback(false);
           setShowPostpone(false);
           setShowWorkoutDetail(false);
+          setShowRecovery(false);
         } else if (event.state.view === 'workoutDetail') {
           setShowWorkoutDetail(true);
           setSelectedActivityId(null);
           setShowFeedback(false);
           setShowPostpone(false);
+          setShowRecovery(false);
         } else if (event.state.view === 'feedback') {
           setShowFeedback(true);
           setSelectedActivityId(null);
+          setShowPostpone(false);
+          setShowWorkoutDetail(false);
+          setShowRecovery(false);
+        } else if (event.state.view === 'recovery') {
+          setShowRecovery(true);
+          setSelectedActivityId(null);
+          setShowFeedback(false);
           setShowPostpone(false);
           setShowWorkoutDetail(false);
         } else {
@@ -251,6 +262,7 @@ function App() {
           setShowFeedback(false);
           setShowPostpone(false);
           setShowWorkoutDetail(false);
+          setShowRecovery(false);
         }
       } else {
         // No state, go to main view
@@ -258,6 +270,7 @@ function App() {
         setShowFeedback(false);
         setShowPostpone(false);
         setShowWorkoutDetail(false);
+        setShowRecovery(false);
       }
     };
 
@@ -386,13 +399,11 @@ function App() {
           setWorkout(null);
           localStorage.removeItem('current_workout');
           await dataService.set('current_workout', null);
-        } else if (workoutData) {
-          setWorkout(JSON.parse(workoutData));
         } else {
-          const localWorkout = localStorage.getItem('current_workout');
-          if (localWorkout) {
-            setWorkout(JSON.parse(localWorkout));
-          }
+          // Rest day or no workout planned - clear workout state
+          setWorkout(null);
+          localStorage.removeItem('current_workout');
+          await dataService.set('current_workout', null);
         }
         
         // Process weekly analysis
@@ -829,6 +840,76 @@ function App() {
       }
     };
   }, [isStravaCallback]);
+
+  // Trigger recovery workout generation when showRecovery becomes true
+  useEffect(() => {
+    const generateRecoveryIfNeeded = async () => {
+      if (!showRecovery) return;
+      
+      // Check if recovery workout already exists
+      const storedRecovery = await dataService.get(`recovery_workout_${todayDate}`);
+      const localRecovery = localStorage.getItem(`recovery_workout_${todayDate}`);
+      
+      if (storedRecovery || localRecovery) {
+        // Recovery already exists, just load it
+        const parsedRecovery = storedRecovery ? JSON.parse(storedRecovery) : JSON.parse(localRecovery);
+        setRecoveryWorkout(parsedRecovery.workout || null);
+        setRecoveryCompleted(!!parsedRecovery.completed);
+        setRecoveryBlockStatus({});
+        return;
+      }
+
+      // Determine if we should have recovery
+      const today = new Date();
+      const dayOfWeek = today.getDay();
+      const isRunDay = dayOfWeek === 0 || dayOfWeek === 2 || dayOfWeek === 4; // Sun/Tue/Thu
+      
+      const todayStart = new Date(today);
+      todayStart.setHours(0, 0, 0, 0);
+      const todayEnd = new Date(today);
+      todayEnd.setHours(23, 59, 59, 999);
+      const hasRunToday = (activities || []).some((a) => {
+        if (!a || a.type !== 'Run' || !a.start_date) return false;
+        const d = new Date(a.start_date);
+        return d >= todayStart && d <= todayEnd;
+      });
+
+      const shouldHaveRecovery = !isRunDay || (isRunDay && hasRunToday);
+
+      // Generate recovery workout if needed
+      if (shouldHaveRecovery) {
+        const availableApiKey = import.meta.env.VITE_OPENAI_API_KEY || apiKey;
+        if (availableApiKey) {
+          setRecoveryLoading(true);
+          try {
+            const newWorkout = await generateWorkout(
+              availableApiKey,
+              activities || [],
+              isInjured,
+              { reason: 'Recovery day', adjustment: 'recovery', source: 'auto' }
+            );
+
+            setRecoveryWorkout(newWorkout);
+            setRecoveryCompleted(false);
+            setRecoveryBlockStatus({});
+
+            const payload = JSON.stringify({
+              workout: newWorkout,
+              completed: false
+            });
+            await dataService.set(`recovery_workout_${todayDate}`, payload);
+            localStorage.setItem(`recovery_workout_${todayDate}`, payload);
+          } catch (err) {
+            console.error('Failed to generate recovery workout:', err);
+          } finally {
+            setRecoveryLoading(false);
+          }
+        }
+      }
+    };
+
+    generateRecoveryIfNeeded();
+  }, [showRecovery, todayDate, activities, isInjured, apiKey]);
 
   // Check for Sunday auto-generation when activities change
   useEffect(() => {
@@ -1513,8 +1594,51 @@ function App() {
     );
   }
 
+  // Full-screen recovery page view
+  if (showRecovery) {
+    const handleBack = () => {
+      setShowRecovery(false);
+      window.history.pushState({ view: 'main' }, '', window.location.pathname);
+    };
+
+    const handleBlockToggle = (index) => {
+      setRecoveryBlockStatus(prev => ({
+        ...prev,
+        [index]: !prev[index]
+      }));
+    };
+
+    const handleCompleteToggle = async () => {
+      if (!recoveryWorkout) return;
+      const newCompleted = !recoveryCompleted;
+      setRecoveryCompleted(newCompleted);
+      const payload = JSON.stringify({
+        workout: recoveryWorkout,
+        completed: newCompleted
+      });
+      try {
+        await dataService.set(`recovery_workout_${todayDate}`, payload);
+        localStorage.setItem(`recovery_workout_${todayDate}`, payload);
+      } catch (err) {
+        console.error('Failed to update recovery completion state:', err);
+      }
+    };
+
+    return (
+      <RecoveryPage
+        recoveryWorkout={recoveryWorkout}
+        recoveryCompleted={recoveryCompleted}
+        recoveryBlockStatus={recoveryBlockStatus}
+        onBack={handleBack}
+        onBlockToggle={handleBlockToggle}
+        onCompleteToggle={handleCompleteToggle}
+        isLoading={recoveryLoading}
+      />
+    );
+  }
+
   // Full-screen workout detail view (with optional postpone sheet)
-  if (showWorkoutDetail && workout) {
+  if (showWorkoutDetail && (workout || selectedPlannedWorkout?.workout)) {
     const workoutToShow = selectedPlannedWorkout ? selectedPlannedWorkout.workout : workout;
     const title = selectedPlannedWorkout ? `${selectedPlannedWorkout.dayName} - ${workoutToShow.title}` : workoutToShow.title;
     
@@ -2073,284 +2197,590 @@ function App() {
 
       <PullToRefresh onRefresh={handleStravaSync}>
         {!isPreloading && (
-          <>
-            <div className="header">
-              <h1>Running Coach</h1>
-            </div>
-
-        {!import.meta.env.VITE_OPENAI_API_KEY && (
-          <div style={{ marginBottom: '20px' }}>
-            <input
-              type="password"
-              placeholder="Enter OpenAI API Key"
-              value={apiKey}
-              onChange={handleApiKeyChange}
-              style={{
-                width: '100%',
-                padding: '12px',
-                border: '1px solid #ddd',
-                borderRadius: '8px',
-                fontSize: '14px'
-              }}
-            />
-          </div>
-        )}
-
-        {error && (
-          <div className="error">
-            {error}
-          </div>
-        )}
-
-        <WeeklyAnalysis analysis={weeklyAnalysis} />
-
-        <WeeklyPlan 
-          key={weeklyPlanRefreshKey}
-          activities={activities}
-          onWorkoutClick={handlePlannedWorkoutClick}
-          onGenerateWeeklyPlan={handleGenerateWeeklyPlan}
-          apiKey={apiKey}
-          onActivitiesChange={async () => {
-            // When activities change, re-match them to workouts
-            const today = new Date();
-            const monday = new Date(today);
-            monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-            monday.setHours(0, 0, 0, 0);
-            const weekKey = `${monday.getFullYear()}-${monday.getMonth()}-${monday.getDate()}`;
-            
-            const storedPlan = await dataService.get(`weekly_plan_${weekKey}`);
-            if (storedPlan) {
-              const parsedPlan = JSON.parse(storedPlan);
-              const activityMatches = matchActivitiesToWorkouts(activities, parsedPlan, monday);
-              parsedPlan._activityMatches = activityMatches;
-              
-              // Save updated plan with matches
-              await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan));
-              localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan));
-            }
-          }}
-        />
-
-        {recoveryWorkout && (
-          <div
-            className="workout-block"
-            style={{
-              marginTop: '24px',
-              border: recoveryCompleted
-                ? '1px solid rgba(34, 197, 94, 0.65)'
-                : '1px solid var(--border-color)',
-              boxShadow: recoveryCompleted
-                ? '0 14px 40px rgba(34, 197, 94, 0.30)'
-                : '0 8px 24px rgba(15, 23, 42, 0.12)',
-              background: recoveryCompleted
-                ? 'linear-gradient(135deg, rgba(34, 197, 94, 0.12), rgba(16, 185, 129, 0.06))'
-                : 'var(--card-bg)',
-              borderRadius: '16px',
-              padding: '14px',
-              transition: 'box-shadow 0.25s ease, border-color 0.25s ease, background 0.25s ease'
-            }}
-          >
-            <div style={{ marginBottom: 14 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
-                <div className="workout-title">
-                  Recovery Exercises
-                </div>
-                <div
-                  style={{
-                    padding: '6px 10px',
-                    borderRadius: '999px',
-                    background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.30), rgba(16, 185, 129, 0.18))',
-                    border: '1px solid rgba(34, 197, 94, 0.50)',
-                    color: 'var(--text-color)',
-                    fontSize: '11px',
-                    fontWeight: 800,
-                    letterSpacing: '0.02em',
-                    whiteSpace: 'nowrap',
-                    opacity: recoveryCompleted ? 1 : 0,
-                    transform: recoveryCompleted ? 'translateY(0px)' : 'translateY(-4px)',
-                    transition: 'opacity 0.25s ease, transform 0.25s ease',
-                    pointerEvents: recoveryCompleted ? 'auto' : 'none'
-                  }}
-                >
-                  ✅ Recovery Completed
-                </div>
-              </div>
-            </div>
-
-            <div
-              className="block-details"
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '8px'
-              }}
-            >
-                {(recoveryWorkout.blocks || []).map((block, index) => {
-                  const isBlockCompleted = !!recoveryBlockStatus[index];
-                  return (
-                    <div
-                      key={index}
-                      className="detail-item recovery-detail"
-                      style={{
-                        display: 'flex',
-                        alignItems: 'flex-start',
-                        gap: '12px',
-                        width: '100%'
-                      }}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setRecoveryBlockStatus(prev => ({
-                            ...prev,
-                            [index]: !prev[index]
-                          }));
-                        }}
-                        style={{
-                          width: '20px',
-                          height: '20px',
-                          borderRadius: '50%',
-                          border: '2px solid var(--accent)',
-                          background: isBlockCompleted ? 'var(--accent)' : 'transparent',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          flexShrink: 0,
-                          cursor: 'pointer',
-                          transition: 'background 0.15s ease, transform 0.1s ease',
-                          transform: isBlockCompleted ? 'scale(0.95)' : 'scale(1)'
-                        }}
-                        aria-label={isBlockCompleted ? 'Mark segment as not done' : 'Mark segment as done'}
-                      >
-                        {isBlockCompleted && (
-                          <span
-                            style={{
-                              width: '8px',
-                              height: '8px',
-                              borderRadius: '50%',
-                              background: 'white'
-                            }}
-                          />
-                        )}
-                      </button>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                        <span
-                          className="detail-label"
-                          style={{
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.04em',
-                            fontSize: '12px',
-                            opacity: isBlockCompleted ? 0.7 : 1
-                          }}
-                        >
-                          {block.title}
-                        </span>
-                        {block.duration && (
-                          <span
-                            className="detail-value"
-                            style={{
-                              fontSize: '13px',
-                              fontWeight: 500,
-                              opacity: isBlockCompleted ? 0.7 : 1
-                            }}
-                          >
-                            {block.duration}
-                          </span>
-                        )}
-                        {block.notes && (
-                          <span
-                            className="detail-value"
-                            style={{
-                              fontSize: '13px',
-                              color: 'var(--text-secondary)',
-                              opacity: isBlockCompleted ? 0.6 : 1
-                            }}
-                          >
-                            {block.notes}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div
-                style={{
-                  marginTop: '16px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '10px'
-                }}
-              >
-                <button
-                  className="btn btn-primary"
-                  onClick={async () => {
-                    if (!recoveryWorkout) return;
-                    const newCompleted = !recoveryCompleted;
-                    setRecoveryCompleted(newCompleted);
-                    const payload = JSON.stringify({
-                      workout: recoveryWorkout,
-                      completed: newCompleted
-                    });
-                    try {
-                      await dataService.set(`recovery_workout_${todayDate}`, payload);
-                      localStorage.setItem(`recovery_workout_${todayDate}`, payload);
-                    } catch (err) {
-                      console.error('Failed to update recovery completion state:', err);
-                    }
-                  }}
+          <div className="dashboard-container" style={{ paddingBottom: '32px' }}>
+            {!import.meta.env.VITE_OPENAI_API_KEY && (
+              <div style={{ marginBottom: '20px' }}>
+                <input
+                  type="password"
+                  placeholder="Enter OpenAI API Key"
+                  value={apiKey}
+                  onChange={handleApiKeyChange}
                   style={{
                     width: '100%',
-                    background: recoveryCompleted
-                      ? 'transparent'
-                      : 'linear-gradient(135deg, rgba(34,197,94,0.95), rgba(16,185,129,0.9))',
-                    borderColor: recoveryCompleted
-                      ? 'var(--border-color)'
-                      : 'rgba(34,197,94,0.9)',
-                    color: recoveryCompleted ? 'var(--text-color)' : '#ffffff',
-                    boxShadow: recoveryCompleted
-                      ? 'none'
-                      : '0 12px 30px rgba(34,197,94,0.35)',
-                    fontWeight: 700,
-                    transition: 'background 0.25s ease, border-color 0.25s ease, color 0.25s ease, box-shadow 0.25s ease, transform 0.1s ease'
+                    padding: '12px',
+                    border: '1px solid #ddd',
+                    borderRadius: '8px',
+                    fontSize: '14px'
                   }}
-                >
-                  {recoveryCompleted ? 'Undo Recovery' : 'Complete Recovery'}
-                </button>
+                />
+              </div>
+            )}
+
+            {error && (
+              <div className="error">
+                {error}
+              </div>
+            )}
+
+            {/* Hero Section */}
+            {(() => {
+              const raceDate = new Date('2026-05-02');
+              const today = new Date();
+              today.setHours(0, 0, 0, 0);
+              raceDate.setHours(0, 0, 0, 0);
+              
+              const daysUntilRace = Math.ceil((raceDate - today) / (1000 * 60 * 60 * 24));
+              const weeksUntilRace = Math.ceil(daysUntilRace / 7);
+              const currentWeek = Math.max(1, 15 - weeksUntilRace);
+              const weeks = Math.floor(daysUntilRace / 7);
+              const days = daysUntilRace % 7;
+              
+              // Calculate phase
+              let phaseName;
+              if (currentWeek <= 4) {
+                phaseName = "Base Building";
+              } else if (currentWeek <= 8) {
+                phaseName = "Build";
+              } else if (currentWeek <= 12) {
+                phaseName = "Peak";
+              } else {
+                phaseName = "Taper";
+              }
+              
+              // Calculate current week's activities (Monday to Sunday)
+              const monday = new Date(today);
+              monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+              monday.setHours(0, 0, 0, 0);
+              const sunday = new Date(monday);
+              sunday.setDate(monday.getDate() + 6);
+              sunday.setHours(23, 59, 59, 999);
+              
+              const weekActivities = activities.filter(a => {
+                const activityDate = new Date(a.start_date);
+                return activityDate >= monday && activityDate <= sunday && a.type === 'Run';
+              });
+              
+              const milesThisWeek = weekActivities.reduce((sum, a) => sum + (a.distance / 1609.34), 0);
+              
+              // Calculate runs done vs expected (3 runs per week: Sun, Tue, Thu)
+              const expectedRunDays = [0, 2, 4]; // Sunday, Tuesday, Thursday
+              const completedRunDays = expectedRunDays.filter(dayOffset => {
+                const checkDate = new Date(monday);
+                checkDate.setDate(monday.getDate() + dayOffset);
+                checkDate.setHours(0, 0, 0, 0);
+                const checkEnd = new Date(checkDate);
+                checkEnd.setHours(23, 59, 59, 999);
+                return weekActivities.some(a => {
+                  const activityDate = new Date(a.start_date);
+                  return activityDate >= checkDate && activityDate <= checkEnd;
+                });
+              }).length;
+              
+              // Calculate avg rating for this week
+              const activityRatings = JSON.parse(localStorage.getItem('activity_ratings') || '{}');
+              const weekRatings = weekActivities
+                .map(a => activityRatings[a.id]?.rating)
+                .filter(r => r !== undefined && r !== null);
+              const avgRating = weekRatings.length > 0 
+                ? weekRatings.reduce((sum, r) => sum + r, 0) / weekRatings.length 
+                : null;
+              
+              return (
+                <div style={{
+                  background: 'var(--color-background-primary)',
+                  borderBottom: '0.5px solid var(--color-border-tertiary)',
+                  padding: '20px 24px',
+                  marginBottom: 0
+                }} className="hero-section">
+                  {/* Eyebrow */}
+                  <div style={{
+                    fontSize: '10px',
+                    letterSpacing: '0.1em',
+                    textTransform: 'uppercase',
+                    color: 'var(--color-text-tertiary)',
+                    marginBottom: '14px'
+                  }}>
+                    Half marathon · May 2, 2026
+                  </div>
+                  
+                  {/* Countdown */}
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'baseline',
+                    justifyContent: 'center',
+                    flexWrap: 'wrap',
+                    gap: '2px',
+                    marginBottom: '8px'
+                  }}>
+                    <span style={{
+                      fontSize: '46px',
+                      fontWeight: 500,
+                      letterSpacing: '-1.5px',
+                      lineHeight: 1,
+                      color: 'var(--color-text-primary)'
+                    }}>{weeks}</span>
+                    <span style={{
+                      fontSize: '16px',
+                      color: 'var(--color-text-secondary)',
+                      marginRight: '2px'
+                    }}>wks</span>
+                    <span style={{
+                      fontSize: '30px',
+                      color: 'var(--color-border-secondary)',
+                      margin: '0 2px'
+                    }}>·</span>
+                    <span style={{
+                      fontSize: '46px',
+                      fontWeight: 500,
+                      letterSpacing: '-1.5px',
+                      lineHeight: 1,
+                      color: 'var(--color-text-primary)'
+                    }}>{days}</span>
+                    <span style={{
+                      fontSize: '16px',
+                      color: 'var(--color-text-secondary)'
+                    }}>days</span>
+                  </div>
+                  
+                  {/* Race subtitle */}
+                  <div style={{
+                    fontSize: '12px',
+                    color: 'var(--color-text-tertiary)',
+                    textAlign: 'center',
+                    marginBottom: '14px'
+                  }}>
+                    Half marathon
+                  </div>
+                  
+                  {/* Progress bar */}
+                  <div style={{ marginBottom: '8px' }}>
+                    <div style={{
+                      height: '2px',
+                      background: 'var(--color-background-secondary)',
+                      borderRadius: '1px',
+                      overflow: 'hidden'
+                    }}>
+                      <div style={{
+                        height: '100%',
+                        background: 'var(--color-text-primary)',
+                        width: `${(currentWeek / 14) * 100}%`,
+                        transition: 'width 0.3s ease'
+                      }} />
+                    </div>
+                    <div style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      marginTop: '6px'
+                    }}>
+                      <span style={{
+                        fontSize: '10px',
+                        fontWeight: 500,
+                        color: 'var(--color-text-secondary)',
+                        letterSpacing: '0.04em'
+                      }}>
+                        {phaseName} phase · week {currentWeek} of 14
+                      </span>
+                      <span style={{
+                        fontSize: '10px',
+                        color: 'var(--color-text-tertiary)'
+                      }}>
+                        {Math.round((currentWeek / 14) * 100)}%
+                      </span>
+                    </div>
+                  </div>
+                  
+                  {/* Three stats */}
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1px 1fr 1px 1fr',
+                    marginTop: '16px'
+                  }}>
+                    {/* Miles this week */}
+                    <div style={{ padding: '0 16px', paddingLeft: 0 }}>
+                      <div style={{
+                        fontSize: '20px',
+                        fontWeight: 500,
+                        color: 'var(--color-text-primary)',
+                        lineHeight: 1
+                      }}>
+                        {milesThisWeek.toFixed(1)}
+                      </div>
+                      <div style={{
+                        fontSize: '10px',
+                        color: 'var(--color-text-tertiary)',
+                        marginTop: '3px',
+                        letterSpacing: '0.04em'
+                      }}>
+                        Miles this week
+                      </div>
+                    </div>
+                    
+                    {/* Divider */}
+                    <div style={{
+                      background: 'var(--color-border-tertiary)',
+                      width: '1px'
+                    }} />
+                    
+                    {/* Runs done */}
+                    <div style={{ padding: '0 16px' }}>
+                      <div style={{
+                        fontSize: '20px',
+                        fontWeight: 500,
+                        color: 'var(--color-text-primary)',
+                        lineHeight: 1
+                      }}>
+                        {completedRunDays} / 3
+                      </div>
+                      <div style={{
+                        fontSize: '10px',
+                        color: 'var(--color-text-tertiary)',
+                        marginTop: '3px',
+                        letterSpacing: '0.04em'
+                      }}>
+                        Runs done
+                      </div>
+                    </div>
+                    
+                    {/* Divider */}
+                    <div style={{
+                      background: 'var(--color-border-tertiary)',
+                      width: '1px'
+                    }} />
+                    
+                    {/* Avg rating */}
+                    <div style={{ padding: '0 16px', paddingRight: 0 }}>
+                      <div style={{
+                        fontSize: '20px',
+                        fontWeight: 500,
+                        color: avgRating !== null 
+                          ? (avgRating >= 3.5 ? '#3B6D11' : avgRating < 2.5 ? '#BA7517' : 'var(--color-text-primary)')
+                          : 'var(--color-text-primary)',
+                        lineHeight: 1
+                      }}>
+                        {avgRating !== null ? avgRating.toFixed(1) : '—'}
+                      </div>
+                      <div style={{
+                        fontSize: '10px',
+                        color: 'var(--color-text-tertiary)',
+                        marginTop: '3px',
+                        letterSpacing: '0.04em'
+                      }}>
+                        Avg rating
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* This week section label */}
+            <div style={{
+              fontSize: '10px',
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+              color: 'var(--color-text-tertiary)',
+              padding: '18px 24px 10px',
+              paddingLeft: 0
+            }} className="section-label">
+              This week
             </div>
-          </div>
-        )}
+
+            <WeeklyPlan 
+              key={weeklyPlanRefreshKey}
+              activities={activities}
+              onWorkoutClick={handlePlannedWorkoutClick}
+              onGenerateWeeklyPlan={handleGenerateWeeklyPlan}
+              apiKey={apiKey}
+              onRecoveryClick={() => {
+                setShowRecovery(true);
+                window.history.pushState({ view: 'recovery' }, '', window.location.pathname);
+              }}
+              onActivitiesChange={async () => {
+                // When activities change, re-match them to workouts
+                const today = new Date();
+                const monday = new Date(today);
+                monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+                monday.setHours(0, 0, 0, 0);
+                const weekKey = `${monday.getFullYear()}-${monday.getMonth()}-${monday.getDate()}`;
+                
+                const storedPlan = await dataService.get(`weekly_plan_${weekKey}`);
+                if (storedPlan) {
+                  const parsedPlan = JSON.parse(storedPlan);
+                  const activityMatches = matchActivitiesToWorkouts(activities, parsedPlan, monday);
+                  parsedPlan._activityMatches = activityMatches;
+                  
+                  // Save updated plan with matches
+                  await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan));
+                  localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan));
+                }
+              }}
+            />
+
+            {/* Two-column grid: Workout Card | Activities List */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: '24px',
+              alignItems: 'start',
+              padding: '0 24px'
+            }} className="two-column-grid below-week">
+              {/* Left column: Today's workout or Recovery (on rest days) */}
+              <div>
+                <div style={{
+                  fontSize: '10px',
+                  letterSpacing: '0.1em',
+                  textTransform: 'uppercase',
+                  color: 'var(--color-text-tertiary)',
+                  paddingLeft: 0,
+                  marginBottom: '8px'
+                }} className="section-label">
+                  {workout ? "Today's workout" : "Today"}
+                </div>
+                {workout ? (
+                  <WorkoutDisplay 
+                    workout={workout} 
+                    isCompleted={hasRunToday}
+                    weeklyPlan={weeklyPlan}
+                    onWorkoutClick={() => {
+                      setShowWorkoutDetail(true);
+                      window.history.pushState({ view: 'workoutDetail' }, '', window.location.pathname);
+                    }}
+                    onPostpone={() => setShowPostpone(true)}
+                    onFix={async () => {
+                      if (!weeklyPlan) return;
+                      const today = new Date();
+                      const dayOfWeek = today.getDay();
+                      const dayNameMap = {
+                        0: 'sunday',
+                        1: 'monday',
+                        2: 'tuesday',
+                        3: 'wednesday',
+                        4: 'thursday',
+                        5: 'friday',
+                        6: 'saturday'
+                      };
+                      const dayKey = dayNameMap[dayOfWeek];
+                      
+                      setIsFixingWorkout(true);
+                      try {
+                        const coachingPromptBase = localStorage.getItem('coaching_prompt') || 'You are an expert running coach.';
+                        const activityRatings = JSON.parse(localStorage.getItem('activity_ratings') || '{}');
+                        const fourWeekSummary = buildFourWeekSummary(activities || [], activityRatings);
+                        const trainingContext = updatePromptWithCurrentData(coachingPromptBase, activities || []);
+                        
+                        const updatedPlan = await regenerateDayWorkout(
+                          dayKey,
+                          weeklyPlan,
+                          fourWeekSummary,
+                          coachingPromptBase,
+                          trainingContext
+                        );
+                        
+                        setWeeklyPlan(updatedPlan);
+                        if (updatedPlan[dayKey]) {
+                          setWorkout(updatedPlan[dayKey]);
+                          await dataService.set('current_workout', JSON.stringify(updatedPlan[dayKey]));
+                          localStorage.setItem('current_workout', JSON.stringify(updatedPlan[dayKey]));
+                        }
+                      } catch (e) {
+                        console.error('Failed to regenerate day workout:', e);
+                        setError('Failed to fix workout. Please try again.');
+                        setTimeout(() => setError(null), 4000);
+                      } finally {
+                        setIsFixingWorkout(false);
+                      }
+                    }}
+                    isFixingWorkout={isFixingWorkout}
+                  />
+                ) : (
+                  /* Recovery entry point on rest days */
+                  <div
+                    onClick={() => {
+                      setShowRecovery(true);
+                      window.history.pushState({ view: 'recovery' }, '', window.location.pathname);
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '14px',
+                      padding: '14px 16px',
+                      border: '0.5px solid var(--color-border-tertiary)',
+                      borderRadius: '10px',
+                      background: 'var(--color-background-primary)',
+                      cursor: 'pointer',
+                      transition: 'background 0.15s'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = 'var(--color-background-secondary)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'var(--color-background-primary)';
+                    }}
+                  >
+                    {/* Icon container */}
+                    <div style={{
+                      width: '36px',
+                      height: '36px',
+                      borderRadius: '8px',
+                      background: 'var(--color-background-secondary)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0
+                    }}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-secondary)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="12" cy="5" r="2"/>
+                        <path d="M12 7v6M9 13l3-3 3 3M8 21h8M10 19v2M14 19v2"/>
+                      </svg>
+                    </div>
+                    
+                    {/* Middle text */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{
+                        fontSize: '14px',
+                        fontWeight: 500,
+                        color: 'var(--color-text-primary)'
+                      }}>
+                        Recovery exercises
+                      </div>
+                      <div style={{
+                        fontSize: '11px',
+                        color: 'var(--color-text-tertiary)',
+                        marginTop: '2px'
+                      }}>
+                        Today's PT & mobility
+                      </div>
+                    </div>
+                    
+                    {/* Right chevron */}
+                    <div style={{
+                      fontSize: '14px',
+                      color: 'var(--color-text-tertiary)',
+                      flexShrink: 0
+                    }}>
+                      ›
+                    </div>
+                  </div>
+                )}
+              </div>
+              
+              {/* Right column: Recent runs */}
+              <div>
+                <div style={{
+                  fontSize: '10px',
+                  letterSpacing: '0.1em',
+                  textTransform: 'uppercase',
+                  color: 'var(--color-text-tertiary)',
+                  paddingLeft: 0,
+                  marginBottom: '8px'
+                }} className="section-label">
+                  Recent runs
+                </div>
+                <ActivitiesDisplay 
+                  activities={activities} 
+                  onActivityClick={(activityId) => {
+                    setSelectedActivityId(activityId);
+                    window.history.pushState({ view: 'activity', activityId }, '', window.location.pathname);
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Recovery entry button - only show on run days (when workout exists) */}
+            {workout && (
+            <div style={{
+              padding: '0 24px',
+              marginTop: '24px'
+            }}
+            className="recovery-entry-container"
+            >
+              <div
+                onClick={() => {
+                  setShowRecovery(true);
+                  window.history.pushState({ view: 'recovery' }, '', window.location.pathname);
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '14px',
+                  padding: '14px 16px',
+                  border: '0.5px solid var(--color-border-tertiary)',
+                  borderRadius: '10px',
+                  background: 'var(--color-background-primary)',
+                  cursor: 'pointer',
+                  transition: 'background 0.15s'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'var(--color-background-secondary)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'var(--color-background-primary)';
+                }}
+              >
+                {/* Icon container */}
+                <div style={{
+                  width: '36px',
+                  height: '36px',
+                  borderRadius: '8px',
+                  background: 'var(--color-background-secondary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0
+                }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-secondary)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="5" r="2"/>
+                    <path d="M12 7v6M9 13l3-3 3 3M8 21h8M10 19v2M14 19v2"/>
+                  </svg>
+                </div>
+                
+                {/* Middle text */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontSize: '14px',
+                    fontWeight: 500,
+                    color: 'var(--color-text-primary)'
+                  }}>
+                    Recovery exercises
+                  </div>
+                  <div style={{
+                    fontSize: '11px',
+                    color: 'var(--color-text-tertiary)',
+                    marginTop: '2px'
+                  }}>
+                    {(() => {
+                      const today = new Date();
+                      const dayOfWeek = today.getDay();
+                      const dayNameMap = {
+                        0: 'sunday', 1: 'monday', 2: 'tuesday', 3: 'wednesday',
+                        4: 'thursday', 5: 'friday', 6: 'saturday'
+                      };
+                      const dayName = dayNameMap[dayOfWeek];
+                      const todayWorkout = weeklyPlan?.[dayName];
+                      const isRestDay = !todayWorkout || todayWorkout.type === 'rest';
+                      return isRestDay ? "Today's PT & mobility" : "Post-run recovery";
+                    })()}
+                  </div>
+                </div>
+                
+                {/* Right chevron */}
+                <div style={{
+                  fontSize: '14px',
+                  color: 'var(--color-text-tertiary)',
+                  flexShrink: 0
+                }}>
+                  ›
+                </div>
+              </div>
+            </div>
+            )}
 
         {loading && (
           <div className="loading">
             Generating your personalized workout...
           </div>
         )}
-
-        {isScheduledRunDay() && (
-          <WorkoutDisplay 
-            workout={workout} 
-            isCompleted={hasRunToday}
-            onWorkoutClick={() => {
-              setShowWorkoutDetail(true);
-              // Add to browser history
-              window.history.pushState({ view: 'workoutDetail' }, '', window.location.pathname);
-            }}
-          />
-        )}
-        
-        <div style={{ marginTop: '32px' }}>
-          <ActivitiesDisplay 
-            activities={activities} 
-            onActivityClick={(activityId) => {
-              setSelectedActivityId(activityId);
-              // Add to browser history
-              window.history.pushState({ view: 'activity', activityId }, '', window.location.pathname);
-            }}
-          />
-        </div>
-          </>
+          </div>
         )}
       </PullToRefresh>
 

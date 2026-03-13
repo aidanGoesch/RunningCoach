@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { dataService } from '../services/supabase';
 
-const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, onActivitiesChange }) => {
+const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, onActivitiesChange, onRecoveryClick }) => {
   const [weeklyPlan, setWeeklyPlan] = useState(null);
   const [currentWeek, setCurrentWeek] = useState(null);
   const weeklyPlanRef = useRef(null);
@@ -290,38 +290,148 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
     return weeklyPlan[dayName];
   };
 
-  const getWeeklyStats = () => {
-    if (!currentWeek || !activities) return { totalMiles: 0, totalTime: 0, runCount: 0 };
-
-    const startOfWeek = new Date(currentWeek.start);
-    const endOfWeek = new Date(startOfWeek);
-    endOfWeek.setDate(startOfWeek.getDate() + 7);
-
-    const weekActivities = activities.filter(activity => {
-      const activityDate = new Date(activity.start_date);
-      return activityDate >= startOfWeek && activityDate < endOfWeek && activity.type === 'Run';
-    });
-
-    const totalMiles = weekActivities.reduce((sum, activity) => 
-      sum + (activity.distance / 1609.34), 0
-    );
-
-    const totalTime = weekActivities.reduce((sum, activity) => 
-      sum + activity.moving_time, 0
-    );
-
-    return {
-      totalMiles: totalMiles.toFixed(1),
-      totalTime: Math.floor(totalTime / 60),
-      runCount: weekActivities.length
-    };
-  };
-
   const isRunningDay = (dayOffset) => {
     return [1, 3, 6].includes(dayOffset); // Tuesday, Thursday, Sunday
   };
+  
+  // Helper function to get color set for a workout type and completion state
+  const getDayCardColors = (workoutType, isCompleted) => {
+    if (!workoutType) {
+      return {
+        stripe: 'var(--color-border-tertiary)',
+        labelColor: 'var(--color-text-tertiary)',
+        bg: null,
+        border: null,
+        textColor: null,
+        iconBg: null,
+        checkColor: null
+      };
+    }
 
-  const weeklyStats = getWeeklyStats();
+    const type = workoutType.toLowerCase();
+    
+    if (isCompleted) {
+      if (type === 'easy' || type === 'recovery') {
+        return {
+          stripe: '#97C459',
+          labelColor: '#3B6D11',
+          bg: '#EAF3DE',
+          border: '#C0DD97',
+          textColor: '#3B6D11',
+          iconBg: '#C0DD97',
+          checkColor: '#3B6D11'
+        };
+      } else if (type === 'speed' || type === 'tempo') {
+        return {
+          stripe: '#BA7517',
+          labelColor: '#633806',
+          bg: '#FAEEDA',
+          border: '#FAC775',
+          textColor: '#633806',
+          iconBg: '#FAC775',
+          checkColor: '#633806'
+        };
+      } else if (type === 'long') {
+        return {
+          stripe: '#378ADD',
+          labelColor: '#0C447C',
+          bg: '#E6F1FB',
+          border: '#B5D4F4',
+          textColor: '#0C447C',
+          iconBg: '#B5D4F4',
+          checkColor: '#0C447C'
+        };
+      } else {
+        // PT/recovery fallback
+        return {
+          stripe: '#C0DD97',
+          labelColor: '#3B6D11',
+          bg: '#EAF3DE',
+          border: '#C0DD97',
+          textColor: '#3B6D11',
+          iconBg: '#C0DD97',
+          checkColor: '#3B6D11'
+        };
+      }
+    } else {
+      // Upcoming workouts
+      if (type === 'easy') {
+        return {
+          stripe: '#97C459',
+          labelColor: 'var(--color-text-secondary)',
+          bg: null,
+          border: null,
+          textColor: null,
+          iconBg: null,
+          checkColor: null
+        };
+      } else if (type === 'speed' || type === 'tempo') {
+        return {
+          stripe: '#BA7517',
+          labelColor: 'var(--color-text-secondary)',
+          bg: null,
+          border: null,
+          textColor: null,
+          iconBg: null,
+          checkColor: null
+        };
+      } else if (type === 'long') {
+        return {
+          stripe: '#378ADD',
+          labelColor: 'var(--color-text-secondary)',
+          bg: null,
+          border: null,
+          textColor: null,
+          iconBg: null,
+          checkColor: null
+        };
+      } else if (type === 'recovery') {
+        return {
+          stripe: '#C0DD97',
+          labelColor: 'var(--color-text-secondary)',
+          bg: null,
+          border: null,
+          textColor: null,
+          iconBg: null,
+          checkColor: null
+        };
+      } else {
+        return {
+          stripe: 'var(--color-border-tertiary)',
+          labelColor: 'var(--color-text-tertiary)',
+          bg: null,
+          border: null,
+          textColor: null,
+          iconBg: null,
+          checkColor: null
+        };
+      }
+    }
+  };
+  
+  const getWorkoutDistance = (workout) => {
+    if (!workout || !workout.blocks) return null;
+    
+    // Try to extract distance from blocks
+    for (const block of workout.blocks) {
+      if (block.distance) {
+        const distanceStr = block.distance.toLowerCase().trim();
+        // Extract number and unit
+        const match = distanceStr.match(/(\d+\.?\d*)\s*(mi|mile|m|meter)/);
+        if (match) {
+          const value = parseFloat(match[1]);
+          const unit = match[2];
+          if (unit.includes('mi')) {
+            return value.toFixed(1);
+          } else if (unit.includes('m') && !unit.includes('mi')) {
+            // Convert meters to miles
+            return (value / 1609.34).toFixed(1);
+          }
+        }
+      }
+    }
+    return null;
+  };
 
   
   // Expose function to manually upload plan to Supabase (for debugging)
@@ -359,137 +469,261 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
     };
   }, [currentWeek]);
 
-  return (
-    <div className="workout-display" style={{ marginBottom: '20px' }}>
-      <div className="workout-title">
-        Weekly Training Plan
-        {currentWeek && ` - Week of ${currentWeek.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
-      </div>
+  const renderDayCard = (dayOffset) => {
+    const dayInfo = getDayInfo(dayOffset);
+    const plannedWorkout = getPlannedWorkout(dayOffset);
+    const isRunDay = isRunningDay(dayOffset);
+    
+    if (!dayInfo) return null;
+    
+    const dayName = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'][dayOffset];
+    const postponements = weeklyPlan?._postponements || {};
+    const postponeInfo = postponements[dayName];
+    const isPostponed = !!postponeInfo && postponeInfo.postponed;
+    
+    const isCompleted = dayInfo.hasMatchedWorkout || dayInfo.hasRun;
+    const distance = isCompleted && plannedWorkout ? getWorkoutDistance(plannedWorkout) : (plannedWorkout ? getWorkoutDistance(plannedWorkout) : null);
+    
+    // Get colors based on workout type and completion state
+    const colors = getDayCardColors(plannedWorkout?.type, isCompleted);
+    
+    // Determine card state and styling
+    const isClickable = plannedWorkout && !isPostponed;
+    let cardStyle = {
+      padding: '8px 8px 0',
+      borderRadius: '8px',
+      border: '0.5px solid var(--color-border-tertiary)',
+      background: 'var(--color-background-primary)',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      overflow: 'hidden',
+      cursor: isClickable ? 'pointer' : 'default',
+      transition: 'border-color 0.15s',
+      position: 'relative'
+    };
+    
+    let textColor = 'var(--color-text-primary)';
+    let dayNameColor = 'var(--color-text-tertiary)';
+    let typeLabelColor = 'var(--color-text-secondary)';
+    let distanceColor = 'var(--color-text-tertiary)';
+    let intensityStripeColor = colors.stripe;
+    let iconContent = null;
+    
+    if (isPostponed) {
+      cardStyle.background = 'var(--color-background-secondary)';
+      typeLabelColor = 'var(--color-text-tertiary)';
+      intensityStripeColor = 'var(--color-border-tertiary)';
+      iconContent = (
+        <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+          <circle cx="14" cy="14" r="13" stroke="var(--color-text-tertiary)" strokeWidth="1"/>
+          <path d="M14 9v10M9 14h10" stroke="var(--color-text-tertiary)" strokeWidth="1.5" strokeLinecap="round"/>
+        </svg>
+      );
+    } else if (isCompleted) {
+      cardStyle.background = colors.bg;
+      cardStyle.border = `0.5px solid ${colors.border}`;
+      textColor = colors.textColor;
+      dayNameColor = colors.textColor;
+      typeLabelColor = colors.labelColor;
+      distanceColor = colors.textColor;
+      intensityStripeColor = colors.stripe;
+      iconContent = (
+        <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+          <circle cx="14" cy="14" r="13" fill={colors.iconBg}/>
+          <path d="M8 14l4 4 8-8" stroke={colors.checkColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      );
+    } else if (dayInfo.isToday) {
+      cardStyle.border = '1.5px solid #378ADD';
+      textColor = '#185FA5';
+      dayNameColor = '#185FA5';
+      typeLabelColor = '#185FA5';
+      distanceColor = '#378ADD';
+      intensityStripeColor = '#378ADD';
+      iconContent = (
+        <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+          <circle cx="14" cy="14" r="13" fill="#E6F1FB" stroke="#185FA5" strokeWidth="1"/>
+          <circle cx="14" cy="14" r="5" fill="#185FA5"/>
+        </svg>
+      );
+    } else if (!plannedWorkout && !isRunDay) {
+      // Rest day
+      cardStyle.background = 'var(--color-background-secondary)';
+      typeLabelColor = 'var(--color-text-tertiary)';
+      intensityStripeColor = 'var(--color-border-tertiary)';
+      iconContent = (
+        <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+          <circle cx="14" cy="14" r="13" fill="var(--color-border-tertiary)" stroke="var(--color-text-tertiary)" strokeWidth="1"/>
+          <path d="M14 9v10M9 14h10" stroke="var(--color-text-tertiary)" strokeWidth="1.5" strokeLinecap="round"/>
+        </svg>
+      );
+    } else {
+      // Upcoming run day - use colors from helper
+      typeLabelColor = colors.labelColor;
+      intensityStripeColor = colors.stripe;
+      iconContent = (
+        <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+          <circle cx="14" cy="14" r="13" fill="var(--color-background-secondary)" stroke="var(--color-border-tertiary)" strokeWidth="1"/>
+        </svg>
+      );
+    }
+    
+    // Get workout type label
+    let workoutTypeLabel = '—';
+    if (plannedWorkout) {
+      if (plannedWorkout.type === 'easy') workoutTypeLabel = 'Easy';
+      else if (plannedWorkout.type === 'speed' || plannedWorkout.type === 'tempo') workoutTypeLabel = 'Speed';
+      else if (plannedWorkout.type === 'long') workoutTypeLabel = 'Long';
+      else workoutTypeLabel = 'Run';
+    } else if (!isRunDay) {
+      workoutTypeLabel = 'Rest';
+    }
+    
+    const handleClick = () => {
+      // If today is a rest day, navigate to recovery page
+      if (dayInfo.isToday && (!plannedWorkout || plannedWorkout.type === 'rest') && onRecoveryClick) {
+        onRecoveryClick();
+        return;
+      }
       
-      <div className="workout-block">
-        <div className="block-details">
-          <div className="detail-item">
-            <span className="detail-label">Total Miles</span>
-            <span className="detail-value">{weeklyStats.totalMiles} mi</span>
-          </div>
-          <div className="detail-item">
-            <span className="detail-label">Total Time</span>
-            <span className="detail-value">{weeklyStats.totalTime} min</span>
-          </div>
-          <div className="detail-item">
-            <span className="detail-label">Runs</span>
-            <span className="detail-value">{weeklyStats.runCount}/3</span>
-          </div>
-        </div>
-      </div>
-
-      <div className="workout-block">
-        <div className="block-title">Weekly Schedule</div>
-        <div style={{ 
-          overflowX: 'auto', 
-          paddingBottom: '10px',
-          marginTop: '10px'
+      // Allow clicking any workout (completed or not) as long as it's not postponed
+      if (plannedWorkout && !isPostponed && onWorkoutClick) {
+        onWorkoutClick(plannedWorkout, dayInfo.fullDayName);
+      }
+    };
+    
+    return (
+      <div key={dayOffset} style={cardStyle} onClick={handleClick} onMouseEnter={(e) => {
+        if (isClickable) {
+          e.currentTarget.style.borderColor = 'var(--color-border-secondary)';
+        }
+      }} onMouseLeave={(e) => {
+        if (dayInfo.isToday) {
+          e.currentTarget.style.borderColor = '#378ADD';
+        } else if (isCompleted) {
+          e.currentTarget.style.borderColor = colors.border;
+        } else {
+          e.currentTarget.style.borderColor = 'var(--color-border-tertiary)';
+        }
+      }}>
+        {/* Day abbreviation */}
+        <div style={{
+          fontSize: '9px',
+          textTransform: 'uppercase',
+          color: dayNameColor,
+          fontWeight: 400,
+          marginBottom: '4px'
         }}>
-          <div style={{ 
-            display: 'grid', 
-            gridTemplateColumns: 'repeat(7, minmax(80px, 1fr))', 
-            gap: '8px',
-            minWidth: '560px' // Ensures 7 days * 80px minimum
-          }}>
-        {[0, 1, 2, 3, 4, 5, 6].map(dayOffset => {
-          const dayInfo = getDayInfo(dayOffset);
-          const plannedWorkout = getPlannedWorkout(dayOffset);
-          const isRunDay = isRunningDay(dayOffset);
-          
-          if (!dayInfo) return null;
-          
-          // CRITICAL: Check postpone status first, even if there's a workout
-          // This ensures postponed days always show as postponed, even if AI put a workout back
-          const dayName = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'][dayOffset];
-          const postponements = weeklyPlan?._postponements || {};
-          const postponeInfo = postponements[dayName];
-          const isPostponed = !!postponeInfo && postponeInfo.postponed;
-          
-          // Determine card styling based on state
-          let backgroundColor = 'var(--grid-color)';
-          let borderColor = dayInfo.isToday ? '2px solid var(--accent)' : '1px solid var(--border-color)';
-          let textColor = 'var(--text-color)';
-          
-          if (isPostponed) {
-            backgroundColor = 'rgba(255, 165, 0, 0.3)'; // Orange tint for postponed
-            borderColor = '2px solid rgba(255, 165, 0, 0.8)';
-            textColor = 'var(--text-color)';
-          } else if (dayInfo.hasMatchedWorkout || dayInfo.hasRun) {
-            backgroundColor = 'var(--accent)';
-            textColor = 'white';
-          } else if (plannedWorkout) {
-            // Show workout on any day, not just running days (for redistributed workouts)
-            backgroundColor = 'var(--card-bg)';
-          }
-          
-          const cardStyle = {
-            padding: '12px 8px',
-            borderRadius: '8px',
-            textAlign: 'center',
-            fontSize: '12px',
-            cursor: (plannedWorkout && !dayInfo.hasRun && !isPostponed) ? 'pointer' : 'default',
-            border: borderColor,
-            backgroundColor: backgroundColor,
-            color: textColor,
-            opacity: dayInfo.isPast && !dayInfo.hasRun && !dayInfo.hasMatchedWorkout && isRunDay && !isPostponed ? 0.6 : 1,
-            position: 'relative'
-          };
-          
-          const handleClick = () => {
-            if (plannedWorkout && !dayInfo.hasRun && !isPostponed && onWorkoutClick) {
-              console.log('Clicking on planned workout:', plannedWorkout);
-              onWorkoutClick(plannedWorkout, dayInfo.fullDayName);
-            }
-          };
-          
-          return (
-            <div key={dayOffset} style={cardStyle} onClick={handleClick}>
-              <div style={{ fontWeight: '600', marginBottom: '4px' }}>
-                {dayInfo.dayName}
-              </div>
-              <div style={{ fontSize: '10px', marginBottom: '4px' }}>
-                {dayInfo.date.getDate()}
-              </div>
-              <div style={{ fontSize: '10px', color: dayInfo.hasRun ? 'white' : (isPostponed ? 'rgba(255, 140, 0, 1)' : 'var(--text-secondary)') }}>
-                {isPostponed ? (
-                  'Postponed'
-                ) : dayInfo.hasRun ? (
-                  'Completed'
-                ) : plannedWorkout ? (
-                  // Show workout type for any day that has a workout (including redistributed ones)
-                  plannedWorkout.type === 'easy' ? 'Easy' : 
-                  plannedWorkout.type === 'speed' ? 'Speed' : 
-                  plannedWorkout.type === 'long' ? 'Long' : 
-                  plannedWorkout.title || 'Run'
-                ) : isRunDay ? (
-                  'Rest'
-                ) : (
-                  'Recovery'
-                )}
-              </div>
-            </div>
-          );
-        })}
-          </div>
+          {dayInfo.dayName}
         </div>
-      </div>
-      
-      {weeklyPlan && (
-        <div style={{ 
-          marginTop: '15px',
-          fontSize: '12px',
-          color: 'var(--text-secondary)',
+        
+        {/* Date number */}
+        <div style={{
+          fontSize: '14px',
+          fontWeight: 500,
+          color: textColor,
+          marginBottom: '6px'
+        }}>
+          {dayInfo.date.getDate()}
+        </div>
+        
+        {/* Circle icon */}
+        <div style={{ marginBottom: '6px' }}>
+          {iconContent}
+        </div>
+        
+        {/* Workout type label */}
+        <div style={{
+          fontSize: '8px',
+          fontWeight: 500,
+          color: typeLabelColor,
+          marginBottom: '4px',
           textAlign: 'center'
         }}>
-          Click on planned run days to view workout details
+          {workoutTypeLabel}
         </div>
-      )}
-    </div>
+        
+        {/* Distance or dash */}
+        <div style={{
+          fontSize: '9px',
+          color: distanceColor,
+          marginBottom: '3px'
+        }}>
+          {distance ? `${distance} mi` : '—'}
+        </div>
+        
+        {/* Intensity stripe */}
+        <div style={{
+          width: '100%',
+          height: '3px',
+          background: intensityStripeColor,
+          marginTop: 'auto'
+        }} />
+      </div>
+    );
+  };
+
+  return (
+    <>
+      {/* Desktop week grid */}
+      <div className="week-strip-desktop" style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(7, 1fr)',
+        gap: '6px',
+        padding: '0 24px',
+        marginBottom: '0'
+      }}>
+        {[0, 1, 2, 3, 4, 5, 6].map(dayOffset => renderDayCard(dayOffset))}
+      </div>
+      
+      {/* Mobile week scroll */}
+      <div className="week-strip-mobile" style={{
+        display: 'none',
+        overflowX: 'auto',
+        padding: '0 16px 14px 16px',
+        scrollbarWidth: 'none',
+        msOverflowStyle: 'none',
+        boxSizing: 'content-box'
+      }}>
+        <style>{`
+          .week-strip-mobile::-webkit-scrollbar {
+            display: none;
+          }
+        `}</style>
+        <div style={{
+          display: 'flex',
+          gap: '6px',
+          minWidth: 'max-content'
+        }}>
+          {[0, 1, 2, 3, 4, 5, 6].map(dayOffset => {
+            const card = renderDayCard(dayOffset);
+            if (!card) return null;
+            return (
+              <div key={dayOffset} style={{ width: '56px', flexShrink: 0 }}>
+                {card}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      
+      <style>{`
+        @media (max-width: 720px) {
+          .week-strip-desktop {
+            display: none !important;
+          }
+          .week-strip-mobile {
+            display: block !important;
+          }
+        }
+        @media (min-width: 721px) {
+          .week-strip-mobile {
+            display: none !important;
+          }
+        }
+      `}</style>
+    </>
   );
 };
 
