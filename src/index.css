@@ -431,12 +431,20 @@ body {
 }
 
 @media (max-width: 720px) {
+  .recovery-entry-container {
+    padding: 0;
+    margin: 0 16px;
+  }
+}
+
+@media (max-width: 720px) {
   .app {
     padding: calc(20px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-left)) calc(20px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-right));
   }
   
   .recovery-entry-container {
-    padding: 0 16px;
+    padding: 0;
+    margin: 0 16px;
   }
   
   .dashboard-container {
@@ -448,16 +456,21 @@ body {
     padding: 0 16px !important;
   }
   
+  /* Week strip desktop mobile padding */
+  .week-strip-desktop {
+    padding: 0 16px !important;
+  }
+  
   /* Hero section mobile padding */
   .hero-section {
-    padding: 16px !important;
+    padding: 20px 16px !important;
   }
   
   /* Section label mobile padding - standardize vertical spacing */
   .section-label {
-    padding: 16px 16px 8px !important;
+    padding: 20px 16px 10px !important;
     padding-left: 0 !important;
-    margin-bottom: 10px !important;
+    margin-bottom: 0 !important;
   }
 }
 
@@ -519,6 +532,9 @@ body {
 
 @media (max-width: 720px) {
   .dashboard-container {
+    max-width: 100%;
+    margin: 0;
+    width: 100%;
     padding: 0 16px;
   }
 }
@@ -530,8 +546,24 @@ body {
 
 /* Section label spacing */
 .section-label {
-  padding-top: 0;
-  margin-bottom: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  padding: 20px 24px 10px;
+  margin-bottom: 0;
+}
+
+@media (max-width: 720px) {
+  .section-label {
+    padding: 20px 16px 10px;
+  }
+}
+
+/* Section labels inside two-column grid have different padding */
+.below-week .section-label {
+  padding: 0 0 10px 0;
 }
 
 /* Fix clipping in two-column grid */

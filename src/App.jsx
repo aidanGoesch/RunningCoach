@@ -1882,14 +1882,16 @@ function App() {
 
   return (
     <div className="app">
-      {/* Hamburger Menu */}
-      <div style={{ 
-        position: 'fixed', 
-        top: '20px', 
-        left: '20px', 
-        zIndex: 1000,
+      {/* App Header Bar with Hamburger Menu */}
+      <div style={{
+        height: '44px',
+        padding: '0 20px',
+        display: 'flex',
+        alignItems: 'center',
+        background: 'transparent',
         paddingTop: 'env(safe-area-inset-top)',
-        paddingLeft: 'env(safe-area-inset-left)'
+        paddingLeft: 'calc(20px + env(safe-area-inset-left))',
+        paddingRight: 'calc(20px + env(safe-area-inset-right))'
       }}>
         <button
           onClick={() => setShowMenu(!showMenu)}
@@ -1911,9 +1913,10 @@ function App() {
           <div style={{ width: '24px', height: '3px', backgroundColor: 'var(--text-color)', borderRadius: '2px' }}></div>
           <div style={{ width: '24px', height: '3px', backgroundColor: 'var(--text-color)', borderRadius: '2px' }}></div>
         </button>
+      </div>
 
-        {/* Menu Slide Panel */}
-        <div style={{
+      {/* Menu Slide Panel */}
+      <div style={{
           position: 'fixed',
           top: '0',
           left: showMenu ? '0' : '-300px',
@@ -2260,22 +2263,21 @@ function App() {
           </div>
         </div>
 
-        {/* Overlay */}
-        {showMenu && (
-          <div 
-            style={{
-              position: 'fixed',
-              top: '0',
-              left: '0',
-              width: '100vw',
-              height: '100vh',
-              backgroundColor: 'rgba(0,0,0,0.3)',
-              zIndex: 998
-            }}
-            onClick={() => setShowMenu(false)}
-          />
-        )}
-      </div>
+      {/* Overlay */}
+      {showMenu && (
+        <div 
+          style={{
+            position: 'fixed',
+            top: '0',
+            left: '0',
+            width: '100vw',
+            height: '100vh',
+            backgroundColor: 'rgba(0,0,0,0.3)',
+            zIndex: 998
+          }}
+          onClick={() => setShowMenu(false)}
+        />
+      )}
 
       {/* Loading Spinner */}
       {isPreloading && (
@@ -2584,14 +2586,7 @@ function App() {
             })()}
 
             {/* This week section label */}
-            <div style={{
-              fontSize: '10px',
-              letterSpacing: '0.1em',
-              textTransform: 'uppercase',
-              color: 'var(--color-text-tertiary)',
-              padding: '18px 24px 10px',
-              paddingLeft: 0
-            }} className="section-label">
+            <div className="section-label">
               This week
             </div>
 
@@ -2636,14 +2631,7 @@ function App() {
             }} className="two-column-grid below-week">
               {/* Left column: Today's workout or Recovery (on rest days) */}
               <div>
-                <div style={{
-                  fontSize: '10px',
-                  letterSpacing: '0.1em',
-                  textTransform: 'uppercase',
-                  color: 'var(--color-text-tertiary)',
-                  paddingLeft: 0,
-                  marginBottom: '8px'
-                }} className="section-label">
+                <div className="section-label">
                   {workout ? "Today's workout" : "Today"}
                 </div>
                 {workout ? (
@@ -2776,14 +2764,7 @@ function App() {
               
               {/* Right column: Recent runs */}
               <div>
-                <div style={{
-                  fontSize: '10px',
-                  letterSpacing: '0.1em',
-                  textTransform: 'uppercase',
-                  color: 'var(--color-text-tertiary)',
-                  paddingLeft: 0,
-                  marginBottom: '8px'
-                }} className="section-label">
+                <div className="section-label">
                   Recent runs
                 </div>
                 <ActivitiesDisplay 
