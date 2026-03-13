@@ -62,21 +62,38 @@ async function main() {
   }
 
   console.log("Current token row found; refreshing with Strava...");
+  console.log("Using client_id:", STRAVA_CLIENT_ID);
+  console.log("Refresh token length:", current.refresh_token?.length || 0);
+  console.log("Refresh token starts with:", current.refresh_token?.substring(0, 10) || "N/A");
 
   // 2) Refresh with Strava
+  const requestBody = {
+    client_id: STRAVA_CLIENT_ID,
+    client_secret: STRAVA_CLIENT_SECRET,
+    grant_type: "refresh_token",
+    refresh_token: current.refresh_token,
+  };
+
   const stravaRes = await fetch("https://www.strava.com/oauth/token", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      client_id: STRAVA_CLIENT_ID,
-      client_secret: STRAVA_CLIENT_SECRET,
-      grant_type: "refresh_token",
-      refresh_token: current.refresh_token,
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   if (!stravaRes.ok) {
-    console.error("Failed to refresh token with Strava:", await stravaRes.text());
+    const errorText = await stravaRes.text();
+    console.error("Failed to refresh token with Strava:");
+    console.error("Status:", stravaRes.status, stravaRes.statusText);
+    console.error("Response:", errorText);
+    
+    // Try to parse as JSON for better error display
+    try {
+      const errorJson = JSON.parse(errorText);
+      console.error("Parsed error:", JSON.stringify(errorJson, null, 2));
+    } catch {
+      // Not JSON, already logged as text
+    }
+    
     process.exit(1);
   }
 
