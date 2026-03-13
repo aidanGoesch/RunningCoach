@@ -185,13 +185,29 @@ const ActivityDetail = ({ activityId, onBack }) => {
           getActivityStreams(token, activityId)
         ]);
         
-        // Cache the data
+        // Cache the combined detail + streams payload
         const cacheData = {
           activity: activityData,
           streams: streamData,
           timestamp: Date.now()
         };
         localStorage.setItem(cacheKey, JSON.stringify(cacheData));
+
+        // Also cache a compact version of key streams for insights
+        try {
+          const time = streamData?.time?.data || [];
+          const velocity = streamData?.velocity_smooth?.data || [];
+          const hr = streamData?.heartrate?.data || [];
+          const cadence = streamData?.cadence?.data || [];
+          const altitude = streamData?.altitude?.data || [];
+          const streamsCache = { time, velocity_smooth: velocity, heartrate: hr, cadence, altitude };
+          localStorage.setItem(
+            `activity_streams_${activityId}`,
+            JSON.stringify(streamsCache)
+          );
+        } catch (e) {
+          console.warn('Failed to cache compact activity streams:', e);
+        }
         
         setActivity(activityData);
         setStreams(streamData);

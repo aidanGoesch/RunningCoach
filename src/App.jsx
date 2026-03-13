@@ -11,7 +11,7 @@ import WorkoutFeedback from './components/WorkoutFeedback';
 import PostponeWorkout from './components/PostponeWorkout';
 import PullToRefresh from './components/PullToRefresh';
 import NewActivityRatingModal from './components/NewActivityRatingModal';
-import { generateWorkout, generateWeeklyPlan, generateDataDrivenWeeklyPlan, generateWeeklyAnalysis, matchActivitiesToWorkouts, syncWithStrava, generateInsights, detectNewActivities, adjustWeeklyPlanForPostponement } from './services/api';
+import { generateWorkout, generateWeeklyPlan, generateDataDrivenWeeklyPlan, generateWeeklyAnalysis, matchActivitiesToWorkouts, syncWithStrava, generateInsights, detectNewActivities, adjustWeeklyPlanForPostponement, regenerateDayWorkout, updatePromptWithCurrentData, buildFourWeekSummary } from './services/api';
 import { dataService, setupRealtimeSync, syncAllDataFromSupabase, enableSupabase } from './services/supabase';
 
 function App() {
@@ -40,6 +40,7 @@ function App() {
   const [recoveryCompleted, setRecoveryCompleted] = useState(false);
   const [recoveryLoading, setRecoveryLoading] = useState(false);
   const [recoveryBlockStatus, setRecoveryBlockStatus] = useState({});
+  const [isFixingWorkout, setIsFixingWorkout] = useState(false);
 
   const todayDate = new Date().toISOString().split('T')[0];
 
@@ -970,7 +971,8 @@ function App() {
       const monday = new Date(today);
       monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
       monday.setHours(0, 0, 0, 0);
-      const weekKey = `${monday.getFullYear()}-${monday.getMonth()}-${monday.getDate()}`;
+      // Use ISO date format (YYYY-MM-DD) for weekKey
+      const weekKey = monday.toISOString().split('T')[0];
       
       // Match activities to workouts
       const activityMatches = matchActivitiesToWorkouts(activities, weeklyPlan, monday);
@@ -1568,11 +1570,54 @@ function App() {
       setSelectedPlannedWorkout(null);
     };
 
+    const handleFixWorkout = async () => {
+      if (!weeklyPlan || !selectedPlannedWorkout) return;
+      const dayKey = selectedPlannedWorkout.dayName.toLowerCase();
+
+      setIsFixingWorkout(true);
+      try {
+        const coachingPromptBase =
+          localStorage.getItem('coaching_prompt') || 'You are an expert running coach.';
+        const activityRatings = JSON.parse(
+          localStorage.getItem('activity_ratings') || '{}'
+        );
+        const fourWeekSummary = buildFourWeekSummary(activities || [], activityRatings);
+        const trainingContext = updatePromptWithCurrentData(
+          coachingPromptBase,
+          activities || []
+        );
+
+        const updatedPlan = await regenerateDayWorkout(
+          dayKey,
+          weeklyPlan,
+          fourWeekSummary,
+          coachingPromptBase,
+          trainingContext
+        );
+
+        setWeeklyPlan(updatedPlan);
+        if (updatedPlan[dayKey]) {
+          setSelectedPlannedWorkout({
+            ...selectedPlannedWorkout,
+            workout: updatedPlan[dayKey]
+          });
+        }
+      } catch (e) {
+        console.error('Failed to regenerate day workout:', e);
+        setError('Failed to fix workout. Please try again.');
+        setTimeout(() => setError(null), 4000);
+      } finally {
+        setIsFixingWorkout(false);
+      }
+    };
+
     return (
       <div className="app">
         <WorkoutDetail 
           workout={{ ...workoutToShow, title }}
           onBack={handleBack}
+          onFixWorkout={selectedPlannedWorkout ? handleFixWorkout : null}
+          isFixingWorkout={isFixingWorkout}
           onPostpone={() => {
             setShowPostpone(true);
           }}

@@ -1073,7 +1073,10 @@ export const getStravaTokens = async () => {
   if (!shouldCheckSupabase) {
     const accessToken = localStorage.getItem('strava_access_token');
     const refreshToken = localStorage.getItem('strava_refresh_token');
-    console.log('Not using Supabase, checking localStorage:', { hasAccessToken: !!accessToken, hasRefreshToken: !!refreshToken });
+    console.log('Not using Supabase, checking localStorage:', {
+      hasAccessToken: !!accessToken,
+      hasRefreshToken: !!refreshToken
+    });
     return accessToken && refreshToken ? { accessToken, refreshToken } : null;
   }
   
@@ -1086,23 +1089,12 @@ export const getStravaTokens = async () => {
     
     if (error) {
       if (error.code === 'PGRST116') {
-        console.log('No tokens in Supabase, checking localStorage for migration...');
-        const accessToken = localStorage.getItem('strava_access_token');
-        const refreshToken = localStorage.getItem('strava_refresh_token');
-        if (accessToken && refreshToken) {
-          console.log('Migrating tokens from localStorage to Supabase');
-          await saveStravaTokens(accessToken, refreshToken);
-          return { accessToken, refreshToken };
-        }
-        console.log('No tokens found in Supabase or localStorage');
+        console.log('No tokens in Supabase and migration from localStorage is disabled.');
         return null;
       }
       console.error('Error getting Strava tokens from Supabase:', error);
-      // Fallback to localStorage
-      const accessToken = localStorage.getItem('strava_access_token');
-      const refreshToken = localStorage.getItem('strava_refresh_token');
-      console.log('Falling back to localStorage:', { hasAccessToken: !!accessToken, hasRefreshToken: !!refreshToken });
-      return accessToken && refreshToken ? { accessToken, refreshToken } : null;
+      // Do not fall back to localStorage when Supabase is enabled
+      return null;
     }
     
     if (data) {
@@ -1117,11 +1109,8 @@ export const getStravaTokens = async () => {
     return null;
   } catch (error) {
     console.error('Failed to get Strava tokens:', error);
-    // Fallback to localStorage
-    const accessToken = localStorage.getItem('strava_access_token');
-    const refreshToken = localStorage.getItem('strava_refresh_token');
-    console.log('Exception occurred, falling back to localStorage:', { hasAccessToken: !!accessToken, hasRefreshToken: !!refreshToken });
-    return accessToken && refreshToken ? { accessToken, refreshToken } : null;
+    // Do not fall back to localStorage when Supabase is enabled
+    return null;
   }
 };
 

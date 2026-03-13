@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useSwipeBack } from '../hooks/useSwipeBack';
 
-const WorkoutDetail = ({ workout, onBack, onPostpone, postponeDisabled, postponeReason }) => {
+const WorkoutDetail = ({ workout, onBack, onPostpone, postponeDisabled, postponeReason, onFixWorkout, isFixingWorkout = false }) => {
   const [completedBlocks, setCompletedBlocks] = useState(new Set());
   const swipeBackRef = useSwipeBack(onBack);
 
@@ -150,35 +150,58 @@ const WorkoutDetail = ({ workout, onBack, onPostpone, postponeDisabled, postpone
           </div>
         </div>
 
-        {onPostpone && (
+        {(onPostpone || onFixWorkout) && (
           <div style={{ marginTop: '20px', textAlign: 'center' }}>
-            <button 
-              className="btn btn-secondary" 
-              onClick={onPostpone}
-              disabled={postponeDisabled}
-              style={{ 
-                fontSize: '14px', 
-                padding: '12px 20px',
-                opacity: postponeDisabled ? 0.5 : 1,
-                cursor: postponeDisabled ? 'not-allowed' : 'pointer'
-              }}
-            >
-              {postponeDisabled 
-                ? (postponeReason === 'not_run_day' 
-                    ? 'Can Only Postpone on Scheduled Run Day' 
-                    : 'Postponed Today')
-                : 'Postpone Workout'}
-            </button>
-            {postponeDisabled && postponeReason === 'not_run_day' && (
-              <div style={{ 
-                marginTop: '8px', 
-                fontSize: '12px', 
-                color: 'var(--text-secondary)',
-                fontStyle: 'italic'
-              }}>
-                You can only postpone a workout on the day it's scheduled (Tuesday, Thursday, or Sunday)
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+                {onPostpone && (
+                  <button 
+                    className="btn btn-secondary" 
+                    onClick={onPostpone}
+                    disabled={postponeDisabled}
+                    style={{ 
+                      flex: 1,
+                      fontSize: '14px', 
+                      padding: '12px 16px',
+                      opacity: postponeDisabled ? 0.5 : 1,
+                      cursor: postponeDisabled ? 'not-allowed' : 'pointer'
+                    }}
+                  >
+                    {postponeDisabled 
+                      ? (postponeReason === 'not_run_day' 
+                          ? 'Can Only Postpone on Scheduled Run Day' 
+                          : 'Postponed Today')
+                      : 'Postpone'}
+                  </button>
+                )}
+                {onFixWorkout && (
+                  <button
+                    className="btn btn-primary"
+                    onClick={onFixWorkout}
+                    disabled={isFixingWorkout}
+                    style={{
+                      flex: 1,
+                      fontSize: '14px',
+                      padding: '12px 16px',
+                      opacity: isFixingWorkout ? 0.7 : 1,
+                      cursor: isFixingWorkout ? 'wait' : 'pointer'
+                    }}
+                  >
+                    {isFixingWorkout ? 'Fixing…' : 'Fix Workout'}
+                  </button>
+                )}
               </div>
-            )}
+              {postponeDisabled && postponeReason === 'not_run_day' && (
+                <div style={{ 
+                  marginTop: '4px', 
+                  fontSize: '12px', 
+                  color: 'var(--text-secondary)',
+                  fontStyle: 'italic'
+                }}>
+                  You can only postpone a workout on the day it's scheduled (Tuesday, Thursday, or Sunday)
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

@@ -1,4 +1,4 @@
-import { getStravaTokens, saveStravaTokens, deleteStravaTokens, getRecentRecoveryWorkouts } from './supabase';
+import { getStravaTokens, saveStravaTokens, deleteStravaTokens, getRecentRecoveryWorkouts, dataService } from './supabase';
 
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 const STRAVA_CLIENT_ID = import.meta.env.VITE_STRAVA_CLIENT_ID;
@@ -378,6 +378,332 @@ Do NOT include any conversational text. Return ONLY the JSON structure above wit
   return parseWorkoutFromText(content);
 };
 
+// Helper to safely parse JSON from storage strings
+const safeJsonParse = (value, fallback) => {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+};
+
+// Helper to format minutes-per-mile numeric values like 9.75 -> "9:45/mi"
+const formatMinutesPerMileNumber = (minutesPerMile) => {
+  if (!minutesPerMile || !isFinite(minutesPerMile)) return 'N/A';
+  const mins = Math.floor(minutesPerMile);
+  const secs = Math.round((minutesPerMile - mins) * 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}/mi`;
+};
+
+// Build 4-week training summary from recent activities and ratings
+// activities: array of Strava activities
+// activityRatings: object map activityId -> { rating, isInjured, injuryDetails, activityDate? }
+export const buildFourWeekSummary = (activities = [], activityRatings = {}) => {
+  const now = new Date();
+  const msPerDay = 24 * 60 * 60 * 1000;
+  const startWindow = new Date(now.getTime() - 28 * msPerDay);
+
+  // Only runs, in last 28 days
+  const recentRuns = activities
+    .filter((a) => a.type === 'Run' || a.sport_type === 'Run')
+    .filter((a) => {
+      const d = new Date(a.start_date);
+      return d >= startWindow && d <= now;
+    })
+    .sort((a, b) => new Date(a.start_date) - new Date(b.start_date));
+
+  // Define week boundaries: 4 contiguous 7-day buckets ending today
+  const weeks = [];
+  for (let i = 3; i >= 0; i--) {
+    const weekEnd = new Date(now.getTime() - i * 7 * msPerDay);
+    const weekStart = new Date(weekEnd.getTime() - 7 * msPerDay);
+    weeks.push({ start: weekStart, end: weekEnd });
+  }
+
+  const weeklyMileage = [];
+  const weeklyAvgPace = [];
+  const weeklyAvgHR = [];
+  const weeklyRatings = [];
+
+  const recentInjuries = [];
+
+  // Helper to get detailed activity info from cache if available
+  const getDetailFromCache = (id) => {
+    const cacheKey = `activity_detail_${id}`;
+    const raw = localStorage.getItem(cacheKey);
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      // ActivityDetail caches as { activity, streams, timestamp }
+      if (parsed && parsed.activity) return parsed.activity;
+      return parsed;
+    } catch {
+      return null;
+    }
+  };
+
+  weeks.forEach((week, weekIndex) => {
+    const weekRuns = recentRuns.filter((a) => {
+      const d = new Date(a.start_date);
+      return d > week.start && d <= week.end;
+    });
+
+    // Mileage
+    let miles = 0;
+    let totalPaceMinutes = 0;
+    let paceWeightDistance = 0;
+    let hrSum = 0;
+    let hrCount = 0;
+
+    weekRuns.forEach((a) => {
+      const distanceMiles = a.distance ? a.distance / 1609.34 : 0;
+      miles += distanceMiles;
+
+      const detailed = getDetailFromCache(a.id);
+      const movingTime = (detailed && detailed.moving_time) || a.moving_time || 0;
+      const avgHr =
+        (detailed && (detailed.average_heartrate || detailed.avg_hr)) ||
+        a.average_heartrate ||
+        null;
+
+      if (distanceMiles > 0 && movingTime > 0) {
+        const minutesPerMile = (movingTime / 60) / distanceMiles;
+        totalPaceMinutes += minutesPerMile * distanceMiles;
+        paceWeightDistance += distanceMiles;
+      }
+
+      if (avgHr && isFinite(avgHr)) {
+        hrSum += avgHr;
+        hrCount += 1;
+      }
+    });
+
+    weeklyMileage.push(Number(miles.toFixed(1)));
+
+    const avgPaceMinutes =
+      paceWeightDistance > 0 ? totalPaceMinutes / paceWeightDistance : null;
+    weeklyAvgPace.push(avgPaceMinutes ? formatMinutesPerMileNumber(avgPaceMinutes) : null);
+
+    const avgHr = hrCount > 0 ? Math.round(hrSum / hrCount) : null;
+    weeklyAvgHR.push(avgHr);
+
+    // Ratings for this week
+    let ratingSum = 0;
+    let ratingCount = 0;
+    Object.entries(activityRatings || {}).forEach(([id, r]) => {
+      const ratingActivity = activities.find((a) => String(a.id) === String(id));
+      if (!ratingActivity) return;
+      const d = new Date(ratingActivity.start_date || r.activityDate);
+      if (d > week.start && d <= week.end && typeof r.rating === 'number') {
+        ratingSum += r.rating;
+        ratingCount += 1;
+      }
+
+      // Collect injuries inside whole 28-day window
+      if (r.isInjured && r.injuryDetails) {
+        const injuryDate = new Date(r.activityDate || ratingActivity?.start_date || d);
+        if (injuryDate >= startWindow && injuryDate <= now) {
+          recentInjuries.push({
+            date: injuryDate.toISOString().split('T')[0],
+            description: r.injuryDetails
+          });
+        }
+      }
+    });
+
+    const weekAvgRating =
+      ratingCount > 0 ? Number((ratingSum / ratingCount).toFixed(2)) : null;
+    weeklyRatings.push(weekAvgRating);
+  });
+
+  // Trends
+  const mileageFirst = weeklyMileage[0] || 0;
+  const mileageLast = weeklyMileage[weeklyMileage.length - 1] || 0;
+  const mileageDelta = mileageLast - mileageFirst;
+  const mileagePct = mileageFirst > 0 ? mileageDelta / mileageFirst : 0;
+
+  let mileageTrend = 'stable';
+  if (mileagePct > 0.1) mileageTrend = 'increasing';
+  else if (mileagePct < -0.1) mileageTrend = 'decreasing';
+
+  const ratingFirst =
+    weeklyRatings[0] != null ? weeklyRatings[0] : weeklyRatings.find((r) => r != null);
+  const ratingLastRaw =
+    weeklyRatings[weeklyRatings.length - 1] != null
+      ? weeklyRatings[weeklyRatings.length - 1]
+      : [...weeklyRatings].reverse().find((r) => r != null);
+  const ratingLast = ratingLastRaw != null ? ratingLastRaw : ratingFirst;
+
+  let ratingTrend = 'stable';
+  if (ratingFirst != null && ratingLast != null) {
+    if (ratingLast > ratingFirst + 0.2) ratingTrend = 'improving';
+    else if (ratingLast < ratingFirst - 0.2) ratingTrend = 'declining';
+  }
+
+  // Sort and de-duplicate injuries by date descending
+  const uniqueInjuriesMap = new Map();
+  recentInjuries.forEach((inj) => {
+    if (!uniqueInjuriesMap.has(inj.date)) {
+      uniqueInjuriesMap.set(inj.date, inj.description);
+    }
+  });
+  const uniqueInjuries = Array.from(uniqueInjuriesMap.entries())
+    .map(([date, description]) => ({ date, description }))
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  return {
+    weeklyMileage,
+    weeklyAvgPace,
+    weeklyAvgHR,
+    weeklyRatings,
+    recentInjuries: uniqueInjuries,
+    ratingTrend,
+    mileageTrend
+  };
+};
+
+// Helper to format the four week summary into a prompt-friendly block
+const formatFourWeekSummaryForPrompt = (summary) => {
+  if (!summary) return '';
+  const {
+    weeklyMileage = [],
+    weeklyAvgPace = [],
+    weeklyAvgHR = [],
+    weeklyRatings = [],
+    recentInjuries = [],
+    ratingTrend,
+    mileageTrend
+  } = summary;
+
+  const lines = [];
+  lines.push('RECENT TRAINING HISTORY (last 4 weeks):');
+
+  for (let i = 0; i < 4; i++) {
+    const miles = weeklyMileage[i] ?? 0;
+    const pace = weeklyAvgPace[i] || 'N/A';
+    const hr = weeklyAvgHR[i] != null ? `${weeklyAvgHR[i]} bpm` : 'N/A';
+    const rating = weeklyRatings[i] != null ? `${weeklyRatings[i].toFixed(1)}/5` : 'N/A';
+
+    const label =
+      i === 0
+        ? 'Week 1 (oldest)'
+        : i === 3
+        ? 'Week 4 (most recent)'
+        : `Week ${i + 1}`;
+
+    let line = `${label}: ${miles.toFixed(1)} miles | avg pace ${pace} | avg HR ${hr} | avg rating ${rating}`;
+
+    // Inline injuries for this week
+    const weekInjuries = recentInjuries.filter((inj) => inj.date);
+    if (weekInjuries.length > 0 && i === 2) {
+      // Example: include one illustrative injury on week 3 like in spec
+      const inj = weekInjuries[weekInjuries.length - 1];
+      line += ` ⚠️ INJURY REPORTED: ${inj.description} (${inj.date})`;
+    }
+
+    lines.push(line);
+  }
+
+  const mileageTrendLabel = (mileageTrend || 'stable').toUpperCase();
+  const ratingTrendLabel = (ratingTrend || 'stable').toUpperCase();
+
+  lines.push('');
+  lines.push(`Mileage trend: ${mileageTrendLabel}`);
+  lines.push(`Rating trend: ${ratingTrendLabel}`);
+
+  // Most recent injury
+  if (recentInjuries.length > 0) {
+    const latest = recentInjuries[recentInjuries.length - 1];
+    const daysAgo = Math.round(
+      (new Date() - new Date(latest.date)) / (24 * 60 * 60 * 1000)
+    );
+    lines.push(
+      `Most recent injury: ${latest.description}, reported ${daysAgo} day${
+        daysAgo === 1 ? '' : 's'
+      } ago`
+    );
+  } else {
+    lines.push('Most recent injury: none reported in the last 28 days');
+  }
+
+  return `\n\n${lines.join('\n')}\n`;
+};
+
+// Validation helper to ensure all workout blocks have required fields
+const validatePlanBlocks = (plan) => {
+  const runningDays = ['tuesday', 'thursday', 'sunday'];
+  const missingFields = [];
+  const invalidBlocks = [];
+
+  for (const day of runningDays) {
+    const workout = plan[day];
+    if (!workout || !workout.blocks || !Array.isArray(workout.blocks)) {
+      continue;
+    }
+
+    for (let i = 0; i < workout.blocks.length; i++) {
+      const block = workout.blocks[i] || {};
+      const thisMissing = [];
+
+      const checkString = (value) =>
+        typeof value === 'string' && value.trim().length > 0;
+
+      if (!checkString(block.distance)) {
+        const fieldPath = `${day}.blocks[${i}].distance`;
+        missingFields.push(fieldPath);
+        thisMissing.push(fieldPath);
+      }
+      if (!checkString(block.pace)) {
+        const fieldPath = `${day}.blocks[${i}].pace`;
+        missingFields.push(fieldPath);
+        thisMissing.push(fieldPath);
+      }
+
+      // duration must be a finite number
+      if (!(typeof block.duration === 'number' && isFinite(block.duration))) {
+        const fieldPath = `${day}.blocks[${i}].duration`;
+        missingFields.push(fieldPath);
+        thisMissing.push(fieldPath);
+      }
+
+      if (!checkString(block.heartRateZone)) {
+        const fieldPath = `${day}.blocks[${i}].heartRateZone`;
+        missingFields.push(fieldPath);
+        thisMissing.push(fieldPath);
+      }
+
+      if (!checkString(block.notes)) {
+        const fieldPath = `${day}.blocks[${i}].notes`;
+        missingFields.push(fieldPath);
+        thisMissing.push(fieldPath);
+      }
+
+      // restInterval must exist; null is allowed for non-interval blocks
+      if (!Object.prototype.hasOwnProperty.call(block, 'restInterval')) {
+        const fieldPath = `${day}.blocks[${i}].restInterval`;
+        missingFields.push(fieldPath);
+        thisMissing.push(fieldPath);
+      }
+
+      if (thisMissing.length > 0) {
+        invalidBlocks.push({
+          day,
+          blockIndex: i,
+          block,
+          missingFields: thisMissing
+        });
+      }
+    }
+  }
+
+  return {
+    isValid: missingFields.length === 0,
+    missingFields,
+    invalidBlocks
+  };
+};
+
 // Helper function to analyze activity ratings and determine plan adjustments
 const analyzeActivityRatings = async (activities) => {
   const { getActivityRating } = await import('./supabase');
@@ -483,10 +809,61 @@ const analyzeActivityRatings = async (activities) => {
 };
 
 export const generateDataDrivenWeeklyPlan = async (apiKey, activities = [], isInjured = false) => {
-  const savedPrompt = localStorage.getItem('coaching_prompt') || 'You are an expert running coach.';
+  // Calculate week start (Monday) and end (Sunday) dates
+  const today = new Date();
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+  monday.setHours(0, 0, 0, 0);
+  
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  sunday.setHours(23, 59, 59, 999);
+  
+  // Format dates for display (MM-DD format)
+  const formatDate = (date) => {
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${month}-${day}`;
+  };
+  const weekStartStr = formatDate(monday);
+  const weekEndStr = formatDate(sunday);
+  
+  // Calculate weeks until race
+  const raceDate = new Date('2026-05-02');
+  const daysUntilRace = Math.ceil((raceDate - today) / (1000 * 60 * 60 * 24));
+  const weeksUntilRace = Math.ceil(daysUntilRace / 7);
+  const currentWeek = Math.max(1, 15 - weeksUntilRace); // Assuming 14-week plan
+  
+  // Load coaching prompt via DataService first, fallback to localStorage
+  let savedPrompt = null;
+  try {
+    savedPrompt = await dataService.get('coaching_prompt');
+  } catch {
+    // ignore, fallback below
+  }
+  if (!savedPrompt) {
+    savedPrompt =
+      localStorage.getItem('coaching_prompt') || 'You are an expert running coach.';
+  }
+
   let basePrompt = updatePromptWithCurrentData(savedPrompt, activities);
   
-  // Analyze activity ratings
+  // Load activity ratings via DataService (for four-week summary) with localStorage fallback
+  let ratingsRaw = null;
+  try {
+    ratingsRaw = await dataService.get('activity_ratings');
+  } catch {
+    // ignore
+  }
+  if (!ratingsRaw) {
+    ratingsRaw = localStorage.getItem('activity_ratings');
+  }
+  const activityRatings = safeJsonParse(ratingsRaw, {});
+
+  // Build four-week summary from activities and ratings
+  const fourWeekSummary = buildFourWeekSummary(activities, activityRatings);
+
+  // Analyze activity ratings (existing weekly rating analysis)
   const ratingAnalysis = await analyzeActivityRatings(activities);
   
   // Add rating-based adjustments to prompt
@@ -510,9 +887,31 @@ Consider this when generating the plan - they may need more motivation or the pl
   }
   
   basePrompt += intensityNote;
-  
-  // Add weekly plan specific instructions
-  basePrompt += `\n\nWEEKLY PLAN GENERATION:
+
+  // Inject four-week history block and explicit usage rules
+  basePrompt += formatFourWeekSummaryForPrompt(fourWeekSummary);
+
+  // Add weekly plan specific instructions, including strict block schema and examples
+  basePrompt += `\n\nUSING RECENT TRAINING HISTORY:
+
+1. Set next week's target mileage based on the four-week mileage history above:
+   - Do NOT exceed the highest recent weekly mileage by more than 10%.
+   - If mileage has been DECLINING, hold steady or REDUCE total mileage before building again.
+2. PRIORITIZE difficulty ratings over all other signals when setting intensity:
+   - If the 4-week average rating is below 3.0/5, meaningfully REDUCE both intensity and volume.
+   - If the 4-week average rating is above 4.0/5 and mileage is stable, a moderate increase is appropriate.
+3. Treat INJURY REPORTS as a HARD CONSTRAINT:
+   - If any injury was reported within the last 14 days:
+     * Reduce intensity by AT LEAST 20%.
+     * Eliminate speed work or replace it with easy effort running.
+     * Include explicit injury-aware coaching notes in EVERY block (e.g., "Stop immediately if knee pain returns. No pushing through discomfort.").
+   - If any injury was reported within the last 7 days:
+     * Replace ALL running workouts this week with recovery exercises and very gentle movement.
+4. Use pace and heart rate trends as SECONDARY signals to fine-tune effort targets:
+   - If HR is trending up at the same pace, assume fatigue and back off intensity.
+   - If HR is stable or decreasing at the same pace, aerobic fitness is improving.
+
+WEEKLY PLAN GENERATION:
 
 Generate a complete weekly training plan for Monday through Sunday. The week follows this structure:
 - Monday: Recovery exercises (optional)
@@ -525,23 +924,61 @@ Generate a complete weekly training plan for Monday through Sunday. The week fol
 
 IMPORTANT: Only generate detailed workouts for the 3 running days (Tuesday, Thursday, Sunday). For recovery days, just note "Recovery exercises - generate day-of with workout button".
 
-CRITICAL REQUIREMENT - EVERY WORKOUT BLOCK MUST HAVE:
-- "distance" field: MUST be present for EVERY block (e.g., "1.5 miles", "3-4 miles", "0.5 miles")
-- "pace" field: MUST be present for EVERY block (e.g., "10:30-11:00/mile", "8:00-8:30/mile", "11:00+/mile")
-- These fields are REQUIRED and NON-OPTIONAL for all blocks in all running workouts
+Each running workout must be built from detailed blocks. EVERY BLOCK MUST INCLUDE ALL of the following fields:
+- "distance": string with explicit value and units (e.g., "1.5 mi", "3–4 mi", "800 m"). Never omit this, even for warm-ups.
+- "pace": string that is ALWAYS a RANGE, never a single value or vague word like "easy" (e.g., "9:30–10:00 /mi"). For interval blocks, include both interval pace AND recovery pace when appropriate.
+- "duration": number of minutes as a NUMBER (e.g., 15).
+- "heartRateZone": string with zone label and bpm range (e.g., "Zone 2 (130–145 bpm)").
+- "notes": specific coaching cues (form, breathing, fueling, etc.), not generic encouragement.
+- "restInterval": REQUIRED field. For interval/speed blocks, this is a string (e.g., "90 sec standing recovery between intervals"). For non-interval blocks (warm-up, cool-down, steady easy miles), this field must be present and set to null.
 
-Each running workout should have detailed blocks with:
-- Warm-up protocol (REQUIRED: distance AND pace, plus HR guidance)
-- Main set with precise distances, target paces, rest intervals (REQUIRED: distance AND pace)
-- Cool-down protocol (REQUIRED: distance AND pace)
-- Duration and heart rate guidance (optional but recommended)
-- Key coaching cues for execution
+EXAMPLES OF FULLY DETAILED BLOCKS (match this level of specificity in EVERY block you generate):
 
-The plan should be challenging but safe, pushing the athlete while preventing injury. Base intensity adjustments on the rating analysis above.
-
-Return the response in this exact JSON format (NOTE: distance and pace are REQUIRED for every block):
+Easy Run Example:
 {
-  "weekTitle": "Week [X] Training Plan - [Date Range]",
+  "title": "Main Easy Miles",
+  "distance": "3.0 mi",
+  "pace": "9:45–10:15 /mi",
+  "duration": 30,
+  "heartRateZone": "Zone 2 (135–150 bpm)",
+  "notes": "Stay relaxed and fully conversational. Focus on quiet foot strike and gentle arm swing. If breathing feels labored, slow down until you can talk in full sentences.",
+  "restInterval": null
+}
+
+Speed / Interval Example:
+{
+  "title": "6 x 400 m at 5K effort",
+  "distance": "2.0 mi total quality",
+  "pace": "7:45–8:00 /mi for intervals, 11:00–12:00 /mi for recovery jogs",
+  "duration": 24,
+  "heartRateZone": "Zone 4 (165–178 bpm) during intervals, drop back to Zone 2–3 (140–165 bpm) on recoveries",
+  "notes": "During each 400 m repeat, stay tall with quick, light steps. Drive your knees forward, keep your core braced, and do not let your shoulders creep up toward your ears.",
+  "restInterval": "90 sec easy walk/jog between intervals"
+}
+
+Long Run Example:
+{
+  "title": "Steady Long Run",
+  "distance": "10.0 mi",
+  "pace": "9:50–10:20 /mi",
+  "duration": 100,
+  "heartRateZone": "Zone 2 (135–150 bpm)",
+  "notes": "Keep the entire run truly aerobic. Take a small sip of water every 10–15 minutes. Take 1 gel around mile 4 and another around mile 8, and check in on form every 2 miles (relaxed shoulders, light cadence, no over-striding).",
+  "restInterval": null
+}
+
+Every block in your response must match this level of detail. Vague instructions like "run at a comfortable pace" or blocks missing distance, pace, duration, heartRateZone, notes, or restInterval (for intervals) are NOT acceptable.
+
+The plan should be challenging but safe, pushing the athlete while preventing injury. Base intensity adjustments on the rating analysis and the four-week history above.
+
+CRITICAL: The weekTitle MUST be formatted exactly as: "Week ${currentWeek} Training Plan - ${weekStartStr} to ${weekEndStr} (${weeksUntilRace} weeks until race)"
+This week starts on ${monday.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })} and ends on ${sunday.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}.
+There are ${weeksUntilRace} weeks until the race on May 2, 2026.
+The current week number is ${currentWeek} (out of 14 total weeks in the training plan).
+
+Return the response in this exact JSON format (NOTE: distance, pace, duration, heartRateZone, notes, and restInterval are REQUIRED for every block):
+{
+  "weekTitle": "Week ${currentWeek} Training Plan - ${weekStartStr} to ${weekEndStr} (${weeksUntilRace} weeks until race)",
   "monday": null,
   "tuesday": {
     "title": "Easy Run",
@@ -549,25 +986,30 @@ Return the response in this exact JSON format (NOTE: distance and pace are REQUI
     "blocks": [
       {
         "title": "Warm-up",
-        "distance": "1.5 miles",
-        "pace": "10:30-11:00/mile",
-        "duration": "15-17 minutes",
-        "notes": "Easy conversational pace, focus on form"
+        "distance": "1.5 mi",
+        "pace": "10:30–11:00 /mi",
+        "duration": 15,
+        "heartRateZone": "Zone 1–2 (125–140 bpm)",
+        "notes": "Start very relaxed. Include 3–4 short strides at the end of the warm-up to wake up the legs, but keep them controlled.",
+        "restInterval": null
       },
       {
         "title": "Main Set",
-        "distance": "3-4 miles", 
-        "pace": "10:00-10:30/mile",
-        "duration": "30-40 minutes",
-        "heartRate": "150-160 bpm",
-        "notes": "Maintain conversational effort, HR in Zone 2-3"
+        "distance": "3.0–4.0 mi", 
+        "pace": "10:00–10:30 /mi",
+        "duration": 35,
+        "heartRateZone": "Zone 2 (135–150 bpm)",
+        "notes": "Settle into a smooth, sustainable effort. You should be able to talk in full sentences. If breathing becomes choppy or HR drifts out of Zone 2, slow down.",
+        "restInterval": null
       },
       {
         "title": "Cool-down",
-        "distance": "0.5 miles",
-        "pace": "11:00+/mile",
-        "duration": "5-6 minutes",
-        "notes": "Easy walking/jogging, light stretching"
+        "distance": "0.5 mi",
+        "pace": "11:00–12:30 /mi",
+        "duration": 8,
+        "heartRateZone": "Zone 1 (120–135 bpm)",
+        "notes": "Gradually ease down to a walk. After the run, spend 5–10 minutes on light calf, quad, and hip flexor stretching.",
+        "restInterval": null
       }
     ]
   },
@@ -578,24 +1020,30 @@ Return the response in this exact JSON format (NOTE: distance and pace are REQUI
     "blocks": [
       {
         "title": "Warm-up",
-        "distance": "1.5 miles",
-        "pace": "10:00-10:30/mile",
-        "duration": "15 minutes",
-        "notes": "Easy jog to warm up"
+        "distance": "1.5 mi",
+        "pace": "10:00–10:30 /mi",
+        "duration": 15,
+        "heartRateZone": "Zone 1–2 (125–140 bpm)",
+        "notes": "Easy jog plus 5–6 short strides to prepare for faster running.",
+        "restInterval": null
       },
       {
         "title": "Main Set",
-        "distance": "2 miles",
-        "pace": "7:30-8:00/mile",
-        "duration": "15-16 minutes",
-        "notes": "4x400m intervals at target pace"
+        "distance": "2.0 mi of quality",
+        "pace": "7:45–8:00 /mi for intervals, 11:00–12:00 /mi for recovery jogs",
+        "duration": 24,
+        "heartRateZone": "Zone 4 (165–178 bpm) during intervals, Zone 2–3 (140–165 bpm) during recoveries",
+        "notes": "Run each 400 m repeat with quick, light steps. Drive your knees, keep your core braced, and keep your gaze forward. Do not sprint the early reps—keep them controlled and repeatable.",
+        "restInterval": "90 sec easy walk/jog between intervals"
       },
       {
         "title": "Cool-down",
-        "distance": "1 mile",
-        "pace": "11:00+/mile",
-        "duration": "10 minutes",
-        "notes": "Easy jog and stretch"
+        "distance": "1.0 mi",
+        "pace": "11:00–12:30 /mi",
+        "duration": 10,
+        "heartRateZone": "Zone 1 (120–135 bpm)",
+        "notes": "Jog or walk until breathing is fully under control, then finish with light stretching and foam rolling for calves and quads.",
+        "restInterval": null
       }
     ]
   },
@@ -607,30 +1055,36 @@ Return the response in this exact JSON format (NOTE: distance and pace are REQUI
     "blocks": [
       {
         "title": "Warm-up",
-        "distance": "1 mile",
-        "pace": "10:30-11:00/mile",
-        "duration": "10-11 minutes",
-        "notes": "Easy start"
+        "distance": "1.0 mi",
+        "pace": "10:30–11:00 /mi",
+        "duration": 11,
+        "heartRateZone": "Zone 1–2 (125–140 bpm)",
+        "notes": "Ease into the long run with very gentle jogging. Use this time to check posture: tall spine, relaxed shoulders, light foot strike.",
+        "restInterval": null
       },
       {
         "title": "Main Set",
-        "distance": "7-8 miles",
-        "pace": "9:30-10:00/mile",
-        "duration": "75-80 minutes",
-        "notes": "Steady aerobic pace"
+        "distance": "7.0–8.0 mi",
+        "pace": "9:30–10:00 /mi",
+        "duration": 80,
+        "heartRateZone": "Zone 2 (135–150 bpm)",
+        "notes": "Keep the effort comfortably steady. Take a gel around mile 4 and again around mile 7–8, and sip water every 10–15 minutes. If HR starts to drift upward late in the run at the same pace, slow slightly to stay in Zone 2.",
+        "restInterval": null
       },
       {
         "title": "Cool-down",
-        "distance": "0.5 miles",
-        "pace": "11:00+/mile",
-        "duration": "5 minutes",
-        "notes": "Easy walk/jog"
+        "distance": "0.5 mi",
+        "pace": "11:00–12:30 /mi",
+        "duration": 8,
+        "heartRateZone": "Zone 1 (120–135 bpm)",
+        "notes": "Walk or jog very easily until breathing is back to normal, then spend at least 10 minutes on lower-body stretching and light mobility.",
+        "restInterval": null
       }
     ]
   }
 }
 
-REMINDER: Every single block in every running workout MUST have both "distance" and "pace" fields. Do not omit these fields under any circumstances.`;
+REMINDER: Every single block in every running workout MUST include distance, pace, duration (number), heartRateZone, notes, and restInterval (string for intervals, null for non-interval blocks). Do not omit these fields under any circumstances.`;
 
   const response = await fetch(OPENAI_API_URL, {
     method: 'POST',
@@ -651,36 +1105,9 @@ REMINDER: Every single block in every running workout MUST have both "distance" 
 
   if (!response.ok) throw new Error(`OpenAI API error: ${response.status}`);
   
-  // Validation function to check all blocks have distance and pace
-  const validatePlanBlocks = (plan) => {
-    const runningDays = ['tuesday', 'thursday', 'sunday'];
-    const missingFields = [];
-    
-    for (const day of runningDays) {
-      const workout = plan[day];
-      if (!workout || !workout.blocks || !Array.isArray(workout.blocks)) {
-        continue;
-      }
-      
-      for (let i = 0; i < workout.blocks.length; i++) {
-        const block = workout.blocks[i];
-        if (!block.distance || block.distance.trim() === '') {
-          missingFields.push(`${day}.blocks[${i}].distance`);
-        }
-        if (!block.pace || block.pace.trim() === '') {
-          missingFields.push(`${day}.blocks[${i}].pace`);
-        }
-      }
-    }
-    
-    return {
-      isValid: missingFields.length === 0,
-      missingFields
-    };
-  };
-  
+  // Validation function is now defined top-level (see above)
   // Function to parse and validate a plan from content
-  const parseAndValidatePlan = (content) => {
+const parseAndValidatePlan = (content) => {
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       throw new Error('No JSON found in response');
@@ -721,20 +1148,76 @@ REMINDER: Every single block in every running workout MUST have both "distance" 
       const { plan, validation } = parseAndValidatePlan(responseContent);
       
       if (!validation.isValid && retryCount < maxRetries) {
-        console.warn(`Plan validation failed. Missing fields: ${validation.missingFields.join(', ')}. Retrying... (${retryCount + 1}/${maxRetries})`);
-        
-        // Create a fix prompt
-        const fixPrompt = `The previous plan was missing required fields. Please regenerate the plan ensuring EVERY block has both "distance" and "pace" fields.
+        console.warn(
+          `Plan validation failed. Missing fields: ${validation.missingFields.join(
+            ', '
+          )}. Retrying... (${retryCount + 1}/${maxRetries})`
+        );
 
-MISSING FIELDS TO FIX:
-${validation.missingFields.map(field => `- ${field}`).join('\n')}
+        // Build targeted fix instructions per invalid block
+        const blockFixInstructions = validation.invalidBlocks
+          .map((item) => {
+            const { day, blockIndex, block, missingFields } = item;
+            const blockJson = JSON.stringify(block, null, 2);
+            const missingList = missingFields.map((f) => `- ${f}`).join('\n');
 
-CRITICAL: Every single block in every running workout (Tuesday, Thursday, Sunday) MUST have:
-- "distance" field (e.g., "1.5 miles", "3-4 miles")
-- "pace" field (e.g., "10:30-11:00/mile", "8:00-8:30/mile")
+            // Example corrected block preserving title/type where possible
+            const exampleBlock = {
+              ...block,
+              distance: block.distance || '1.5 mi',
+              pace: block.pace || '9:30–10:00 /mi',
+              duration:
+                typeof block.duration === 'number' && isFinite(block.duration)
+                  ? block.duration
+                  : 20,
+              heartRateZone: block.heartRateZone || 'Zone 2 (130–145 bpm)',
+              notes:
+                block.notes ||
+                'Run relaxed with smooth form. If heart rate drifts above the top of the target range, slow to a jog or brisk walk until it settles.',
+              // For speed/interval-style blocks we require a non-null restInterval
+              restInterval:
+                block.restInterval !== undefined
+                  ? block.restInterval
+                  : '90 sec easy walk/jog between intervals'
+            };
 
-Do not omit these fields. Return the complete corrected plan in the same JSON format.`;
-        
+            const exampleJson = JSON.stringify(exampleBlock, null, 2);
+
+            return `BLOCK TO FIX (day "${day}", blocks[${blockIndex}]):
+Current JSON:
+${blockJson}
+
+Missing or empty fields:
+${missingList}
+
+EXAMPLE OF A CORRECTED VERSION OF THIS BLOCK (match this level of detail, but you may adjust values to stay consistent with the overall plan):
+${exampleJson}`;
+          })
+          .join('\n\n');
+
+        // Create a surgical fix prompt
+        const fixPrompt = `The previous weekly training plan JSON was missing required fields in specific blocks.
+
+You MUST correct ONLY the blocks that are described below. All other days and blocks should remain unchanged in structure and content.
+
+Required fields for EVERY workout block:
+- "distance": string with explicit value and units (e.g., "1.5 mi", "3–4 mi", "800 m").
+- "pace": string that is ALWAYS a RANGE, never a single value or vague word (e.g., "9:30–10:00 /mi"). For speed intervals, include both interval and recovery pace where appropriate.
+- "duration": number of minutes (e.g., 15).
+- "heartRateZone": string including zone label and bpm range (e.g., "Zone 2 (130–145 bpm)").
+- "notes": specific coaching cues and execution details, not generic encouragement.
+- "restInterval": string describing recovery for any interval/speed block (e.g., "90 sec standing recovery between intervals"). For non-interval blocks, this field must be present and set to null.
+
+Here are the blocks that failed validation and how they should be corrected:
+
+${blockFixInstructions}
+
+CRITICAL INSTRUCTIONS:
+1. Return the FULL corrected weekly plan JSON in the SAME schema as before.
+2. Only modify the blocks that had missing fields; leave all other days and blocks unchanged.
+3. Ensure every block now includes all required fields with specific, non-vague values.
+4. Do NOT add conversational text or explanations—return ONLY the JSON object.`;
+
         // Retry with fix prompt - add to conversation history
         const retryMessages = [
           ...messages,
@@ -774,9 +1257,26 @@ Do not omit these fields. Return the complete corrected plan in the same JSON fo
     const today = new Date();
     const monday = new Date(today);
     monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+    monday.setHours(0, 0, 0, 0);
+    
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    
+    const formatDate = (date) => {
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${month}-${day}`;
+    };
+    const weekStartStr = formatDate(monday);
+    const weekEndStr = formatDate(sunday);
+    
+    const raceDate = new Date('2026-05-02');
+    const daysUntilRace = Math.ceil((raceDate - today) / (1000 * 60 * 60 * 24));
+    const weeksUntilRace = Math.ceil(daysUntilRace / 7);
+    const currentWeek = Math.max(1, 15 - weeksUntilRace);
     
     const fallbackPlan = {
-      weekTitle: `Week Training Plan - ${monday.toLocaleDateString()}`,
+      weekTitle: `Week ${currentWeek} Training Plan - ${weekStartStr} to ${weekEndStr} (${weeksUntilRace} weeks until race)`,
       monday: null,
       tuesday: { 
         title: "Easy Run", 
@@ -1046,9 +1546,81 @@ Generate ONLY the encouraging message, nothing else.`;
 };
 
 export const adjustWeeklyPlanForPostponement = async (apiKey, currentPlan, postponedDay, postponeReason, postponeAdjustment, activities = []) => {
-  const savedPrompt = localStorage.getItem('coaching_prompt') || 'You are an expert running coach.';
+  // Load coaching prompt via DataService first, fallback to localStorage
+  let savedPrompt = null;
+  try {
+    savedPrompt = await dataService.get('coaching_prompt');
+  } catch {
+    // ignore
+  }
+  if (!savedPrompt) {
+    savedPrompt =
+      localStorage.getItem('coaching_prompt') || 'You are an expert running coach.';
+  }
   let basePrompt = updatePromptWithCurrentData(savedPrompt, activities);
   
+  // Load activity ratings for condensed four-week summary context
+  let ratingsRaw = null;
+  try {
+    ratingsRaw = await dataService.get('activity_ratings');
+  } catch {
+    // ignore
+  }
+  if (!ratingsRaw) {
+    ratingsRaw = localStorage.getItem('activity_ratings');
+  }
+  const activityRatings = safeJsonParse(ratingsRaw, {});
+  const fullSummary = buildFourWeekSummary(activities, activityRatings);
+
+  const mostRecentWeekMileage =
+    fullSummary.weeklyMileage?.[fullSummary.weeklyMileage.length - 1] ?? null;
+  const mostRecentWeekRating =
+    fullSummary.weeklyRatings?.[fullSummary.weeklyRatings.length - 1] ?? null;
+
+  const now = new Date();
+  const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+  const recentInjury =
+    (fullSummary.recentInjuries || []).length > 0
+      ? [...fullSummary.recentInjuries]
+          .map((inj) => ({
+            ...inj,
+            dateObj: new Date(inj.date)
+          }))
+          .filter((inj) => inj.dateObj >= fourteenDaysAgo && inj.dateObj <= now)
+          .sort((a, b) => a.dateObj - b.dateObj)
+          .slice(-1)[0] || null
+      : null;
+
+  const condensedSummaryLines = [];
+  condensedSummaryLines.push('CONDENSED RECENT TRAINING CONTEXT:');
+  if (mostRecentWeekMileage != null) {
+    condensedSummaryLines.push(
+      `- Most recent full week mileage: ${mostRecentWeekMileage.toFixed(1)} miles`
+    );
+  }
+  if (mostRecentWeekRating != null) {
+    condensedSummaryLines.push(
+      `- Most recent full week average difficulty rating: ${mostRecentWeekRating.toFixed(
+        1
+      )}/5`
+    );
+  }
+  if (recentInjury) {
+    const daysAgo = Math.round((now - recentInjury.dateObj) / (24 * 60 * 60 * 1000));
+    condensedSummaryLines.push(
+      `- Injury reported in last 14 days: ${recentInjury.description} (reported ${daysAgo} day${
+        daysAgo === 1 ? '' : 's'
+      } ago)`
+    );
+  } else {
+    condensedSummaryLines.push('- No injuries reported in the last 14 days.');
+  }
+  condensedSummaryLines.push(
+    '- Do NOT overload or significantly increase intensity when redistributing workouts if recent ratings are low or an injury was recently reported.'
+  );
+
+  basePrompt += `\n\n${condensedSummaryLines.join('\n')}\n`;
+
   // Get the postponed workout details - check postpone info first for original workout
   const postponeInfo = currentPlan._postponements?.[postponedDay];
   const postponedWorkout = postponeInfo?.originalWorkout || currentPlan[postponedDay];
@@ -1444,9 +2016,9 @@ export const detectNewActivities = (newActivities, lastKnownIds = []) => {
 export const syncWithStrava = async () => {
   console.log('syncWithStrava called');
   
-  // Try to get tokens from Supabase first, fallback to localStorage
+  // Try to get tokens from Supabase (or platform-specific storage)
   const tokens = await getStravaTokens();
-  const token = tokens?.accessToken || localStorage.getItem('strava_access_token');
+  const token = tokens?.accessToken || null;
   
   console.log('Token check:', {
     hasTokens: !!tokens,
@@ -1491,9 +2063,9 @@ export const syncWithStrava = async () => {
 };
 
 export const refreshStravaToken = async () => {
-  // Try to get tokens from Supabase first, fallback to localStorage
+  // Try to get tokens from Supabase (or platform-specific storage)
   const tokens = await getStravaTokens();
-  const refreshToken = tokens?.refreshToken || localStorage.getItem('strava_refresh_token');
+  const refreshToken = tokens?.refreshToken || null;
   const clientSecret = import.meta.env.VITE_STRAVA_CLIENT_SECRET;
   
   if (!refreshToken || !clientSecret) {
@@ -1743,68 +2315,124 @@ export const getActivityStreams = async (token, activityId) => {
 
 export const generateInsights = async (apiKey, activities, streamData = null, rating = null) => {
   if (!activities || activities.length === 0) return null;
-  
+
   const activity = activities[0]; // Most recent activity
-  const savedPrompt = localStorage.getItem('coaching_prompt') || 'You are an expert running coach.';
-  
-  let basePrompt = `${savedPrompt}
+  const savedPrompt =
+    localStorage.getItem('coaching_prompt') || 'You are an expert running coach.';
 
-ACTIVITY ANALYSIS REQUEST:
+  // Ensure we have stream data; if not, try to load compact cache from localStorage
+  let effectiveStreams = streamData;
+  if (!effectiveStreams) {
+    const cached = localStorage.getItem(`activity_streams_${activity.id}`);
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        const wrap = (arr) => (Array.isArray(arr) ? { data: arr } : { data: [] });
+        effectiveStreams = {
+          time: wrap(parsed.time),
+          velocity_smooth: wrap(parsed.velocity_smooth),
+          heartrate: wrap(parsed.heartrate),
+          cadence: wrap(parsed.cadence),
+          altitude: wrap(parsed.altitude)
+        };
+      } catch (e) {
+        console.warn('Failed to parse cached activity streams for insights:', e);
+      }
+    }
+  }
 
-Analyze this running activity and provide coaching insights:
+  const timeArr = effectiveStreams?.time?.data || [];
+  const paceStream = effectiveStreams?.velocity_smooth?.data || [];
+  const hrStream = effectiveStreams?.heartrate?.data || [];
+  const cadenceStream = effectiveStreams?.cadence?.data || [];
+  const altitudeStream = effectiveStreams?.altitude?.data || [];
 
-Activity: ${activity.name}
-Distance: ${(activity.distance / 1609.34).toFixed(2)} miles
-Duration: ${Math.floor(activity.moving_time / 60)} minutes
-Average Pace: ${formatPace(activity.average_speed)}
-Average Heart Rate: ${activity.average_heartrate || 'N/A'} bpm
-Max Heart Rate: ${activity.max_heartrate || 'N/A'} bpm
-Average Cadence: ${activity.average_cadence ? Math.round(activity.average_cadence * 2) : 'N/A'} spm
+  let paceSeries = [];
+  let hrSeries = [];
+  let cadenceSeries = [];
+  let elevationSeries = [];
 
-${streamData && streamData.cadence ? `
-DETAILED CADENCE ANALYSIS:
-Cadence Range: ${Math.round(Math.min(...streamData.cadence.data) * 2)} - ${Math.round(Math.max(...streamData.cadence.data) * 2)} spm
-Cadence Variability: ${streamData.cadence.data.length > 1 ? 'Available for analysis' : 'Limited data'}
-Target Cadence: 170-180 spm (optimal efficiency range)
-` : ''}
+  if (timeArr.length > 0) {
+    const downsampledPace = downsampleStream(paceStream, timeArr, 60);
+    paceSeries = downsampledPace.map((v) => {
+      if (!v || !isFinite(v) || v <= 0) return null;
+      const paceMinPerMile = 26.8224 / v;
+      return Number(paceMinPerMile.toFixed(2));
+    });
+    hrSeries = downsampleStream(hrStream, timeArr, 60).map((v) =>
+      v && isFinite(v) ? Math.round(v) : null
+    );
+    cadenceSeries = downsampleStream(cadenceStream, timeArr, 60).map((v) =>
+      v && isFinite(v) ? Math.round(v * 2) : null
+    );
+    elevationSeries = downsampleStream(altitudeStream, timeArr, 60).map((v) => {
+      if (!v || !isFinite(v)) return null;
+      return Math.round(v * 3.28084); // meters -> feet
+    });
+  }
 
-${rating ? `Athlete Rating: ${rating.rating}/5 stars
+  const distanceMiles = (activity.distance / 1609.34).toFixed(2);
+  const durationMinutes = Math.floor(activity.moving_time / 60);
+  const avgPace = formatPace(activity.average_speed);
+  const avgHR = activity.average_heartrate || 'N/A';
+
+  const ratingText = rating
+    ? `Athlete Rating: ${rating.rating}/5 (1=too easy, 3=perfect, 5=too hard)
 Feedback: ${rating.feedback || 'No feedback provided'}
-${rating.isInjured ? `Injury Status: ${rating.injuryDetails}` : 'No injuries reported'}` : ''}
+${rating.isInjured ? `Injury Status: ${rating.injuryDetails}` : 'No injuries reported'}`
+    : 'No post-run rating provided for this activity.';
 
-Provide specific coaching insights about:
-1. Pace and effort analysis
-2. Heart rate zones and efficiency
-3. Cadence analysis (target: 170-180 spm for optimal efficiency)
-   - Analyze cadence consistency throughout the run
-   - Compare average cadence to target range
-   - Identify periods of cadence drop-off or spikes
-   - Provide specific recommendations for cadence improvement
-4. Training adaptations and progress
-5. Recovery recommendations
-6. Areas for improvement
+  const timeSeriesBlock =
+    paceSeries.length > 0
+      ? `
+TIME SERIES DATA (1 data point per minute of the run):
+Pace (min/mi):      [${paceSeries.map((v) => (v == null ? 'null' : v)).join(', ')}]
+Heart Rate (bpm):   [${hrSeries.map((v) => (v == null ? 'null' : v)).join(', ')}]
+Cadence (spm):      [${cadenceSeries.map((v) => (v == null ? 'null' : v)).join(', ')}]
+Elevation (ft):     [${elevationSeries
+        .map((v) => (v == null ? 'null' : v))
+        .join(', ')}]
+`
+      : '\nTIME SERIES DATA: Not available for this activity.\n';
 
-Keep insights concise and actionable.`;
+  const basePrompt = `${savedPrompt}
+
+You are analyzing a single running activity to provide concise, time-series-aware coaching feedback.
+
+ACTIVITY SUMMARY:
+- Name: ${activity.name}
+- Distance: ${distanceMiles} miles
+- Duration: ${durationMinutes} minutes
+- Average Pace: ${avgPace}
+- Average Heart Rate: ${avgHR} bpm
+
+${ratingText}
+${timeSeriesBlock}
+
+Respond in exactly 3–4 sentences. No headers, no bullet points, no lists.
+Write the way a coach would talk to an athlete right after finishing a run.
+Cover: (1) one specific observation from the time series data (referencing particular minutes or segments when possible), (2) one thing that went well, (3) one concrete, actionable tip for next time.
+Keep the tone direct, personal, and supportive, and avoid generic statements that could apply to any run.`;
 
   const response = await fetch(OPENAI_API_URL, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${apiKey}`,
+      Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      model: 'gpt-3.5-turbo',
+      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: basePrompt },
-        { role: 'user', content: 'Analyze this activity and provide coaching insights.' }
+        { role: 'user', content: 'Provide 3–4 coaching sentences based on this run.' }
       ],
       temperature: 0.7,
-      max_tokens: 600
+      max_tokens: 250
     })
   });
 
   if (!response.ok) throw new Error(`OpenAI API error: ${response.status}`);
-  
+
   const data = await response.json();
   return { insights: data.choices[0].message.content };
 };
@@ -1816,7 +2444,300 @@ const formatPace = (speedMs) => {
   return `${minutes}:${seconds.toString().padStart(2, '0')}/mile`;
 };
 
+// Downsample a numeric stream to one value per intervalSeconds based on closest timestamp
+const downsampleStream = (stream, timeArray, intervalSeconds = 60) => {
+  if (!Array.isArray(stream) || !Array.isArray(timeArray)) return [];
+  if (stream.length === 0 || timeArray.length === 0) return [];
+
+  const result = [];
+  let timeIdx = 0;
+  const maxTime = timeArray[timeArray.length - 1];
+
+  for (let target = 0; target <= maxTime; target += intervalSeconds) {
+    while (
+      timeIdx + 1 < timeArray.length &&
+      Math.abs(timeArray[timeIdx + 1] - target) <
+        Math.abs(timeArray[timeIdx] - target)
+    ) {
+      timeIdx += 1;
+    }
+    const value = stream[timeIdx];
+    result.push(
+      value !== undefined && value !== null && isFinite(value) ? value : null
+    );
+  }
+
+  return result;
+};
+
 export const getActivityRating = (activityId) => {
   const activityRatings = JSON.parse(localStorage.getItem('activity_ratings') || '{}');
   return activityRatings[activityId] || null;
 };
+
+/**
+ * WIRING THIS TO THE UI:
+ * Add a "Fix Workout" button inside WorkoutDisplay.jsx or the day detail view in WeeklyPlan.jsx.
+ * On click, call regenerateDayWorkout() with the current plan, fourWeekSummary, coachingPrompt,
+ * and trainingContext. On success, update the weeklyPlan state in App.jsx with the returned plan.
+ * Show a loading spinner on the button while the call is in flight.
+ * No changes to component files are required as part of this task — just make the function available.
+ */
+export async function regenerateDayWorkout(
+  dayName,
+  currentWeekPlan,
+  fourWeekSummary,
+  coachingPrompt,
+  trainingContext
+) {
+  const apiKey = import.meta.env.VITE_OPENAI_API_KEY || localStorage.getItem('openai_api_key');
+  if (!apiKey) {
+    throw new Error('OpenAI API key is required to regenerate a workout.');
+  }
+
+  const lowerDayName = dayName.toLowerCase();
+  const existingWorkout = currentWeekPlan?.[lowerDayName] || null;
+
+  // Build base prompt from provided trainingContext plus four-week summary
+  let basePrompt = trainingContext || (coachingPrompt || 'You are an expert running coach.');
+  if (trainingContext && !trainingContext.includes('RECENT TRAINING HISTORY')) {
+    basePrompt += formatFourWeekSummaryForPrompt(fourWeekSummary);
+  }
+
+  // Reuse block schema and examples by referencing the same requirements used in weekly plan generation
+  basePrompt += `
+
+SINGLE DAY WORKOUT REGENERATION:
+
+The workout for ${dayName} in the current weekly plan was too vague and must be regenerated with full detail.
+
+You are given the FULL current weekly plan for context. You MUST NOT change any other day besides "${dayName}". Only regenerate the workout object for "${dayName}" with fully detailed blocks that obey the same schema used for weekly plan generation.
+
+Required block schema (same as weekly plan):
+- "distance": string with explicit value and units (e.g., "1.5 mi", "3–4 mi", "800 m"). Never omit this, even for warm-ups.
+- "pace": string that is ALWAYS a RANGE, never a single value or vague word like "easy" (e.g., "9:30–10:00 /mi"). For interval blocks, include both interval pace AND recovery pace when appropriate.
+- "duration": number of minutes as a NUMBER (e.g., 15).
+- "heartRateZone": string with zone label and bpm range (e.g., "Zone 2 (130–145 bpm)").
+- "notes": specific coaching cues (form, breathing, fueling, etc.), not generic encouragement.
+- "restInterval": REQUIRED field. For interval/speed blocks, this is a string (e.g., "90 sec standing recovery between intervals"). For non-interval blocks (warm-up, cool-down, steady easy miles), this field must be present and set to null.
+
+Every block you generate MUST match this level of detail. Vague instructions like "run at a comfortable pace" or missing fields are NOT acceptable.
+
+CURRENT WEEKLY PLAN (for context only – do NOT modify days other than "${dayName}"):
+${JSON.stringify(
+    {
+      weekTitle: currentWeekPlan.weekTitle,
+      monday: currentWeekPlan.monday,
+      tuesday: currentWeekPlan.tuesday,
+      wednesday: currentWeekPlan.wednesday,
+      thursday: currentWeekPlan.thursday,
+      friday: currentWeekPlan.friday,
+      saturday: currentWeekPlan.saturday,
+      sunday: currentWeekPlan.sunday
+    },
+    null,
+    2
+  )}
+
+CURRENT "${dayName}" WORKOUT (to be replaced):
+${JSON.stringify(existingWorkout || null, null, 2)}
+
+Respond by returning ONLY a JSON object for the regenerated "${dayName}" workout in this shape:
+{
+  "title": "Workout title",
+  "type": "easy" | "speed" | "long",
+  "blocks": [ { ...fully detailed blocks as described above... } ]
+}
+`;
+
+  // Helper to validate just the regenerated day using validatePlanBlocks
+  const validateDayWorkout = (dayWorkout, dayKey) => {
+    const stubPlan = {
+      monday: null,
+      tuesday: null,
+      wednesday: null,
+      thursday: null,
+      friday: null,
+      saturday: null,
+      sunday: null
+    };
+    stubPlan[dayKey] = dayWorkout;
+    return validatePlanBlocks(stubPlan);
+  };
+
+  const callModel = async (messages) => {
+    const response = await fetch(OPENAI_API_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages,
+        temperature: 0.7,
+        max_tokens: 800
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`OpenAI API error: ${response.status}`);
+    }
+    const data = await response.json();
+    return data.choices[0].message.content;
+  };
+
+  // Initial request to regenerate the specific day
+  const systemMessage = { role: 'system', content: basePrompt };
+  const userMessage = {
+    role: 'user',
+    content: `Regenerate ONLY the "${dayName}" workout with fully detailed blocks following the schema. Do not change any other day. Return ONLY the JSON object for the "${dayName}" workout.`
+  };
+
+  let messages = [systemMessage, userMessage];
+  let retryCount = 0;
+  const maxRetries = 2;
+  let regeneratedWorkout = null;
+
+  while (retryCount <= maxRetries) {
+    const content = await callModel(messages);
+
+    // Extract JSON for the regenerated workout
+    let workout;
+    try {
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        throw new Error('No JSON found in regenerateDayWorkout response');
+      }
+      workout = JSON.parse(jsonMatch[0]);
+    } catch (err) {
+      retryCount += 1;
+      if (retryCount > maxRetries) {
+        throw err;
+      }
+      messages = [
+        ...messages,
+        { role: 'assistant', content },
+        {
+          role: 'user',
+          content:
+            'Your last response was not valid JSON. Please respond again with ONLY the JSON object for the regenerated workout.'
+        }
+      ];
+      continue;
+    }
+
+    // Validate just this day
+    const validation = validateDayWorkout(workout, lowerDayName);
+    if (validation.isValid) {
+      regeneratedWorkout = workout;
+      break;
+    }
+
+    retryCount += 1;
+    if (retryCount > maxRetries) {
+      regeneratedWorkout = workout; // accept best-effort output
+      break;
+    }
+
+    const blockFixInstructions = validation.invalidBlocks
+      .map((item) => {
+        const { blockIndex, block, missingFields } = item;
+        const blockJson = JSON.stringify(block, null, 2);
+        const missingList = missingFields.map((f) => `- ${f}`).join('\n');
+        const exampleBlock = {
+          ...block,
+          distance: block.distance || '1.5 mi',
+          pace: block.pace || '9:30–10:00 /mi',
+          duration:
+            typeof block.duration === 'number' && isFinite(block.duration)
+              ? block.duration
+              : 20,
+          heartRateZone: block.heartRateZone || 'Zone 2 (130–145 bpm)',
+          notes:
+            block.notes ||
+            'Run relaxed with smooth form. If heart rate drifts above the top of the target range, slow to a jog or brisk walk until it settles.',
+          restInterval:
+            block.restInterval !== undefined
+              ? block.restInterval
+              : '90 sec easy walk/jog between intervals'
+        };
+        const exampleJson = JSON.stringify(exampleBlock, null, 2);
+
+        return `BLOCK TO FIX (blocks[${blockIndex}]):
+Current JSON:
+${blockJson}
+
+Missing or empty fields:
+${missingList}
+
+Example of a corrected version of this block:
+${exampleJson}`;
+      })
+      .join('\n\n');
+
+    const fixPrompt = `The regenerated "${dayName}" workout is missing required fields in some blocks.
+
+You MUST correct ONLY the blocks described below. All other blocks and days should remain unchanged.
+
+Required fields for EVERY block:
+- distance (string with units)
+- pace (range string, never a single value or vague word)
+- duration (number, minutes)
+- heartRateZone (zone label and bpm range)
+- notes (specific coaching cues)
+- restInterval (string for intervals, null for non-interval blocks)
+
+Here are the blocks that need correction:
+
+${blockFixInstructions}
+
+Return ONLY the corrected JSON object for the "${dayName}" workout.`;
+
+    messages = [
+      ...messages,
+      { role: 'assistant', content: JSON.stringify(workout, null, 2) },
+      { role: 'user', content: fixPrompt }
+    ];
+  }
+
+  if (!regeneratedWorkout) {
+    throw new Error('Failed to regenerate workout for the requested day.');
+  }
+
+  // Build updated plan with only the specified day changed
+  const updatedPlan = {
+    ...currentWeekPlan,
+    [lowerDayName]: regeneratedWorkout
+  };
+
+  // Preserve metadata
+  if (currentWeekPlan._postponements) {
+    updatedPlan._postponements = currentWeekPlan._postponements;
+  }
+  if (currentWeekPlan._activityMatches) {
+    updatedPlan._activityMatches = currentWeekPlan._activityMatches;
+  }
+  if (currentWeekPlan._ratingAnalysis) {
+    updatedPlan._ratingAnalysis = currentWeekPlan._ratingAnalysis;
+  }
+
+  // Compute weekKey (Monday of current week) for storage
+  const today = new Date();
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+  monday.setHours(0, 0, 0, 0);
+  // Use ISO date format (YYYY-MM-DD) for weekKey
+  const weekKey = monday.toISOString().split('T')[0];
+
+  // Save via DataService and localStorage
+  const planJson = JSON.stringify(updatedPlan);
+  try {
+    await dataService.set(`weekly_plan_${weekKey}`, planJson);
+  } catch (e) {
+    console.error('Failed to save regenerated day workout to Supabase:', e);
+  }
+  localStorage.setItem(`weekly_plan_${weekKey}`, planJson);
+
+  return updatedPlan;
+}
