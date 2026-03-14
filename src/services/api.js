@@ -1955,11 +1955,13 @@ Return the response in this exact JSON format:
 
 // Detect new activities by comparing with a previously-known activity ID list.
 // IMPORTANT: This function does NOT write to storage; callers should update storage after comparison.
+// Uses string comparison to handle mixed number/string IDs (e.g. from JSON or merged sources).
 export const detectNewActivities = (newActivities, lastKnownIds = []) => {
   if (!Array.isArray(newActivities) || newActivities.length === 0) return [];
   if (!Array.isArray(lastKnownIds) || lastKnownIds.length === 0) return [];
 
-  return newActivities.filter((activity) => !lastKnownIds.includes(activity.id));
+  const knownSet = new Set(lastKnownIds.map((id) => String(id)));
+  return newActivities.filter((activity) => !knownSet.has(String(activity.id)));
 };
 
 // Build rating queue by filtering out activities that already have ratings
@@ -2274,6 +2276,8 @@ export const getActivityStreams = async (token, activityId) => {
     headers: { 'Authorization': `Bearer ${token}` }
   });
   
+  // 404 = no streams (e.g. treadmill, manually logged) - return null so activity detail still loads
+  if (response.status === 404) return null;
   if (!response.ok) throw new Error(`Strava API error: ${response.status}`);
   return response.json();
 };

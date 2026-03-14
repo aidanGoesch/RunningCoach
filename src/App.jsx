@@ -1314,18 +1314,20 @@ function App() {
     const matchAndUpdate = async () => {
       try {
         const activityMatches = matchActivitiesToWorkouts(activities, weeklyPlan);
-        
-        // Update weekly plan with matches
+        // Skip update if matches haven't changed (prevents save loop from setWeeklyPlan -> effect -> setWeeklyPlan)
+        const currentMatchesStr = JSON.stringify(weeklyPlan._activityMatches || {});
+        const newMatchesStr = JSON.stringify(activityMatches || {});
+        if (currentMatchesStr === newMatchesStr) return;
+
         const updatedPlan = { ...weeklyPlan, _activityMatches: activityMatches };
         setWeeklyPlan(updatedPlan);
-        
-        // Save to localStorage and Supabase
+
         const today = new Date();
         const monday = new Date(today);
         monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
         monday.setHours(0, 0, 0, 0);
         const weekKey = monday.toISOString().split('T')[0];
-        
+
         localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(updatedPlan));
         await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(updatedPlan));
       } catch (error) {

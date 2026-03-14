@@ -95,12 +95,23 @@ const ActivityDetail = ({ activityId, onBack }) => {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     const fetchActivityData = async () => {
       console.log('=== Starting fetchActivityData for activityId:', activityId, '===');
-      
+      const TIMEOUT_MS = 25000;
+
+      const withTimeout = (promise) =>
+        Promise.race([
+          promise,
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Request timed out')), TIMEOUT_MS)
+          )
+        ]);
+
+      try {
       // Try to get token from Supabase first, then localStorage
       const { getStravaTokens } = await import('../services/supabase');
-      const tokens = await getStravaTokens();
+      const tokens = await withTimeout(getStravaTokens());
       const token = tokens?.accessToken;
       const apiKey = import.meta.env.VITE_OPENAI_API_KEY || localStorage.getItem('openai_api_key');
       
@@ -155,13 +166,12 @@ const ActivityDetail = ({ activityId, onBack }) => {
             setActivity(activityData);
             setStreams(streamData);
             
-            // Get rating for this activity
-            const activityRating = await getActivityRating(activityId);
+            // Get rating and insights (with timeout to avoid hanging on Supabase)
+            const activityRating = await withTimeout(getActivityRating(activityId)).catch(() => null);
             setRating(activityRating);
             
-            // Only check for cached insights, don't generate new ones
             console.log('Checking for cached insights for', activityId);
-            const cachedInsights = await getActivityInsights(activityId);
+            const cachedInsights = await withTimeout(getActivityInsights(activityId)).catch(() => null);
             if (cachedInsights) {
               console.log('Found cached insights for', activityId);
               // Ensure cached insights are strings
@@ -184,10 +194,10 @@ const ActivityDetail = ({ activityId, onBack }) => {
       // Fetch fresh data if no cache or cache expired
       try {
         console.log('Fetching fresh activity data for', activityId);
-        const [activityData, streamData] = await Promise.all([
+        const [activityData, streamData] = await withTimeout(Promise.all([
           getActivityDetails(token, activityId),
           getActivityStreams(token, activityId)
-        ]);
+        ]));
         
         // Cache the combined detail + streams payload
         const cacheData = {
@@ -216,13 +226,11 @@ const ActivityDetail = ({ activityId, onBack }) => {
         setActivity(activityData);
         setStreams(streamData);
         
-        // Get rating for this activity
-        const activityRating = await getActivityRating(activityId);
+        const activityRating = await withTimeout(getActivityRating(activityId)).catch(() => null);
         setRating(activityRating);
         
-        // Only check for cached insights, don't generate new ones
         console.log('Checking for cached insights for', activityId);
-        const cachedInsights = await getActivityInsights(activityId);
+        const cachedInsights = await withTimeout(getActivityInsights(activityId)).catch(() => null);
         if (cachedInsights) {
           console.log('Found cached insights for', activityId);
           // Ensure cached insights are strings
@@ -238,9 +246,14 @@ const ActivityDetail = ({ activityId, onBack }) => {
       } finally {
         setLoading(false);
       }
+      } catch (err) {
+        if (!cancelled) setError(err?.message || 'Failed to load activity');
+        setLoading(false);
+      }
     };
 
     fetchActivityData();
+    return () => { cancelled = true; };
   }, [activityId]);
 
   const handleGenerateInsights = async () => {
