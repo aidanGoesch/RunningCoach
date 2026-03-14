@@ -1,10 +1,44 @@
 import { useState, useEffect, useRef } from 'react';
 import { dataService } from '../services/supabase';
 
-const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, onActivitiesChange, onRecoveryClick }) => {
+const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, onActivitiesChange, onRecoveryClick }) => {
   const [weeklyPlan, setWeeklyPlan] = useState(null);
   const [currentWeek, setCurrentWeek] = useState(null);
   const weeklyPlanRef = useRef(null);
+
+  // Helper function to compare plan timestamps and only apply if newer
+  // Defined at component level so it can be used in multiple useEffects
+  const applyPlanIfNewer = (incomingPlan, currentPlan, source) => {
+    if (!incomingPlan) return false;
+    if (!currentPlan) {
+      setWeeklyPlan(incomingPlan);
+      weeklyPlanRef.current = incomingPlan;
+      return true;
+    }
+    
+    const incomingTime = new Date(incomingPlan._updatedAt || 0).getTime();
+    const currentTime = new Date(currentPlan._updatedAt || 0).getTime();
+    
+    if (incomingTime > currentTime) {
+      // Incoming plan is newer - apply it
+      setWeeklyPlan(incomingPlan);
+      weeklyPlanRef.current = incomingPlan;
+      return true;
+    } else if (incomingTime < currentTime) {
+      // Current plan is newer - discard incoming to prevent race condition
+      return false;
+    } else {
+      // Same timestamp or both missing - compare content
+      const currentPlanStr = JSON.stringify(currentPlan);
+      const incomingPlanStr = JSON.stringify(incomingPlan);
+      if (currentPlanStr !== incomingPlanStr) {
+        setWeeklyPlan(incomingPlan);
+        weeklyPlanRef.current = incomingPlan;
+        return true;
+      }
+      return false;
+    }
+  };
 
   useEffect(() => {
     // Get current week (Monday-Sunday)
@@ -35,6 +69,7 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
           console.log('Supabase plan has postpone info:', !!parsedPlan._postponements, parsedPlan._postponements);
           console.log('Supabase plan postpone keys:', parsedPlan._postponements ? Object.keys(parsedPlan._postponements) : 'none');
           console.log('Supabase plan tuesday postpone:', parsedPlan._postponements?.tuesday);
+          console.log('Supabase plan has _updatedAt:', !!parsedPlan._updatedAt, parsedPlan._updatedAt);
           console.log('Supabase plan_data keys:', Object.keys(parsedPlan));
         }
         
@@ -165,25 +200,28 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
           
           if (currentHasPostponements && !newHasPostponements) {
             parsedPlan._postponements = weeklyPlanRef.current._postponements;
+            // Preserve the timestamp from current plan if it's newer
+            if (weeklyPlanRef.current?._updatedAt) {
+              const currentTime = new Date(weeklyPlanRef.current._updatedAt).getTime();
+              const incomingTime = new Date(parsedPlan._updatedAt || 0).getTime();
+              if (currentTime > incomingTime) {
+                parsedPlan._updatedAt = weeklyPlanRef.current._updatedAt;
+              }
+            }
             // Save the corrected plan immediately
             localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan));
             dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan)).catch(() => {});
             console.log('Preserved postpone info in polling - plan was missing postpone data');
-            // Update state with preserved postpone info
-            weeklyPlanRef.current = parsedPlan;
-            setWeeklyPlan(parsedPlan);
+            // Only update if the corrected plan is newer
+            if (!applyPlanIfNewer(parsedPlan, weeklyPlanRef.current, 'Polling (postpone fix)')) {
+              // If not newer, still update ref but don't trigger state change
+              weeklyPlanRef.current = parsedPlan;
+            }
             return; // Skip further comparison since we've already updated
           }
           
-          // Only update if plan actually changed (compare with ref to avoid dependency issues)
-          const currentPlanStr = JSON.stringify(weeklyPlanRef.current);
-          const newPlanStr = JSON.stringify(parsedPlan);
-          
-          if (currentPlanStr !== newPlanStr) {
-            console.log('Weekly plan updated detected in polling');
-            setWeeklyPlan(parsedPlan);
-            weeklyPlanRef.current = parsedPlan;
-          }
+          // Use timestamp-based comparison to prevent overwriting fresh state
+          applyPlanIfNewer(parsedPlan, weeklyPlanRef.current, 'Polling');
         }
       } catch (e) {
         console.error('Error checking plan updates in interval:', e);
@@ -192,6 +230,13 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
     
     return () => clearInterval(checkInterval);
   }, [apiKey]); // Removed onGenerateWeeklyPlan from dependencies to prevent infinite loops
+
+  // Sync weeklyPlan prop to internal state immediately when it changes
+  useEffect(() => {
+    if (weeklyPlanProp) {
+      applyPlanIfNewer(weeklyPlanProp, weeklyPlan, 'Prop Sync');
+    }
+  }, [weeklyPlanProp, weeklyPlan]); // Include weeklyPlan to compare against
 
   // Re-match activities when they change and reload plan
   useEffect(() => {
@@ -308,10 +353,14 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
       };
     }
 
-    const type = workoutType.toLowerCase();
+    // Normalize workout type - handle variations like "speed work", "Speed Work", etc.
+    const type = workoutType.toLowerCase().trim();
+    const isSpeed = type === 'speed' || type === 'tempo' || type.includes('speed') || type.includes('tempo');
+    const isEasy = type === 'easy' || type === 'recovery' || type.includes('easy') || type.includes('recovery');
+    const isLong = type === 'long' || type.includes('long');
     
     if (isCompleted) {
-      if (type === 'easy' || type === 'recovery') {
+      if (isEasy) {
         return {
           stripe: '#97C459',
           labelColor: '#3B6D11',
@@ -321,7 +370,7 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
           iconBg: '#C0DD97',
           checkColor: '#3B6D11'
         };
-      } else if (type === 'speed' || type === 'tempo') {
+      } else if (isSpeed) {
         return {
           stripe: '#BA7517',
           labelColor: '#633806',
@@ -331,7 +380,7 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
           iconBg: '#FAC775',
           checkColor: '#633806'
         };
-      } else if (type === 'long') {
+      } else if (isLong) {
         return {
           stripe: '#378ADD',
           labelColor: '#0C447C',
@@ -355,7 +404,7 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
       }
     } else {
       // Upcoming workouts
-      if (type === 'easy') {
+      if (isEasy) {
         return {
           stripe: '#97C459',
           labelColor: 'var(--color-text-secondary)',
@@ -365,7 +414,7 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
           iconBg: null,
           checkColor: null
         };
-      } else if (type === 'speed' || type === 'tempo') {
+      } else if (isSpeed) {
         return {
           stripe: '#BA7517',
           labelColor: 'var(--color-text-secondary)',
@@ -375,7 +424,7 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
           iconBg: null,
           checkColor: null
         };
-      } else if (type === 'long') {
+      } else if (isLong) {
         return {
           stripe: '#378ADD',
           labelColor: 'var(--color-text-secondary)',
@@ -485,7 +534,13 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
     const distance = isCompleted && plannedWorkout ? getWorkoutDistance(plannedWorkout) : (plannedWorkout ? getWorkoutDistance(plannedWorkout) : null);
     
     // Get colors based on workout type and completion state
-    const colors = getDayCardColors(plannedWorkout?.type, isCompleted);
+    const workoutType = plannedWorkout?.type;
+    const colors = getDayCardColors(workoutType, isCompleted);
+    
+    // Debug all workout types to see what we're getting
+    if (plannedWorkout) {
+      console.log(`[Color Debug] Day: ${dayName}, Workout type: "${workoutType}", isCompleted: ${isCompleted}, Stripe color: ${colors.stripe}, Full workout:`, plannedWorkout);
+    }
     
     // Determine card state and styling
     const isClickable = plannedWorkout && !isPostponed;
@@ -535,12 +590,14 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
         </svg>
       );
     } else if (dayInfo.isToday) {
+      // Today's workout - use workout type color for stripe, but keep blue border for "today" indicator
       cardStyle.border = '1.5px solid #378ADD';
       textColor = '#185FA5';
       dayNameColor = '#185FA5';
       typeLabelColor = '#185FA5';
       distanceColor = '#378ADD';
-      intensityStripeColor = '#378ADD';
+      // Use workout type color for stripe, not hardcoded blue
+      intensityStripeColor = colors.stripe || '#378ADD'; // Fallback to blue if no workout type
       iconContent = (
         <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
           <circle cx="14" cy="14" r="13" fill="#E6F1FB" stroke="#185FA5" strokeWidth="1"/>
@@ -562,6 +619,12 @@ const WeeklyPlan = ({ activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, 
       // Upcoming run day - use colors from helper
       typeLabelColor = colors.labelColor;
       intensityStripeColor = colors.stripe;
+      
+      // Debug: log the workout type and colors being applied
+      if (plannedWorkout) {
+        console.log(`[Color Debug] Day: ${dayName}, Type: ${plannedWorkout.type}, Stripe: ${colors.stripe}, Label: ${colors.labelColor}`);
+      }
+      
       iconContent = (
         <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
           <circle cx="14" cy="14" r="13" fill="var(--color-background-secondary)" stroke="var(--color-border-tertiary)" strokeWidth="1"/>

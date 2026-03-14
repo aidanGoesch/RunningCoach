@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import WorkoutDisplay from './components/WorkoutDisplay';
 import WorkoutDetail from './components/WorkoutDetail';
 import WeeklyPlan from './components/WeeklyPlan';
@@ -1064,12 +1064,18 @@ function App() {
       // Store activity matches with the plan
       planToSave._activityMatches = activityMatches;
       
+      // Add timestamp to track when this update was made
+      planToSave._updatedAt = new Date().toISOString();
+      
+      // Update weekly plan state immediately (optimistic update)
+      setWeeklyPlan(planToSave);
+      
+      // Save to localStorage synchronously (immediate)
       localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(planToSave));
+      
+      // Save to Supabase asynchronously
       console.log('Saving weekly plan to Supabase:', weekKey, planToSave);
       await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(planToSave));
-      
-      // Update weekly plan state
-      setWeeklyPlan(planToSave);
       
       // Store analysis separately for easy access
       if (analysis) {
@@ -1131,6 +1137,17 @@ function App() {
       setLoading(false);
     }
   };
+
+  // Expose regenerate function to console for debugging
+  useEffect(() => {
+    window.regenerateWeeklyPlan = () => {
+      console.log('Regenerating weekly plan...');
+      handleGenerateWeeklyPlan(false);
+    };
+    return () => {
+      delete window.regenerateWeeklyPlan;
+    };
+  }, []);
 
   // Helper function to check if today is a scheduled run day
   const isScheduledRunDay = () => {
@@ -1377,14 +1394,19 @@ function App() {
           const activityMatches = matchActivitiesToWorkouts(activities, adjustedPlan, monday);
           adjustedPlan._activityMatches = activityMatches;
           
-          // Save updated weekly plan
+          // Add timestamp to track when this update was made
+          adjustedPlan._updatedAt = new Date().toISOString();
+          
+          // Update weekly plan state immediately (optimistic update)
+          setWeeklyPlan(adjustedPlan);
+          
+          // Save to localStorage synchronously (immediate)
+          localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(adjustedPlan));
+          
+          // Save updated weekly plan to Supabase asynchronously
           console.log('Saving adjusted plan to storage...');
           await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(adjustedPlan));
-          localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(adjustedPlan));
           console.log('Plan saved successfully');
-          
-          // Update weekly plan state
-          setWeeklyPlan(adjustedPlan);
           
           // Force WeeklyPlan component to refresh immediately
           setWeeklyPlanRefreshKey(prev => prev + 1);
@@ -1396,24 +1418,34 @@ function App() {
         } catch (err) {
           console.error('Error regenerating plan:', err);
           setLoading(false);
-          // Still save the postpone info even if regeneration fails
-          await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(weeklyPlan));
+          // Add timestamp to track when this update was made
+          weeklyPlan._updatedAt = new Date().toISOString();
+          
+          // Update weekly plan state immediately (optimistic update)
+          setWeeklyPlan(weeklyPlan);
+          
+          // Save to localStorage synchronously (immediate)
           localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(weeklyPlan));
           
-          // Update weekly plan state
-          setWeeklyPlan(weeklyPlan);
+          // Still save the postpone info even if regeneration fails
+          await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(weeklyPlan));
           
           // Show error to user
           setError('Plan postponed but regeneration failed. Plan saved with postpone status.');
           setTimeout(() => setError(null), 5000);
         }
       } else {
-        // Save plan even without regeneration if no API key
-        await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(weeklyPlan));
+        // Add timestamp to track when this update was made
+        weeklyPlan._updatedAt = new Date().toISOString();
+        
+        // Update weekly plan state immediately (optimistic update)
+        setWeeklyPlan(weeklyPlan);
+        
+        // Save to localStorage synchronously (immediate)
         localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(weeklyPlan));
         
-        // Update weekly plan state
-        setWeeklyPlan(weeklyPlan);
+        // Save plan even without regeneration if no API key
+        await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(weeklyPlan));
       }
       
       // Clear current workout
@@ -1790,6 +1822,9 @@ function App() {
         const todayDayName = dayNameMap[dayOfWeek];
         const originalDayName = selectedPlannedWorkout.dayName.toLowerCase();
         
+        console.log('[Do Today] Moving workout from', originalDayName, 'to', todayDayName);
+        console.log('[Do Today] Selected workout:', selectedPlannedWorkout);
+        
         // Get current week key
         const monday = new Date(today);
         monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
@@ -1799,10 +1834,15 @@ function App() {
         // Create a copy of the weekly plan
         const updatedPlan = { ...weeklyPlan };
         
-        // Move the workout from original day to today
-        const workoutToMove = updatedPlan[originalDayName];
+        // Get the workout from selectedPlannedWorkout (it has the workout data)
+        const workoutToMove = selectedPlannedWorkout.workout;
+        console.log('[Do Today] Workout to move from', originalDayName, ':', workoutToMove);
+        console.log('[Do Today] Current plan before move -', originalDayName, ':', updatedPlan[originalDayName], todayDayName, ':', updatedPlan[todayDayName]);
+        
         updatedPlan[originalDayName] = null; // Clear original day
         updatedPlan[todayDayName] = workoutToMove; // Set today's workout
+        
+        console.log('[Do Today] Plan after move -', originalDayName, ':', updatedPlan[originalDayName], todayDayName, ':', updatedPlan[todayDayName]);
         
         // Clear any postpone info for today if it exists
         if (!updatedPlan._postponements) {
@@ -1812,12 +1852,37 @@ function App() {
           delete updatedPlan._postponements[todayDayName];
         }
         
-        // Save to Supabase and localStorage
-        await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(updatedPlan));
-        localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(updatedPlan));
+        // Add timestamp to track when this update was made
+        updatedPlan._updatedAt = new Date().toISOString();
         
-        // Update state
+        // Update state immediately (optimistic update)
         setWeeklyPlan(updatedPlan);
+        
+        // Save to localStorage synchronously (immediate)
+        const planString = JSON.stringify(updatedPlan);
+        localStorage.setItem(`weekly_plan_${weekKey}`, planString);
+        console.log('[Do Today] Saving plan with _updatedAt:', updatedPlan._updatedAt, 'Has _postponements:', !!updatedPlan._postponements);
+        console.log('[Do Today] Plan keys before save:', Object.keys(updatedPlan));
+        
+        // Save to Supabase asynchronously (may take time)
+        try {
+          console.log('[Do Today] Calling dataService.set with key:', `weekly_plan_${weekKey}`);
+          await dataService.set(`weekly_plan_${weekKey}`, planString);
+          console.log('[Do Today] dataService.set completed');
+          
+          // Verify it was saved correctly
+          const verifyPlan = await dataService.get(`weekly_plan_${weekKey}`);
+          if (verifyPlan) {
+            const parsed = JSON.parse(verifyPlan);
+            console.log('[Do Today] Verified saved plan has _updatedAt:', parsed._updatedAt, 'Has _postponements:', !!parsed._postponements);
+            console.log('[Do Today] Verified plan keys:', Object.keys(parsed));
+          } else {
+            console.error('[Do Today] Verification failed - no plan returned from get');
+          }
+        } catch (saveError) {
+          console.error('[Do Today] Error saving to Supabase:', saveError);
+          // Still update state even if save fails
+        }
         setWeeklyPlanRefreshKey(prev => prev + 1);
         
         // Set as current workout
@@ -2592,6 +2657,7 @@ function App() {
 
             <WeeklyPlan 
               key={weeklyPlanRefreshKey}
+              weeklyPlan={weeklyPlan}
               activities={activities}
               onWorkoutClick={handlePlannedWorkoutClick}
               onGenerateWeeklyPlan={handleGenerateWeeklyPlan}
@@ -2626,8 +2692,7 @@ function App() {
               display: 'grid',
               gridTemplateColumns: '1fr 1fr',
               gap: '24px',
-              alignItems: 'start',
-              padding: '0 24px'
+              alignItems: 'start'
             }} className="two-column-grid below-week">
               {/* Left column: Today's workout or Recovery (on rest days) */}
               <div>
@@ -2780,7 +2845,6 @@ function App() {
             {/* Recovery entry button - only show on run days (when workout exists) */}
             {workout && (
             <div style={{
-              padding: '0 24px',
               marginTop: '24px'
             }}
             className="recovery-entry-container"

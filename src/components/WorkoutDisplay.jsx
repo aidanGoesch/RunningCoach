@@ -91,6 +91,14 @@ const WorkoutDisplay = ({
     return !!dayMatch && dayMatch.activities && dayMatch.activities.length > 0;
   })();
 
+  // Format block pace for dashboard card - truncate to first pace value only
+  const formatBlockPace = (pace) => {
+    if (!pace) return '';
+    // Take only the content before the first comma
+    const trimmed = pace.split(',')[0].trim();
+    return trimmed;
+  };
+
   // Close popover when clicking outside the card
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -238,11 +246,18 @@ const WorkoutDisplay = ({
                   }}
                 >
                   {/* Left side */}
-                  <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ 
+                    flex: 1, 
+                    minWidth: 0,
+                    overflow: 'hidden'
+                  }}>
                     <div style={{
                       fontSize: '13px',
                       fontWeight: 500,
-                      color: 'var(--color-text-primary)'
+                      color: 'var(--color-text-primary)',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis'
                     }}>
                       {block.title}
                     </div>
@@ -253,8 +268,7 @@ const WorkoutDisplay = ({
                         marginTop: '2px',
                         whiteSpace: 'nowrap',
                         overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        maxWidth: '100%'
+                        textOverflow: 'ellipsis'
                       }}>
                         {subParts.join(' · ')}
                       </div>
@@ -263,28 +277,34 @@ const WorkoutDisplay = ({
                   
                   {/* Right side */}
                   <div style={{
-                    textAlign: 'right',
                     flexShrink: 0,
+                    maxWidth: '140px',
                     display: 'flex',
                     flexDirection: 'column',
                     alignItems: 'flex-end',
-                    gap: '4px',
+                    gap: '3px',
                     paddingLeft: '12px'
                   }}>
                     {block.pace && (
                       <div style={{
                         fontSize: '12px',
                         fontWeight: 500,
-                        color: 'var(--color-text-primary)'
+                        color: 'var(--color-text-primary)',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        maxWidth: '140px',
+                        textAlign: 'right'
                       }}>
-                        {block.pace}
+                        {formatBlockPace(block.pace)}
                       </div>
                     )}
                     {(block.distance || block.duration) && (
                       <div style={{
                         fontSize: '10px',
                         color: 'var(--color-text-tertiary)',
-                        marginTop: '1px'
+                        whiteSpace: 'nowrap',
+                        textAlign: 'right'
                       }}>
                         {[block.distance, block.duration ? `${block.duration} min` : null]
                           .filter(Boolean)

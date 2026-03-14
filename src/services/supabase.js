@@ -155,7 +155,9 @@ export class DataService {
             return data?.weekly_analysis || null;
           } else if (key.startsWith('weekly_plan_')) {
             if (data && data.plan_data) {
-              return JSON.stringify(data.plan_data);
+              const planData = data.plan_data;
+              console.log('[Supabase Get] Loaded plan_data has _updatedAt:', !!planData._updatedAt, planData._updatedAt, 'Has _postponements:', !!planData._postponements);
+              return JSON.stringify(planData);
             }
             return null;
           } else if (key.startsWith('activity_insights_')) {
@@ -176,11 +178,14 @@ export class DataService {
   }
 
   async set(key, value) {
+    console.log('[DataService Set] Called with key:', key, 'useSupabase:', this.useSupabase);
     if (!this.useSupabase) {
+      console.log('[DataService Set] Supabase disabled, saving to localStorage only');
       localStorage.setItem(key, value)
       return
     }
 
+    console.log('[DataService Set] Supabase enabled, proceeding with save');
     const user = await ensureUser()
 
     switch (key) {
@@ -241,13 +246,44 @@ export class DataService {
         default:
           if (key.startsWith('weekly_plan_')) {
             const weekStart = key.replace('weekly_plan_', '')
-            await supabase
+            const planData = JSON.parse(value)
+            console.log('[Supabase Set] Saving weekly plan with weekStart:', weekStart);
+            console.log('[Supabase Set] Plan data keys:', Object.keys(planData));
+            console.log('[Supabase Set] Plan has _updatedAt:', !!planData._updatedAt, planData._updatedAt);
+            console.log('[Supabase Set] Plan has _postponements:', !!planData._postponements, planData._postponements);
+            console.log('[Supabase Set] Full plan_data being saved:', JSON.stringify(planData).substring(0, 200));
+            
+            const { data, error } = await supabase
               .from('weekly_plans')
               .upsert({
                 user_id: user.id,
                 week_start_date: weekStart,
-                plan_data: JSON.parse(value)
+                plan_data: planData
+              }, {
+                onConflict: 'user_id,week_start_date'
               })
+            
+            if (error) {
+              console.error('[Supabase Set] Error saving weekly plan:', error);
+              throw error;
+            } else {
+              console.log('[Supabase Set] Successfully saved weekly plan, returned data:', data);
+              
+              // Verify what was actually saved
+              const { data: verifyData, error: verifyError } = await supabase
+                .from('weekly_plans')
+                .select('plan_data')
+                .eq('user_id', user.id)
+                .eq('week_start_date', weekStart)
+                .single();
+              
+              if (verifyError) {
+                console.error('[Supabase Set] Error verifying save:', verifyError);
+              } else if (verifyData && verifyData.plan_data) {
+                console.log('[Supabase Set] Verified saved plan_data has _updatedAt:', !!verifyData.plan_data._updatedAt, verifyData.plan_data._updatedAt);
+                console.log('[Supabase Set] Verified saved plan_data has _postponements:', !!verifyData.plan_data._postponements);
+              }
+            }
           } else if (key.startsWith('weekly_analysis_')) {
             const weekStart = key.replace('weekly_analysis_', '')
             // Store analysis in weekly_plans table's weekly_analysis column

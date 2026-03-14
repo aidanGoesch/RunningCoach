@@ -566,6 +566,31 @@ body {
   padding: 0 0 10px 0;
 }
 
+@media (max-width: 720px) {
+  .below-week .section-label {
+    padding: 20px 16px 10px !important;
+  }
+  
+  .below-week {
+    padding: 0 16px !important;
+    grid-template-columns: 1fr !important;
+  }
+  
+  .recovery-entry-container {
+    padding: 0 16px !important;
+  }
+}
+
+@media (min-width: 721px) {
+  .below-week {
+    padding: 0 24px;
+  }
+  
+  .recovery-entry-container {
+    padding: 0 24px;
+  }
+}
+
 /* Fix clipping in two-column grid */
 .below-week > * {
   min-width: 0;
