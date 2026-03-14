@@ -1174,60 +1174,64 @@ export const saveStravaTokens = async (accessToken, refreshToken, expiresAt = nu
 };
 
 export const getStravaTokens = async () => {
-  console.log('getStravaTokens called, useSupabase:', dataService.useSupabase);
-  
-  // Check if we're on mobile - if so, always try Supabase first (even if useSupabase isn't set yet)
-  const isMobile = typeof window !== 'undefined' && (
-    (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) ||
-    (typeof Capacitor !== 'undefined' && Capacitor.isNativePlatform && Capacitor.isNativePlatform())
-  );
-  
-  const shouldCheckSupabase = dataService.useSupabase || isMobile;
-  
-  console.log('Token retrieval:', { useSupabase: dataService.useSupabase, isMobile, shouldCheckSupabase });
-  
-  if (!shouldCheckSupabase) {
-    const accessToken = localStorage.getItem('strava_access_token');
-    const refreshToken = localStorage.getItem('strava_refresh_token');
-    console.log('Not using Supabase, checking localStorage:', {
-      hasAccessToken: !!accessToken,
-      hasRefreshToken: !!refreshToken
-    });
-    return accessToken && refreshToken ? { accessToken, refreshToken } : null;
-  }
-  
+  // Always try Supabase first (default), then fall back to localStorage
   try {
-    console.log('Fetching tokens from Supabase...');
-    const user = await ensureUser();
-    console.log('User authenticated:', user?.id);
-    
-    const { data, error } = await supabase.from('strava_tokens').select('access_token, refresh_token, expires_at').eq('user_id', user.id).single();
-    
-    if (error) {
-      if (error.code === 'PGRST116') {
-        console.log('No tokens in Supabase and migration from localStorage is disabled.');
-        return null;
+    // Add timeout to prevent hanging
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Supabase timeout')), 3000)
+    );
+
+    const fetchFromSupabase = async () => {
+      const user = await ensureUser();
+      const { data, error } = await supabase
+        .from('strava_tokens')
+        .select('access_token, refresh_token, expires_at')
+        .eq('user_id', user.id)
+        .single();
+      
+      if (error) {
+        if (error.code === 'PGRST116') {
+          // No tokens in Supabase - this is fine, will fall back to localStorage
+          return null;
+        }
+        throw error;
       }
-      console.error('Error getting Strava tokens from Supabase:', error);
-      // Do not fall back to localStorage when Supabase is enabled
+      
+      if (data) {
+        // Update localStorage with tokens from Supabase for faster access
+        localStorage.setItem('strava_access_token', data.access_token);
+        localStorage.setItem('strava_refresh_token', data.refresh_token);
+        if (data.expires_at) localStorage.setItem('strava_token_expires_at', data.expires_at);
+        return { 
+          accessToken: data.access_token, 
+          refreshToken: data.refresh_token, 
+          expiresAt: data.expires_at 
+        };
+      }
+      
       return null;
+    };
+
+    // Try Supabase first with timeout
+    const supabaseResult = await Promise.race([fetchFromSupabase(), timeoutPromise]);
+    if (supabaseResult) {
+      return supabaseResult;
     }
-    
-    if (data) {
-      console.log('Tokens found in Supabase, updating localStorage');
-      localStorage.setItem('strava_access_token', data.access_token);
-      localStorage.setItem('strava_refresh_token', data.refresh_token);
-      if (data.expires_at) localStorage.setItem('strava_token_expires_at', data.expires_at);
-      return { accessToken: data.access_token, refreshToken: data.refresh_token, expiresAt: data.expires_at };
-    }
-    
-    console.log('No data returned from Supabase');
-    return null;
   } catch (error) {
-    console.error('Failed to get Strava tokens:', error);
-    // Do not fall back to localStorage when Supabase is enabled
-    return null;
+    // Supabase failed or timed out - fall back to localStorage
+    if (error.message !== 'Supabase timeout') {
+      console.warn('Could not fetch tokens from Supabase, falling back to localStorage:', error);
+    }
   }
+  
+  // Fall back to localStorage
+  const accessToken = localStorage.getItem('strava_access_token');
+  const refreshToken = localStorage.getItem('strava_refresh_token');
+  if (accessToken && refreshToken) {
+    return { accessToken, refreshToken };
+  }
+  
+  return null;
 };
 
 export const deleteStravaTokens = async () => {

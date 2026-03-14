@@ -13,7 +13,7 @@ import PullToRefresh from './components/PullToRefresh';
 import NewActivityRatingModal from './components/NewActivityRatingModal';
 import RecoveryPage from './components/RecoveryPage';
 import { generateWorkout, generateWeeklyPlan, generateDataDrivenWeeklyPlan, generateWeeklyAnalysis, matchActivitiesToWorkouts, syncWithStrava, generateInsights, detectNewActivities, adjustWeeklyPlanForPostponement, regenerateDayWorkout, updatePromptWithCurrentData, buildFourWeekSummary, buildRatingQueue } from './services/api';
-import { dataService, setupRealtimeSync, syncAllDataFromSupabase, enableSupabase, getActivityRating, getActivityRatings } from './services/supabase';
+import { dataService, setupRealtimeSync, syncAllDataFromSupabase, enableSupabase, getActivityRating, getActivityRatings, getStravaTokens } from './services/supabase';
 
 function App() {
   const [workout, setWorkout] = useState(null);
@@ -841,14 +841,17 @@ function App() {
     }
 
     // Auto-sync with Strava on page load if we have tokens
-    const hasTokens = localStorage.getItem('strava_access_token') && localStorage.getItem('strava_refresh_token');
-    if (hasTokens) {
-      // Always auto-sync on page refresh to get latest activities
-      // Small delay to let the page load first
-      setTimeout(() => {
-        handleStravaSync(false); // Don't show loading for background sync
-      }, 1000);
-    }
+    // Check Supabase first, then localStorage
+    (async () => {
+      const tokens = await getStravaTokens();
+      if (tokens && tokens.accessToken) {
+        // Always auto-sync on page refresh to get latest activities
+        // Small delay to let the page load first
+        setTimeout(() => {
+          handleStravaSync(false); // Don't show loading for background sync
+        }, 1000);
+      }
+    })();
 
     // Cleanup on unmount
     return () => {

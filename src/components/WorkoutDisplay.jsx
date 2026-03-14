@@ -72,8 +72,12 @@ const WorkoutDisplay = ({
     return parts.join(' · ');
   };
 
-  // Check if workout is synced from Strava
-  const isSyncedFromStrava = (() => {
+  // Check if today's workout is completed by checking activity matches
+  const isWorkoutCompleted = (() => {
+    // First check the isCompleted prop (checks if any run happened today)
+    if (isCompleted) return true;
+    
+    // Then check if today's workout is matched to an activity
     if (!weeklyPlan || !weeklyPlan._activityMatches) return false;
     const today = new Date();
     const dayOfWeek = today.getDay();
@@ -90,6 +94,9 @@ const WorkoutDisplay = ({
     const dayMatch = weeklyPlan._activityMatches[dayName];
     return !!dayMatch && dayMatch.activities && dayMatch.activities.length > 0;
   })();
+
+  // Check if workout is synced from Strava (for display purposes)
+  const isSyncedFromStrava = isWorkoutCompleted;
 
   // Format block pace for dashboard card - truncate to first pace value only
   const formatBlockPace = (pace) => {
@@ -135,16 +142,33 @@ const WorkoutDisplay = ({
         gap: '12px'
       }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          {/* Type tag */}
-          <div style={{
-            fontSize: '10px',
-            fontWeight: 500,
-            color: 'var(--color-text-tertiary)',
-            letterSpacing: '0.08em',
-            textTransform: 'uppercase',
-            marginBottom: '3px'
-          }}>
-            {workoutType}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '3px' }}>
+            {/* Type tag */}
+            <div style={{
+              fontSize: '10px',
+              fontWeight: 500,
+              color: 'var(--color-text-tertiary)',
+              letterSpacing: '0.08em',
+              textTransform: 'uppercase'
+            }}>
+              {workoutType}
+            </div>
+            {/* Completion indicator */}
+            {isWorkoutCompleted && (
+              <div style={{
+                fontSize: '10px',
+                fontWeight: 500,
+                color: '#1D9E75',
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px'
+              }}>
+                <span style={{ fontSize: '12px' }}>✓</span>
+                Completed
+              </div>
+            )}
           </div>
           
           {/* Title */}
@@ -370,7 +394,7 @@ const WorkoutDisplay = ({
         flexDirection: 'column',
         gap: '8px'
       }}>
-        {isSyncedFromStrava && (
+        {isSyncedFromStrava && !isWorkoutCompleted && (
           <div style={{
             fontSize: '10px',
             color: 'var(--color-text-tertiary)',
@@ -379,7 +403,7 @@ const WorkoutDisplay = ({
             Synced from Strava
           </div>
         )}
-        {onPostpone && (
+        {onPostpone && !isWorkoutCompleted && (
           <button
             onClick={onPostpone}
             style={{

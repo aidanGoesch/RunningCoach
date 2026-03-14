@@ -55,7 +55,7 @@ const ActivityMapThumbnail = ({ activityId, onClick, activity }) => {
         // Fetch from API
         const { getStravaTokens } = await import('../services/supabase');
         const tokens = await getStravaTokens();
-        const token = tokens?.accessToken || localStorage.getItem('strava_access_token');
+        const token = tokens?.accessToken;
         
         if (!token) {
           setHasError(true);

@@ -101,7 +101,7 @@ const ActivityDetail = ({ activityId, onBack }) => {
       // Try to get token from Supabase first, then localStorage
       const { getStravaTokens } = await import('../services/supabase');
       const tokens = await getStravaTokens();
-      const token = tokens?.accessToken || localStorage.getItem('strava_access_token');
+      const token = tokens?.accessToken;
       const apiKey = import.meta.env.VITE_OPENAI_API_KEY || localStorage.getItem('openai_api_key');
       
       console.log('Token exists:', !!token);

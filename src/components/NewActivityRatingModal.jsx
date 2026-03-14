@@ -94,7 +94,7 @@ const NewActivityRatingModal = ({ activity, onClose, onComplete }) => {
       try {
         const { getStravaTokens } = await import('../services/supabase');
         const tokens = await getStravaTokens();
-        const token = tokens?.accessToken || localStorage.getItem('strava_access_token');
+        const token = tokens?.accessToken;
         
         if (!token) {
           console.error('No Strava token available');
