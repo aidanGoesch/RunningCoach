@@ -12,8 +12,8 @@ import PostponeWorkout from './components/PostponeWorkout';
 import PullToRefresh from './components/PullToRefresh';
 import NewActivityRatingModal from './components/NewActivityRatingModal';
 import RecoveryPage from './components/RecoveryPage';
-import { generateWorkout, generateWeeklyPlan, generateDataDrivenWeeklyPlan, generateWeeklyAnalysis, matchActivitiesToWorkouts, syncWithStrava, generateInsights, detectNewActivities, adjustWeeklyPlanForPostponement, regenerateDayWorkout, updatePromptWithCurrentData, buildFourWeekSummary } from './services/api';
-import { dataService, setupRealtimeSync, syncAllDataFromSupabase, enableSupabase } from './services/supabase';
+import { generateWorkout, generateWeeklyPlan, generateDataDrivenWeeklyPlan, generateWeeklyAnalysis, matchActivitiesToWorkouts, syncWithStrava, generateInsights, detectNewActivities, adjustWeeklyPlanForPostponement, regenerateDayWorkout, updatePromptWithCurrentData, buildFourWeekSummary, buildRatingQueue } from './services/api';
+import { dataService, setupRealtimeSync, syncAllDataFromSupabase, enableSupabase, getActivityRating, getActivityRatings } from './services/supabase';
 
 function App() {
   const [workout, setWorkout] = useState(null);
@@ -552,7 +552,7 @@ function App() {
               }
               
               // Re-match activities to workouts
-              const activityMatches = matchActivitiesToWorkouts(finalActivities, adjustedPlan, monday);
+              const activityMatches = matchActivitiesToWorkouts(finalActivities, adjustedPlan);
               adjustedPlan._activityMatches = activityMatches;
               
               // Save updated plan
@@ -732,6 +732,21 @@ function App() {
           }
         }
         
+        // Fetch existing ratings from Supabase to avoid re-prompting
+        let existingRatings = [];
+        try {
+          existingRatings = await getActivityRatings();
+          // Merge rated activity IDs into last_known_activity_ids
+          if (existingRatings.length > 0) {
+            const ratedIds = existingRatings.map(r => String(r.activity_id));
+            const knownIds = JSON.parse(localStorage.getItem('last_known_activity_ids') || '[]');
+            const merged = [...new Set([...knownIds, ...ratedIds])];
+            localStorage.setItem('last_known_activity_ids', JSON.stringify(merged));
+          }
+        } catch (e) {
+          console.warn('Could not fetch existing ratings from Supabase, using localStorage fallback');
+        }
+
         // Detect new activities after sync (compare against last known IDs BEFORE updating them)
         let newActivities = [];
         if (syncedActivities && syncedActivities.length > 0) {
@@ -740,7 +755,10 @@ function App() {
             ? JSON.parse(localStorage.getItem('last_known_activity_ids') || '[]')
             : [];
 
-          newActivities = detectNewActivities(syncedActivities, lastKnownIds);
+          let detectedNew = detectNewActivities(syncedActivities, lastKnownIds);
+
+          // Filter out activities that already have ratings
+          newActivities = buildRatingQueue(detectedNew, existingRatings);
 
           // Update baseline to current activities after we compare (and only after sync succeeds)
           const currentIds = syncedActivities.map((a) => a.id);
@@ -1056,7 +1074,7 @@ function App() {
       const weekKey = monday.toISOString().split('T')[0];
       
       // Match activities to workouts
-      const activityMatches = matchActivitiesToWorkouts(activities, weeklyPlan, monday);
+      const activityMatches = matchActivitiesToWorkouts(activities, weeklyPlan);
       
       // Remove internal data before saving
       const planToSave = { ...weeklyPlan };
@@ -1237,6 +1255,36 @@ function App() {
     todayDate
   ]);
 
+  // Match activities to workouts whenever weeklyPlan or activities change
+  useEffect(() => {
+    if (!weeklyPlan || !activities || activities.length === 0) return;
+    if (isPreloading) return; // Don't run during initial load
+
+    const matchAndUpdate = async () => {
+      try {
+        const activityMatches = matchActivitiesToWorkouts(activities, weeklyPlan);
+        
+        // Update weekly plan with matches
+        const updatedPlan = { ...weeklyPlan, _activityMatches: activityMatches };
+        setWeeklyPlan(updatedPlan);
+        
+        // Save to localStorage and Supabase
+        const today = new Date();
+        const monday = new Date(today);
+        monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+        monday.setHours(0, 0, 0, 0);
+        const weekKey = monday.toISOString().split('T')[0];
+        
+        localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(updatedPlan));
+        await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(updatedPlan));
+      } catch (error) {
+        console.error('Error matching activities to workouts:', error);
+      }
+    };
+
+    matchAndUpdate();
+  }, [weeklyPlan, activities, isPreloading]);
+
   const handlePlannedWorkoutClick = (plannedWorkout, dayName) => {
     console.log('Planned workout clicked:', plannedWorkout, dayName);
     setSelectedPlannedWorkout({ workout: plannedWorkout, dayName });
@@ -1391,7 +1439,7 @@ function App() {
           }
           
           // Re-match activities to workouts
-          const activityMatches = matchActivitiesToWorkouts(activities, adjustedPlan, monday);
+          const activityMatches = matchActivitiesToWorkouts(activities, adjustedPlan);
           adjustedPlan._activityMatches = activityMatches;
           
           // Add timestamp to track when this update was made
@@ -1518,8 +1566,19 @@ function App() {
         await dataService.set('strava_activities', JSON.stringify(syncedActivities));
         localStorage.setItem('strava_activities', JSON.stringify(syncedActivities)); // Keep local copy
 
+        // Fetch existing ratings from Supabase to avoid re-prompting
+        let existingRatings = [];
+        try {
+          existingRatings = await getActivityRatings();
+        } catch (e) {
+          console.warn('Could not fetch existing ratings from Supabase, using localStorage fallback');
+        }
+
         // Detect new activities and prompt for rating (only if baseline exists)
-        let newActivities = detectNewActivities(syncedActivities, lastKnownIds);
+        let detectedNew = detectNewActivities(syncedActivities, lastKnownIds);
+        
+        // Filter out activities that already have ratings
+        let newActivities = buildRatingQueue(detectedNew, existingRatings);
 
         // Update baseline AFTER comparison
         const currentIds = syncedActivities.map((a) => a.id);
@@ -1545,7 +1604,7 @@ function App() {
         const storedPlan = await dataService.get(`weekly_plan_${weekKey}`);
         if (storedPlan) {
           const parsedPlan = JSON.parse(storedPlan);
-          const activityMatches = matchActivitiesToWorkouts(syncedActivities, parsedPlan, monday);
+          const activityMatches = matchActivitiesToWorkouts(syncedActivities, parsedPlan);
           parsedPlan._activityMatches = activityMatches;
           
           // Save updated plan with matches
@@ -2424,43 +2483,34 @@ function App() {
                 phaseName = "Taper";
               }
               
-              // Calculate current week's activities (Monday to Sunday)
-              const monday = new Date(today);
-              monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-              monday.setHours(0, 0, 0, 0);
-              const sunday = new Date(monday);
-              sunday.setDate(monday.getDate() + 6);
-              sunday.setHours(23, 59, 59, 999);
+              // Calculate stats from matched activities
+              const activityMatches = weeklyPlan?._activityMatches || {};
               
-              const weekActivities = activities.filter(a => {
-                const activityDate = new Date(a.start_date);
-                return activityDate >= monday && activityDate <= sunday && a.type === 'Run';
-              });
+              // Miles this week: sum of distance for all matched activities
+              const matchedActivities = Object.values(activityMatches).flatMap(match => match.activities || []);
+              const milesThisWeek = matchedActivities.reduce((sum, a) => sum + (a.distance / 1609.34), 0);
               
-              const milesThisWeek = weekActivities.reduce((sum, a) => sum + (a.distance / 1609.34), 0);
+              // Runs done: count days with matches vs total planned days
+              const completedRunDays = Object.keys(activityMatches).length;
+              const totalPlannedDays = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday']
+                .filter(day => weeklyPlan?.[day] !== null && weeklyPlan?.[day] !== undefined).length;
               
-              // Calculate runs done vs expected (3 runs per week: Sun, Tue, Thu)
-              const expectedRunDays = [0, 2, 4]; // Sunday, Tuesday, Thursday
-              const completedRunDays = expectedRunDays.filter(dayOffset => {
-                const checkDate = new Date(monday);
-                checkDate.setDate(monday.getDate() + dayOffset);
-                checkDate.setHours(0, 0, 0, 0);
-                const checkEnd = new Date(checkDate);
-                checkEnd.setHours(23, 59, 59, 999);
-                return weekActivities.some(a => {
-                  const activityDate = new Date(a.start_date);
-                  return activityDate >= checkDate && activityDate <= checkEnd;
-                });
-              }).length;
-              
-              // Calculate avg rating for this week
-              const activityRatings = JSON.parse(localStorage.getItem('activity_ratings') || '{}');
-              const weekRatings = weekActivities
-                .map(a => activityRatings[a.id]?.rating)
-                .filter(r => r !== undefined && r !== null);
-              const avgRating = weekRatings.length > 0 
-                ? weekRatings.reduce((sum, r) => sum + r, 0) / weekRatings.length 
-                : null;
+              // Avg rating: average of ratings for matched activity IDs
+              const matchedActivityIds = Object.values(activityMatches).flatMap(match => match.matchedActivityIds || []);
+              let avgRating = null;
+              if (matchedActivityIds.length > 0) {
+                // Get ratings from localStorage (getActivityRating checks this first, but we need sync access here)
+                const activityRatings = JSON.parse(localStorage.getItem('activity_ratings') || '{}');
+                const ratings = matchedActivityIds
+                  .map(id => {
+                    const rating = activityRatings[id] || activityRatings[String(id)];
+                    return rating?.rating;
+                  })
+                  .filter(r => r !== null && r !== undefined);
+                if (ratings.length > 0) {
+                  avgRating = ratings.reduce((sum, r) => sum + r, 0) / ratings.length;
+                }
+              }
               
               return (
                 <div style={{
@@ -2606,7 +2656,7 @@ function App() {
                         color: 'var(--color-text-primary)',
                         lineHeight: 1
                       }}>
-                        {completedRunDays} / 3
+                        {completedRunDays} / {totalPlannedDays}
                       </div>
                       <div style={{
                         fontSize: '10px',
@@ -2677,7 +2727,7 @@ function App() {
                 const storedPlan = await dataService.get(`weekly_plan_${weekKey}`);
                 if (storedPlan) {
                   const parsedPlan = JSON.parse(storedPlan);
-                  const activityMatches = matchActivitiesToWorkouts(activities, parsedPlan, monday);
+                  const activityMatches = matchActivitiesToWorkouts(activities, parsedPlan);
                   parsedPlan._activityMatches = activityMatches;
                   
                   // Save updated plan with matches

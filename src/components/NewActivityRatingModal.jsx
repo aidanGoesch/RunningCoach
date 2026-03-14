@@ -6,7 +6,13 @@ const formatPace = (speedMs) => {
   const paceMinPerMile = 26.8224 / speedMs;
   const minutes = Math.floor(paceMinPerMile);
   const seconds = Math.round((paceMinPerMile - minutes) * 60);
-  return `${minutes}:${seconds.toString().padStart(2, '0')}/mile`;
+  return `${minutes}:${seconds.toString().padStart(2, '0')}/mi`;
+};
+
+const formatDuration = (seconds) => {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
 };
 
 const ActivityMap = ({ activity, streams }) => {
@@ -22,53 +28,18 @@ const ActivityMap = ({ activity, streams }) => {
     const map = L.map(mapId).setView(streams.latlng.data[0], 13);
     mapRef.current = map;
 
-    // Add route polyline - blue color
-    const polyline = L.polyline(streams.latlng.data, { color: '#3b82f6', weight: 4 }).addTo(map);
+    // Add route polyline - blue color #378ADD
+    const polyline = L.polyline(streams.latlng.data, { color: '#378ADD', weight: 4 }).addTo(map);
     map.fitBounds(polyline.getBounds());
 
-    // Function to update tile layer based on theme
-    const updateTileLayer = () => {
-      const theme = document.documentElement.getAttribute('data-theme');
-      
-      // Remove existing tile layer
-      if (tileLayerRef.current) {
-        map.removeLayer(tileLayerRef.current);
-      }
-
-      // Add appropriate tile layer based on theme
-      if (theme === 'dark') {
-        // Dark Matter tiles for dark mode
-        tileLayerRef.current = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-          attribution: '© OpenStreetMap contributors © CARTO',
-          subdomains: 'abcd',
-          maxZoom: 19
-        }).addTo(map);
-      } else {
-        // Light tiles for light mode
-        tileLayerRef.current = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-          attribution: '© OpenStreetMap contributors © CARTO',
-          subdomains: 'abcd',
-          maxZoom: 19
-        }).addTo(map);
-      }
-    };
-
-    // Set initial tile layer
-    updateTileLayer();
-
-    // Watch for theme changes
-    const observer = new MutationObserver(updateTileLayer);
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ['data-theme']
-    });
-
-    mapRef.current._themeObserver = observer;
+    // Always use dark tiles for modal map
+    tileLayerRef.current = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      attribution: '© OpenStreetMap contributors © CARTO',
+      subdomains: 'abcd',
+      maxZoom: 19
+    }).addTo(map);
 
     return () => {
-      if (mapRef.current && mapRef.current._themeObserver) {
-        mapRef.current._themeObserver.disconnect();
-      }
       if (mapRef.current) {
         mapRef.current.remove();
       }
@@ -80,13 +51,12 @@ const ActivityMap = ({ activity, streams }) => {
   if (!streams?.latlng?.data) {
     return (
       <div style={{ 
-        height: '200px', 
+        height: '160px', 
         display: 'flex', 
         alignItems: 'center', 
         justifyContent: 'center',
-        backgroundColor: 'var(--grid-color)',
-        borderRadius: '8px',
-        color: 'var(--text-secondary)'
+        backgroundColor: '#1a1f2e',
+        color: 'var(--color-text-tertiary)'
       }}>
         No GPS data available
       </div>
@@ -94,7 +64,7 @@ const ActivityMap = ({ activity, streams }) => {
   }
 
   return (
-    <div id={mapId} style={{ height: '200px', borderRadius: '8px' }}></div>
+    <div id={mapId} style={{ height: '160px' }}></div>
   );
 };
 
@@ -103,9 +73,19 @@ const NewActivityRatingModal = ({ activity, onClose, onComplete }) => {
   const [loading, setLoading] = useState(true);
   const [ratingValue, setRatingValue] = useState(null);
   const [ratingComment, setRatingComment] = useState('');
-  const [isInjured, setIsInjured] = useState(false);
-  const [injuryDetails, setInjuryDetails] = useState('');
   const [savingRating, setSavingRating] = useState(false);
+  const [hoveredRating, setHoveredRating] = useState(null);
+
+  // Rating colors matching ActivityDetail
+  const ratingColors = [
+    { muted: '#C0DD97', vivid: '#639922' },
+    { muted: '#9FE1CB', vivid: '#1D9E75' },
+    { muted: '#FAC775', vivid: '#BA7517' },
+    { muted: '#F0997B', vivid: '#D85A30' },
+    { muted: '#F7C1C1', vivid: '#E24B4A' }
+  ];
+
+  const ratingLabels = ['Very easy', 'Easy', 'Moderate', 'Hard', 'Very hard'];
 
   useEffect(() => {
     const fetchActivityData = async () => {
@@ -140,18 +120,18 @@ const NewActivityRatingModal = ({ activity, onClose, onComplete }) => {
 
   const handleSubmit = async () => {
     if (!ratingValue) {
-      alert('Please select a rating');
       return;
     }
 
     setSavingRating(true);
     try {
+      // Save notes as feedback field (for backwards compatibility with plan generation)
       await saveActivityRating(
         activity.id,
         ratingValue,
-        ratingComment,
-        isInjured,
-        injuryDetails
+        ratingComment, // This will be saved as feedback field
+        false, // isInjured
+        '' // injuryDetails
       );
       onComplete();
     } catch (error) {
@@ -162,307 +142,317 @@ const NewActivityRatingModal = ({ activity, onClose, onComplete }) => {
     }
   };
 
+  const handleSkip = () => {
+    onClose();
+  };
+
   if (!activity) return null;
 
   return (
-    <>
-      {/* Backdrop */}
+    <div
+      style={{
+        position: 'fixed',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        maxHeight: '90vh',
+        backgroundColor: 'var(--color-background-primary)',
+        zIndex: 9999,
+        display: 'flex',
+        flexDirection: 'column',
+        boxShadow: '0 -4px 20px rgba(0, 0, 0, 0.3)',
+        animation: 'slideUp 0.3s ease',
+        overflow: 'hidden'
+      }}
+    >
+      {/* Handle bar */}
       <div
         style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          width: '100vw',
-          height: '100vh',
-          backgroundColor: 'rgba(0, 0, 0, 0.5)',
-          zIndex: 9998,
-          animation: 'fadeIn 0.3s ease'
-        }}
-        onClick={onClose}
-      />
-      
-      {/* Modal */}
-      <div
-        style={{
-          position: 'fixed',
-          bottom: 0,
-          left: 0,
-          right: 0,
-          height: '85vh',
-          backgroundColor: 'var(--card-bg)',
-          borderTopLeftRadius: '20px',
-          borderTopRightRadius: '20px',
-          zIndex: 9999,
           display: 'flex',
-          flexDirection: 'column',
-          boxShadow: '0 -4px 20px rgba(0, 0, 0, 0.3)',
-          animation: 'slideUp 0.3s ease',
-          overflow: 'hidden'
+          justifyContent: 'center',
+          padding: '10px 0 6px',
+          background: 'var(--color-background-primary)'
         }}
       >
-        {/* Handle bar */}
         <div
           style={{
-            width: '40px',
+            width: '36px',
             height: '4px',
-            backgroundColor: 'var(--border-color)',
             borderRadius: '2px',
-            margin: '12px auto',
-            cursor: 'pointer'
+            background: 'var(--color-border-secondary)'
           }}
-          onClick={onClose}
         />
+      </div>
 
-        {/* Content */}
-        <div
-          style={{
-            flex: 1,
-            overflowY: 'auto',
-            padding: '0 20px 20px',
-            WebkitOverflowScrolling: 'touch'
-          }}
-        >
-          {/* Activity Title */}
-          <div style={{ marginBottom: '20px' }}>
-            <h2 style={{ 
-              fontSize: '20px', 
-              fontWeight: '600', 
-              marginBottom: '4px',
-              color: 'var(--text-color)'
-            }}>
-              {activity.name}
-            </h2>
-            <p style={{ 
-              fontSize: '14px', 
-              color: 'var(--text-secondary)',
-              margin: 0
-            }}>
-              {new Date(activity.start_date).toLocaleDateString()}
-            </p>
-          </div>
-
-          {/* Map */}
-          {loading ? (
-            <div style={{ 
-              height: '200px', 
-              display: 'flex', 
-              alignItems: 'center', 
-              justifyContent: 'center',
-              backgroundColor: 'var(--grid-color)',
-              borderRadius: '8px',
-              color: 'var(--text-secondary)'
-            }}>
-              Loading map...
-            </div>
-          ) : (
-            <div style={{ marginBottom: '20px' }}>
-              <ActivityMap activity={activity} streams={streams} />
-            </div>
-          )}
-
-          {/* Stats */}
+      {/* Map hero */}
+      <div style={{ width: '100%', height: '160px', background: '#1a1f2e' }}>
+        {loading ? (
           <div style={{ 
-            marginBottom: '20px',
-            padding: '16px',
-            backgroundColor: 'var(--grid-color)',
-            borderRadius: '8px'
+            height: '160px', 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            backgroundColor: '#1a1f2e',
+            color: 'var(--color-text-tertiary)'
           }}>
-            <div style={{ 
-              fontSize: '14px', 
-              fontWeight: '600', 
-              marginBottom: '12px',
-              color: 'var(--text-color)'
-            }}>
-              Activity Stats
-            </div>
-            <div style={{ 
-              display: 'grid', 
-              gridTemplateColumns: '1fr 1fr', 
-              gap: '12px' 
-            }}>
-              <div>
-                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Distance</div>
-                <div style={{ fontSize: '16px', fontWeight: '600', color: 'var(--text-color)' }}>
-                  {(activity.distance / 1609.34).toFixed(2)} mi
-                </div>
-              </div>
-              <div>
-                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Duration</div>
-                <div style={{ fontSize: '16px', fontWeight: '600', color: 'var(--text-color)' }}>
-                  {Math.floor(activity.moving_time / 60)}:{(activity.moving_time % 60).toString().padStart(2, '0')}
-                </div>
-              </div>
-              <div>
-                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Avg Pace</div>
-                <div style={{ fontSize: '16px', fontWeight: '600', color: 'var(--text-color)' }}>
-                  {formatPace(activity.average_speed)}
-                </div>
-              </div>
-              {activity.average_heartrate && (
-                <div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Avg HR</div>
-                  <div style={{ fontSize: '16px', fontWeight: '600', color: 'var(--text-color)' }}>
-                    {Math.round(activity.average_heartrate)} bpm
-                  </div>
-                </div>
-              )}
-            </div>
+            Loading map...
           </div>
+        ) : (
+          <ActivityMap activity={activity} streams={streams} />
+        )}
+      </div>
 
-          {/* Rating */}
-          <div style={{ marginBottom: '20px' }}>
-            <div style={{ 
-              fontSize: '14px', 
-              fontWeight: '600', 
-              marginBottom: '12px',
-              color: 'var(--text-color)'
-            }}>
-              How was this run?
-            </div>
-            <div style={{ display: 'flex', gap: '12px', marginBottom: '8px' }}>
-              {[
-                { value: 1, emoji: '😊', label: 'Too easy' },
-                { value: 2, emoji: '🙂', label: 'Easy' },
-                { value: 3, emoji: '😐', label: 'Perfect' },
-                { value: 4, emoji: '😓', label: 'Hard' },
-                { value: 5, emoji: '😫', label: 'Too hard' }
-              ].map(({ value, emoji, label }) => (
-                <button
-                  key={value}
-                  onClick={() => setRatingValue(value)}
-                  style={{
-                    background: ratingValue === value ? 'var(--accent)' : 'var(--grid-color)',
-                    border: ratingValue === value ? '2px solid var(--accent)' : '2px solid transparent',
-                    borderRadius: '12px',
-                    fontSize: '40px',
-                    cursor: 'pointer',
-                    padding: '12px',
-                    transition: 'all 0.2s ease',
-                    transform: ratingValue === value ? 'scale(1.15)' : 'scale(1)',
-                    boxShadow: ratingValue === value ? '0 4px 12px rgba(59, 130, 246, 0.3)' : 'none',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    gap: '4px',
-                    minWidth: '60px'
-                  }}
-                  onMouseEnter={(e) => {
-                    if (ratingValue !== value) {
-                      e.currentTarget.style.transform = 'scale(1.1)';
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (ratingValue !== value) {
-                      e.currentTarget.style.transform = 'scale(1)';
-                    }
-                  }}
-                  title={label}
-                >
-                  <span>{emoji}</span>
-                  {ratingValue === value && (
-                    <span style={{ fontSize: '10px', color: 'white', fontWeight: '600' }}>
-                      {label}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-            <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-              Click an emoji to rate this activity
-            </div>
+      {/* Sheet body */}
+      <div
+        style={{
+          flex: 1,
+          overflowY: 'auto',
+          padding: '16px 20px 0',
+          background: 'var(--color-background-primary)',
+          WebkitOverflowScrolling: 'touch'
+        }}
+      >
+        {/* Activity header */}
+        <div style={{
+          marginBottom: '16px',
+          borderBottom: '0.5px solid var(--color-border-tertiary)',
+          paddingBottom: '14px'
+        }}>
+          <div style={{
+            fontSize: '18px',
+            fontWeight: '500',
+            color: 'var(--color-text-primary)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap'
+          }}>
+            {activity.name}
           </div>
-
-          {/* Comment */}
-          <div style={{ marginBottom: '20px' }}>
-            <div style={{ 
-              fontSize: '14px', 
-              fontWeight: '600', 
-              marginBottom: '8px',
-              color: 'var(--text-color)'
-            }}>
-              Comments (optional)
-            </div>
-            <textarea
-              value={ratingComment}
-              onChange={(e) => setRatingComment(e.target.value)}
-              placeholder="How did this run feel? Any notes..."
-              style={{
-                width: '100%',
-                padding: '12px',
-                border: '1px solid var(--border-color)',
-                borderRadius: '8px',
-                fontSize: '14px',
-                minHeight: '80px',
-                backgroundColor: 'var(--card-bg)',
-                color: 'var(--text-color)',
-                fontFamily: 'inherit',
-                resize: 'vertical'
-              }}
-            />
-          </div>
-
-          {/* Injury Status */}
-          <div style={{ marginBottom: '20px' }}>
-            <label style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: '10px', 
-              cursor: 'pointer',
-              fontSize: '14px',
-              color: 'var(--text-color)'
-            }}>
-              <input
-                type="checkbox"
-                checked={isInjured}
-                onChange={(e) => setIsInjured(e.target.checked)}
-                style={{ cursor: 'pointer' }}
-              />
-              <span>I'm currently injured or experiencing pain</span>
-            </label>
-            
-            {isInjured && (
-              <textarea
-                value={injuryDetails}
-                onChange={(e) => setInjuryDetails(e.target.value)}
-                placeholder="Describe your injury or pain (e.g., 'knee pain', 'shin splints', 'general fatigue')"
-                style={{
-                  width: '100%',
-                  marginTop: '10px',
-                  padding: '12px',
-                  border: '1px solid var(--border-color)',
-                  borderRadius: '8px',
-                  fontSize: '14px',
-                  minHeight: '60px',
-                  backgroundColor: 'var(--card-bg)',
-                  color: 'var(--text-color)',
-                  fontFamily: 'inherit',
-                  resize: 'vertical'
-                }}
-              />
-            )}
+          <div style={{
+            fontSize: '12px',
+            color: 'var(--color-text-tertiary)',
+            marginTop: '3px'
+          }}>
+            {new Date(activity.start_date).toLocaleDateString()} · {formatDuration(activity.moving_time)}
           </div>
         </div>
 
-        {/* Submit Button */}
-        <div style={{ 
-          padding: '16px 20px',
-          borderTop: '1px solid var(--border-color)',
-          backgroundColor: 'var(--card-bg)'
+        {/* Metrics row */}
+        <div style={{
+          marginBottom: '16px',
+          borderBottom: '0.5px solid var(--color-border-tertiary)',
+          paddingBottom: '14px'
+        }}>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1px 1fr 1px 1fr',
+            gap: 0
+          }}>
+            {/* Distance */}
+            <div style={{ padding: '0 16px', paddingLeft: 0 }}>
+              <div style={{
+                fontSize: '16px',
+                fontWeight: '500',
+                color: 'var(--color-text-primary)',
+                lineHeight: 1
+              }}>
+                {(activity.distance / 1609.34).toFixed(1)} mi
+              </div>
+              <div style={{
+                fontSize: '10px',
+                color: 'var(--color-text-tertiary)',
+                marginTop: '4px',
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase'
+              }}>
+                Distance
+              </div>
+            </div>
+            {/* Divider */}
+            <div style={{
+              background: 'var(--color-border-tertiary)',
+              width: '1px'
+            }} />
+            {/* Avg Pace */}
+            <div style={{ padding: '0 16px' }}>
+              <div style={{
+                fontSize: '16px',
+                fontWeight: '500',
+                color: 'var(--color-text-primary)',
+                lineHeight: 1
+              }}>
+                {formatPace(activity.average_speed)}
+              </div>
+              <div style={{
+                fontSize: '10px',
+                color: 'var(--color-text-tertiary)',
+                marginTop: '4px',
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase'
+              }}>
+                Avg pace
+              </div>
+            </div>
+            {/* Divider */}
+            <div style={{
+              background: 'var(--color-border-tertiary)',
+              width: '1px'
+            }} />
+            {/* Avg HR */}
+            <div style={{ padding: '0 16px', paddingRight: 0 }}>
+              <div style={{
+                fontSize: '16px',
+                fontWeight: '500',
+                color: 'var(--color-text-primary)',
+                lineHeight: 1
+              }}>
+                {activity.average_heartrate ? `${Math.round(activity.average_heartrate)} bpm` : '—'}
+              </div>
+              <div style={{
+                fontSize: '10px',
+                color: 'var(--color-text-tertiary)',
+                marginTop: '4px',
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase'
+              }}>
+                Avg HR
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Effort rating */}
+        <div style={{
+          marginBottom: '16px',
+          borderBottom: '0.5px solid var(--color-border-tertiary)',
+          paddingBottom: '16px'
+        }}>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: '8px'
+          }}>
+            <div style={{
+              fontSize: '11px',
+              textTransform: 'uppercase',
+              letterSpacing: '0.04em',
+              color: 'var(--color-text-tertiary)'
+            }}>
+              EFFORT
+            </div>
+            <div style={{
+              fontSize: '11px',
+              color: 'var(--color-text-tertiary)'
+            }}>
+              {ratingValue ? ratingLabels[ratingValue - 1] : ''}
+            </div>
+          </div>
+          <div style={{
+            display: 'flex',
+            gap: '6px',
+            marginTop: '8px'
+          }}>
+            {[1, 2, 3, 4, 5].map((value) => {
+              const isSelected = ratingValue === value;
+              const isHovered = hoveredRating === value;
+              const colors = ratingColors[value - 1];
+              const shouldShowVivid = isSelected || isHovered;
+              return (
+                <div
+                  key={value}
+                  onClick={() => setRatingValue(value)}
+                  onMouseEnter={() => setHoveredRating(value)}
+                  onMouseLeave={() => setHoveredRating(null)}
+                  style={{
+                    width: '40px',
+                    height: '16px',
+                    borderRadius: '3px',
+                    cursor: 'pointer',
+                    backgroundColor: shouldShowVivid ? colors.vivid : colors.muted,
+                    outline: isSelected ? '1.5px solid var(--color-border-primary)' : 'none',
+                    outlineOffset: isSelected ? '2px' : '0',
+                    transition: 'all 0.15s'
+                  }}
+                />
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Notes */}
+        <div style={{
+          marginBottom: '16px',
+          borderBottom: '0.5px solid var(--color-border-tertiary)',
+          paddingBottom: '16px'
+        }}>
+          <div style={{
+            fontSize: '11px',
+            textTransform: 'uppercase',
+            letterSpacing: '0.04em',
+            color: 'var(--color-text-tertiary)',
+            marginBottom: '8px'
+          }}>
+            NOTES
+          </div>
+          <textarea
+            value={ratingComment}
+            onChange={(e) => setRatingComment(e.target.value)}
+            placeholder="How did it feel? Any issues?"
+            rows={3}
+            style={{
+              width: '100%',
+              border: '0.5px solid var(--color-border-secondary)',
+              borderRadius: '8px',
+              padding: '10px 12px',
+              fontSize: '13px',
+              color: 'var(--color-text-secondary)',
+              background: 'var(--color-background-secondary)',
+              resize: 'none',
+              fontFamily: 'inherit'
+            }}
+          />
+        </div>
+
+        {/* Actions */}
+        <div style={{
+          display: 'flex',
+          gap: '10px',
+          paddingBottom: '32px'
         }}>
           <button
-            className="btn btn-primary"
+            onClick={handleSkip}
+            style={{
+              flexShrink: 0,
+              padding: '11px 18px',
+              fontSize: '13px',
+              color: 'var(--color-text-secondary)',
+              background: 'none',
+              border: '0.5px solid var(--color-border-secondary)',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              fontFamily: 'inherit'
+            }}
+          >
+            Skip
+          </button>
+          <button
             onClick={handleSubmit}
             disabled={!ratingValue || savingRating}
             style={{
-              width: '100%',
-              padding: '16px',
-              fontSize: '16px',
-              fontWeight: '600',
-              opacity: (!ratingValue || savingRating) ? 0.5 : 1,
-              cursor: (!ratingValue || savingRating) ? 'not-allowed' : 'pointer'
+              flex: 1,
+              padding: '11px',
+              fontSize: '13px',
+              fontWeight: '500',
+              color: (!ratingValue || savingRating) ? 'var(--color-text-tertiary)' : 'white',
+              background: (!ratingValue || savingRating) ? 'var(--color-background-secondary)' : '#185FA5',
+              border: 'none',
+              borderRadius: '8px',
+              cursor: (!ratingValue || savingRating) ? 'not-allowed' : 'pointer',
+              fontFamily: 'inherit'
             }}
           >
-            {savingRating ? 'Saving...' : 'Submit Rating'}
+            {savingRating ? 'Saving...' : 'Save'}
           </button>
         </div>
       </div>
@@ -476,16 +466,8 @@ const NewActivityRatingModal = ({ activity, onClose, onComplete }) => {
             transform: translateY(0);
           }
         }
-        @keyframes fadeIn {
-          from {
-            opacity: 0;
-          }
-          to {
-            opacity: 1;
-          }
-        }
       `}</style>
-    </>
+    </div>
   );
 };
 

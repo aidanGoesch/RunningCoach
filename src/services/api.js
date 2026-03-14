@@ -1323,106 +1323,56 @@ CRITICAL INSTRUCTIONS:
   }
 };
 
+// Helper function to get the calendar date for a day of the current week
+function getDateForDayOfCurrentWeek(dayKey) {
+  const dayIndexMap = {
+    monday: 0, tuesday: 1, wednesday: 2, thursday: 3,
+    friday: 4, saturday: 5, sunday: 6
+  };
+  const today = new Date();
+  const todayDay = today.getDay(); // 0=Sun, 1=Mon...
+  const mondayOffset = todayDay === 0 ? -6 : 1 - todayDay;
+  const monday = new Date(today);
+  monday.setDate(today.getDate() + mondayOffset);
+  monday.setHours(0, 0, 0, 0);
+  const target = new Date(monday);
+  target.setDate(monday.getDate() + dayIndexMap[dayKey]);
+  return target.toLocaleDateString('en-CA'); // YYYY-MM-DD
+}
+
 // Match Strava activities to assigned workouts
-export const matchActivitiesToWorkouts = (activities, weeklyPlan, weekStart) => {
+export const matchActivitiesToWorkouts = (activities, weeklyPlan) => {
   if (!weeklyPlan || !activities || activities.length === 0) {
     return {};
   }
 
-  const matches = {};
-  const dayNameMap = {
-    'monday': 0,
-    'tuesday': 1,
-    'wednesday': 2,
-    'thursday': 3,
-    'friday': 4,
-    'saturday': 5,
-    'sunday': 6
-  };
+  const days = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+  const result = {};
 
-  // Group activities by date
-  const activitiesByDate = new Map();
-  activities.forEach(activity => {
-    if (activity.type === 'Run') {
-      const activityDate = new Date(activity.start_date);
-      activityDate.setHours(0, 0, 0, 0);
-      const dateKey = activityDate.toISOString().split('T')[0];
-      
-      if (!activitiesByDate.has(dateKey)) {
-        activitiesByDate.set(dateKey, []);
-      }
-      activitiesByDate.get(dateKey).push(activity);
-    }
-  });
+  // For each day in the weekly plan
+  for (const dayKey of days) {
+    const workout = weeklyPlan?.[dayKey];
+    if (!workout) continue; // rest day — skip
 
-  // For each day with a planned workout, try to match activities
-  Object.keys(dayNameMap).forEach(dayName => {
-    const plannedWorkout = weeklyPlan[dayName];
-    if (!plannedWorkout) return;
+    // Find the calendar date this day corresponds to in the current week
+    const dayDate = getDateForDayOfCurrentWeek(dayKey); // returns YYYY-MM-DD string
+    
+    // Find any Strava activities whose start_date falls on that calendar date
+    const matched = activities.filter(a => {
+      const actDate = new Date(a.start_date).toLocaleDateString('en-CA'); // YYYY-MM-DD
+      return actDate === dayDate && a.type === 'Run';
+    });
 
-    // Calculate the date for this day of the week
-    const dayOffset = dayNameMap[dayName];
-    const workoutDate = new Date(weekStart);
-    workoutDate.setDate(weekStart.getDate() + dayOffset);
-    workoutDate.setHours(0, 0, 0, 0);
-    const dateKey = workoutDate.toISOString().split('T')[0];
-
-    const dayActivities = activitiesByDate.get(dateKey) || [];
-
-    if (dayActivities.length === 0) {
-      // No activities on this day
-      return;
-    }
-
-    // If multiple activities on the same day, check if they're within 10 minutes
-    if (dayActivities.length > 1) {
-      // Sort by start time
-      dayActivities.sort((a, b) => 
-        new Date(a.start_date).getTime() - new Date(b.start_date).getTime()
-      );
-
-      // Group activities that are within 10 minutes of each other
-      const groupedActivities = [];
-      let currentGroup = [dayActivities[0]];
-
-      for (let i = 1; i < dayActivities.length; i++) {
-        const prevTime = new Date(dayActivities[i - 1].start_date).getTime();
-        const currTime = new Date(dayActivities[i].start_date).getTime();
-        const timeDiff = (currTime - prevTime) / (1000 * 60); // minutes
-
-        if (timeDiff <= 10) {
-          // Within 10 minutes, add to current group
-          currentGroup.push(dayActivities[i]);
-        } else {
-          // More than 10 minutes apart, start new group
-          groupedActivities.push(currentGroup);
-          currentGroup = [dayActivities[i]];
-        }
-      }
-      groupedActivities.push(currentGroup);
-
-      // Use the first group (or largest group if multiple)
-      const matchedGroup = groupedActivities.reduce((largest, group) => 
-        group.length > largest.length ? group : largest
-      , groupedActivities[0]);
-
-      // Match the workout to the first activity in the group (or combine them)
-      matches[dayName] = {
-        workout: plannedWorkout,
-        activities: matchedGroup,
-        matchedActivityIds: matchedGroup.map(a => a.id)
-      };
-    } else {
-      // Single activity on the workout day - match it
-      matches[dayName] = {
-        workout: plannedWorkout,
-        activities: [dayActivities[0]],
-        matchedActivityIds: [dayActivities[0].id]
+    if (matched.length > 0) {
+      result[dayKey] = {
+        workout,
+        activities: matched,
+        matchedActivityIds: matched.map(a => a.id)
       };
     }
-  });
+  }
 
-  return matches;
+  return result;
 };
 
 export const generateWeeklyAnalysis = async (apiKey, activities = [], weeklyPlan = null) => {
@@ -2010,6 +1960,20 @@ export const detectNewActivities = (newActivities, lastKnownIds = []) => {
   if (!Array.isArray(lastKnownIds) || lastKnownIds.length === 0) return [];
 
   return newActivities.filter((activity) => !lastKnownIds.includes(activity.id));
+};
+
+// Build rating queue by filtering out activities that already have ratings
+export const buildRatingQueue = (newActivities, existingRatings = []) => {
+  if (!Array.isArray(newActivities) || newActivities.length === 0) return [];
+  if (!Array.isArray(existingRatings) || existingRatings.length === 0) {
+    return newActivities;
+  }
+
+  // Create a Set of rated activity IDs for fast lookup
+  const ratedIds = new Set(existingRatings.map(r => String(r.activity_id)));
+  
+  // Filter out activities that already have ratings
+  return newActivities.filter(a => !ratedIds.has(String(a.id)));
 };
 
 // Strava functions (keeping existing ones)

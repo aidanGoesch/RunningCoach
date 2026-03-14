@@ -49,12 +49,13 @@ export class DataService {
     }
 
     try {
-      // Add timeout to prevent hanging
+      // Add timeout to prevent hanging - wrap ensureUser in timeout too
       const timeoutPromise = new Promise((_, reject) => 
         setTimeout(() => reject(new Error('Supabase timeout')), 5000)
       );
 
-      const user = await ensureUser()
+      // Race ensureUser against timeout to prevent hanging
+      const user = await Promise.race([ensureUser(), timeoutPromise]);
       
       // Map localStorage keys to Supabase tables
       let dataPromise;
@@ -129,6 +130,7 @@ export class DataService {
           }
       }
 
+      // Race the data promise against timeout (ensureUser already raced above)
       const { data } = await Promise.race([dataPromise, timeoutPromise]);
 
       // Process the response based on key type
@@ -171,7 +173,10 @@ export class DataService {
           return null;
       }
     } catch (error) {
-      console.error(`Supabase get error for ${key}:`, error);
+      // Only log non-timeout errors to reduce noise
+      if (error.message !== 'Supabase timeout') {
+        console.error(`Supabase get error for ${key}:`, error);
+      }
       // Fallback to localStorage on error
       return localStorage.getItem(key);
     }
@@ -185,21 +190,28 @@ export class DataService {
       return
     }
 
-    console.log('[DataService Set] Supabase enabled, proceeding with save');
-    const user = await ensureUser()
+    try {
+      console.log('[DataService Set] Supabase enabled, proceeding with save');
+      // Add timeout to prevent hanging
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Supabase timeout')), 5000)
+      );
+      
+      // Race ensureUser against timeout to prevent hanging
+      const user = await Promise.race([ensureUser(), timeoutPromise]);
 
-    switch (key) {
-      case 'coaching_prompt':
-        await supabase
-          .from('coaching_prompts')
-          .upsert({
-            user_id: user.id,
-            prompt_text: value,
-            is_active: true
-          })
-        break
+      switch (key) {
+        case 'coaching_prompt':
+          await supabase
+            .from('coaching_prompts')
+            .upsert({
+              user_id: user.id,
+              prompt_text: value,
+              is_active: true
+            })
+          break
 
-      case 'strava_activities':
+        case 'strava_activities':
         const activities = JSON.parse(value || '[]')
         // Batch upsert all activities at once with proper conflict resolution
         if (activities.length > 0) {
@@ -225,124 +237,132 @@ export class DataService {
         }
         break
 
-        case 'current_workout':
-          if (value === null || value === 'null') {
-            // Clear current workout
-            await supabase
-              .from('current_workouts')
-              .delete()
-              .eq('user_id', user.id)
-          } else {
-            await supabase
-              .from('current_workouts')
-              .upsert({
-                user_id: user.id,
-                workout_date: new Date().toISOString().split('T')[0],
-                workout_data: JSON.parse(value)
-              })
-          }
-          break
+      case 'current_workout':
+        if (value === null || value === 'null') {
+          // Clear current workout
+          await supabase
+            .from('current_workouts')
+            .delete()
+            .eq('user_id', user.id)
+        } else {
+          await supabase
+            .from('current_workouts')
+            .upsert({
+              user_id: user.id,
+              workout_date: new Date().toISOString().split('T')[0],
+              workout_data: JSON.parse(value)
+            })
+        }
+        break
 
-        default:
-          if (key.startsWith('weekly_plan_')) {
-            const weekStart = key.replace('weekly_plan_', '')
-            const planData = JSON.parse(value)
-            console.log('[Supabase Set] Saving weekly plan with weekStart:', weekStart);
-            console.log('[Supabase Set] Plan data keys:', Object.keys(planData));
-            console.log('[Supabase Set] Plan has _updatedAt:', !!planData._updatedAt, planData._updatedAt);
-            console.log('[Supabase Set] Plan has _postponements:', !!planData._postponements, planData._postponements);
-            console.log('[Supabase Set] Full plan_data being saved:', JSON.stringify(planData).substring(0, 200));
+      default:
+        if (key.startsWith('weekly_plan_')) {
+          const weekStart = key.replace('weekly_plan_', '')
+          const planData = JSON.parse(value)
+          console.log('[Supabase Set] Saving weekly plan with weekStart:', weekStart);
+          console.log('[Supabase Set] Plan data keys:', Object.keys(planData));
+          console.log('[Supabase Set] Plan has _updatedAt:', !!planData._updatedAt, planData._updatedAt);
+          console.log('[Supabase Set] Plan has _postponements:', !!planData._postponements, planData._postponements);
+          console.log('[Supabase Set] Full plan_data being saved:', JSON.stringify(planData).substring(0, 200));
+          
+          const { data, error } = await supabase
+            .from('weekly_plans')
+            .upsert({
+              user_id: user.id,
+              week_start_date: weekStart,
+              plan_data: planData
+            }, {
+              onConflict: 'user_id,week_start_date'
+            })
+          
+          if (error) {
+            console.error('[Supabase Set] Error saving weekly plan:', error);
+            throw error;
+          } else {
+            console.log('[Supabase Set] Successfully saved weekly plan, returned data:', data);
             
-            const { data, error } = await supabase
+            // Verify what was actually saved
+            const { data: verifyData, error: verifyError } = await supabase
               .from('weekly_plans')
-              .upsert({
-                user_id: user.id,
-                week_start_date: weekStart,
-                plan_data: planData
-              }, {
-                onConflict: 'user_id,week_start_date'
-              })
-            
-            if (error) {
-              console.error('[Supabase Set] Error saving weekly plan:', error);
-              throw error;
-            } else {
-              console.log('[Supabase Set] Successfully saved weekly plan, returned data:', data);
-              
-              // Verify what was actually saved
-              const { data: verifyData, error: verifyError } = await supabase
-                .from('weekly_plans')
-                .select('plan_data')
-                .eq('user_id', user.id)
-                .eq('week_start_date', weekStart)
-                .single();
-              
-              if (verifyError) {
-                console.error('[Supabase Set] Error verifying save:', verifyError);
-              } else if (verifyData && verifyData.plan_data) {
-                console.log('[Supabase Set] Verified saved plan_data has _updatedAt:', !!verifyData.plan_data._updatedAt, verifyData.plan_data._updatedAt);
-                console.log('[Supabase Set] Verified saved plan_data has _postponements:', !!verifyData.plan_data._postponements);
-              }
-            }
-          } else if (key.startsWith('weekly_analysis_')) {
-            const weekStart = key.replace('weekly_analysis_', '')
-            // Store analysis in weekly_plans table's weekly_analysis column
-            // First check if plan exists, then update or create
-            const { data: existing } = await supabase
-              .from('weekly_plans')
-              .select('id')
+              .select('plan_data')
               .eq('user_id', user.id)
               .eq('week_start_date', weekStart)
-              .single()
+              .single();
             
-            if (existing) {
-              // Update existing plan with analysis
-              await supabase
-                .from('weekly_plans')
-                .update({ weekly_analysis: value })
-                .eq('id', existing.id)
-            } else {
-              // Create new plan entry with just analysis
-              await supabase
-                .from('weekly_plans')
-                .insert({
-                  user_id: user.id,
-                  week_start_date: weekStart,
-                  weekly_analysis: value,
-                  plan_data: null
-                })
+            if (verifyError) {
+              console.error('[Supabase Set] Error verifying save:', verifyError);
+            } else if (verifyData && verifyData.plan_data) {
+              console.log('[Supabase Set] Verified saved plan_data has _updatedAt:', !!verifyData.plan_data._updatedAt, verifyData.plan_data._updatedAt);
+              console.log('[Supabase Set] Verified saved plan_data has _postponements:', !!verifyData.plan_data._postponements);
             }
-          } else if (key.startsWith('activity_insights_')) {
-            const activityId = key.replace('activity_insights_', '')
+          }
+        } else if (key.startsWith('weekly_analysis_')) {
+          const weekStart = key.replace('weekly_analysis_', '')
+          // Store analysis in weekly_plans table's weekly_analysis column
+          // First check if plan exists, then update or create
+          const { data: existing } = await supabase
+            .from('weekly_plans')
+            .select('id')
+            .eq('user_id', user.id)
+            .eq('week_start_date', weekStart)
+            .single()
+          
+          if (existing) {
+            // Update existing plan with analysis
             await supabase
-              .from('activity_insights')
+              .from('weekly_plans')
+              .update({ weekly_analysis: value })
+              .eq('id', existing.id)
+          } else {
+            // Create new plan entry with just analysis
+            await supabase
+              .from('weekly_plans')
+              .insert({
+                user_id: user.id,
+                week_start_date: weekStart,
+                weekly_analysis: value,
+                plan_data: null
+              })
+          }
+        } else if (key.startsWith('activity_insights_')) {
+          const activityId = key.replace('activity_insights_', '')
+          await supabase
+            .from('activity_insights')
+            .upsert({
+              user_id: user.id,
+              strava_activity_id: parseInt(activityId),
+              insights_text: value
+            })
+        } else if (key.startsWith('recovery_workout_')) {
+          const workoutDate = key.replace('recovery_workout_', '')
+          const parsed = value === null || value === 'null' ? null : JSON.parse(value || 'null')
+          if (!parsed) {
+            await supabase
+              .from('recovery_workouts')
+              .delete()
+              .eq('user_id', user.id)
+              .eq('workout_date', workoutDate)
+          } else {
+            await supabase
+              .from('recovery_workouts')
               .upsert({
                 user_id: user.id,
-                strava_activity_id: parseInt(activityId),
-                insights_text: value
+                workout_date: workoutDate,
+                recovery_data: parsed.workout,
+                completed: !!parsed.completed
               })
-          } else if (key.startsWith('recovery_workout_')) {
-            const workoutDate = key.replace('recovery_workout_', '')
-            const parsed = value === null || value === 'null' ? null : JSON.parse(value || 'null')
-            if (!parsed) {
-              await supabase
-                .from('recovery_workouts')
-                .delete()
-                .eq('user_id', user.id)
-                .eq('workout_date', workoutDate)
-            } else {
-              await supabase
-                .from('recovery_workouts')
-                .upsert({
-                  user_id: user.id,
-                  workout_date: workoutDate,
-                  recovery_data: parsed.workout,
-                  completed: !!parsed.completed
-                })
-            }
-          } else {
-            localStorage.setItem(key, value)
           }
+        } else {
+          localStorage.setItem(key, value)
+        }
+      }
+    } catch (error) {
+      // Only log non-timeout errors to reduce noise
+      if (error.message !== 'Supabase timeout') {
+        console.error(`Supabase set error for ${key}:`, error);
+      }
+      // Fallback to localStorage on error
+      localStorage.setItem(key, value);
     }
   }
 
@@ -352,7 +372,14 @@ export class DataService {
       return
     }
 
-    const user = await ensureUser()
+    try {
+      // Add timeout to prevent hanging
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Supabase timeout')), 5000)
+      );
+      
+      // Race ensureUser against timeout to prevent hanging
+      const user = await Promise.race([ensureUser(), timeoutPromise]);
 
     switch (key) {
       case 'coaching_prompt':
@@ -373,6 +400,14 @@ export class DataService {
         } else {
           localStorage.removeItem(key)
         }
+      }
+    } catch (error) {
+      // Only log non-timeout errors to reduce noise
+      if (error.message !== 'Supabase timeout') {
+        console.error(`Supabase remove error for ${key}:`, error);
+      }
+      // Fallback to localStorage on error
+      localStorage.removeItem(key);
     }
   }
 }
@@ -872,6 +907,51 @@ export const getActivityRating = async (activityId) => {
   }
   
   return null;
+};
+
+export const getActivityRatings = async () => {
+  // If not using Supabase, return empty array
+  if (!dataService.useSupabase) {
+    return [];
+  }
+
+  try {
+    // Add timeout to prevent hanging - fail fast if Supabase is unavailable
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Supabase timeout')), 3000)
+    );
+
+    const fetchRatings = async () => {
+      const user = await ensureUser();
+      const { data, error } = await supabase
+        .from('workout_ratings')
+        .select('strava_activity_id, rating, feedback, is_injured, injury_details')
+        .eq('user_id', user.id);
+      
+      if (error) {
+        console.error('Error fetching activity ratings from Supabase:', error);
+        return [];
+      }
+      
+      // Return array with activity_id field (mapped from strava_activity_id)
+      return (data || []).map(row => ({
+        activity_id: row.strava_activity_id,
+        rating: row.rating,
+        notes: row.feedback, // Map feedback to notes for consistency
+        feedback: row.feedback,
+        is_injured: row.is_injured,
+        injury_details: row.injury_details
+      }));
+    };
+
+    return await Promise.race([fetchRatings(), timeoutPromise]);
+  } catch (err) {
+    // Silently fail - don't log as error since this is expected when Supabase is unavailable
+    if (err.message !== 'Supabase timeout') {
+      console.warn('Could not fetch existing ratings from Supabase, using localStorage fallback:', err);
+    }
+    return [];
+  }
 };
 
 export const saveActivityRating = async (activityId, rating, feedback, isInjured, injuryDetails) => {
