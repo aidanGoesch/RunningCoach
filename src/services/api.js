@@ -25,6 +25,44 @@ console.log('Environment check:', {
   STRAVA_SECRET: import.meta.env.VITE_STRAVA_CLIENT_SECRET ? 'set' : 'missing'
 });
 
+const TRAINING_PHILOSOPHY_BLOCK = `
+TRAINING PHILOSOPHY FOR THIS ATHLETE:
+
+Goal: 1:45 half marathon (8:01/mi race pace).
+
+Speed work structure — two types of sessions, used on alternating weeks or as specified:
+
+Type A (Threshold/Tempo — priority session):
+- 2x2 mile at 8:00–8:10/mi with 90 sec standing recovery between reps, OR
+- 4-mile continuous tempo at 8:15–8:20/mi
+- Warm-up: 1.5 miles easy (9:30–10:00/mi)
+- Cool-down: 1 mile easy
+- Purpose: lactate threshold development — the primary stimulus for half marathon performance
+- Heart rate target: Zone 3–4, 155–168 bpm. Should feel "comfortably hard" — can speak in short phrases but not full sentences.
+
+Type B (Short intervals — secondary session, use sparingly):
+- 4–6x400m at 7:30–7:45/mi with 90 sec recovery, OR
+- 6–8x200m at 7:15–7:30/mi
+- Warm-up: 1.5 miles easy
+- Cool-down: 1 mile easy
+- Purpose: neuromuscular sharpness and turnover. Do not overuse — one Type B session per 2–3 weeks maximum.
+
+Default to Type A. Only schedule Type B when the athlete has had 2+ consecutive threshold sessions, or explicitly needs a change of stimulus.
+
+Long run structure:
+- First 70–75% of the run: easy aerobic pace (9:30–10:00/mi), Zone 2
+- Final 2–3 miles: progression to 8:20–8:30/mi, Zone 3
+- This progression teaches the legs to run faster under fatigue — direct race day simulation
+- Do not make every long run a progression — use it on 2 out of every 3 long runs. Every third long run is pure easy effort for recovery.
+- Fueling note: include a gel reminder at mile 4–5 on runs over 8 miles.
+
+Easy run structure (unchanged):
+- 9:30–10:30/mi, Zone 2, fully conversational
+- These are recovery runs — do not let pace creep up even if the athlete feels good
+`;
+
+export const DEFAULT_COACHING_PROMPT = 'You are an expert running coach.' + TRAINING_PHILOSOPHY_BLOCK;
+
 export const updatePromptWithCurrentData = (basePrompt, activities = []) => {
   // Race date and calculations
   const raceDate = new Date('2026-05-02');
@@ -176,7 +214,7 @@ const parseWorkoutFromText = (content) => {
 };
 
 export const generateWorkout = async (apiKey, activities = [], isInjured = false, postponeData = null) => {
-  const savedPrompt = localStorage.getItem('coaching_prompt') || 'You are an expert running coach.';
+  const savedPrompt = localStorage.getItem('coaching_prompt') || DEFAULT_COACHING_PROMPT;
   let basePrompt = savedPrompt;
 
   // Include recent recovery routines so the model knows what was recommended
@@ -843,7 +881,7 @@ export const generateDataDrivenWeeklyPlan = async (apiKey, activities = [], isIn
   }
   if (!savedPrompt) {
     savedPrompt =
-      localStorage.getItem('coaching_prompt') || 'You are an expert running coach.';
+      localStorage.getItem('coaching_prompt') || DEFAULT_COACHING_PROMPT;
   }
 
   let basePrompt = updatePromptWithCurrentData(savedPrompt, activities);
@@ -922,6 +960,19 @@ Generate a complete weekly training plan for Monday through Sunday. The week fol
 - Saturday: Recovery exercises (optional)
 - Sunday: Long Run
 
+Thursday is the quality session. Default to a THRESHOLD/TEMPO workout (Type A) unless:
+- The athlete has had 3+ consecutive threshold sessions (check recent workout history) → use Type B
+- The athlete's average rating this week is below 2.5 → downgrade to easy run, no quality session
+- An injury was reported in the last 7 days → replace with easy run or recovery
+
+Type A (default): Generate either 2x2 mile at 8:00–8:10/mi or 4-mile tempo at 8:15–8:20/mi.
+Alternate between these two formats week to week for variety. Check the previous week's Thursday workout to determine which format was used last and pick the other. If no prior format is available, use currentWeek (odd week = 2x2 mile, even week = 4-mile tempo).
+
+Type B (use sparingly): 4–6x400m or 6–8x200m. Only schedule this if Type A has been used for 2+ consecutive weeks, or if the training phase calls for sharpening (weeks 11–13 of the plan).
+
+Never generate a speed session without a proper warm-up (1.5 miles easy) and cool-down (1 mile easy).
+Always include rest intervals with exact duration.
+
 IMPORTANT: Only generate detailed workouts for the 3 running days (Tuesday, Thursday, Sunday). For recovery days, just note "Recovery exercises - generate day-of with workout button".
 
 Each running workout must be built from detailed blocks. EVERY BLOCK MUST INCLUDE ALL of the following fields:
@@ -966,6 +1017,20 @@ Long Run Example:
   "notes": "Keep the entire run truly aerobic. Take a small sip of water every 10–15 minutes. Take 1 gel around mile 4 and another around mile 8, and check in on form every 2 miles (relaxed shoulders, light cadence, no over-striding).",
   "restInterval": null
 }
+
+Sunday is the long run. Apply a progression finish on 2 out of every 3 weeks. Determine which type to use based on currentWeek (already in this prompt): currentWeek % 3 === 0 → easy week; all other weeks → progression week.
+
+PROGRESSION WEEK (currentWeek % 3 !== 0):
+- First [total_distance - 2.5] miles: easy pace 9:30–10:00/mi, Zone 2
+- Final 2–3 miles: progression to 8:20–8:30/mi, Zone 3
+- Label this block explicitly: "Progression finish — push to 8:20–8:30/mi"
+- Notes: "Your legs will be tired. That's the point. Focus on form, not fighting the pace."
+- For runs over 8 miles, include a gel reminder at mile 4–5.
+
+EASY WEEK (currentWeek % 3 === 0 — every third long run, e.g. weeks 3, 6, 9, 12):
+- Entire run at 9:30–10:00/mi, Zone 2, no progression
+- Label: "Easy long run — full aerobic effort, no push at the end"
+- Notes: "Pure recovery run. If you feel good, resist the urge to go faster. Save it for next week."
 
 Every block in your response must match this level of detail. Vague instructions like "run at a comfortable pace" or blocks missing distance, pace, duration, heartRateZone, notes, or restInterval (for intervals) are NOT acceptable.
 
@@ -1410,6 +1475,17 @@ export const generateWeeklyAnalysis = async (apiKey, activities = [], weeklyPlan
   const avgRating = ratings.length > 0 
     ? ratings.reduce((sum, r) => sum + r, 0) / ratings.length 
     : null;
+
+  // Summarize planned key sessions from weeklyPlan so the model can reference them by name
+  let plannedSessionsLine = '';
+  if (weeklyPlan) {
+    const thursdayDesc = weeklyPlan.thursday?.title || (weeklyPlan.thursday?.blocks?.length ? 'quality session' : null);
+    const sundayDesc = weeklyPlan.sunday?.title || (weeklyPlan.sunday?.blocks?.length ? 'long run' : null);
+    const parts = [];
+    if (thursdayDesc) parts.push(`Thursday — ${thursdayDesc}`);
+    if (sundayDesc) parts.push(`Sunday — ${sundayDesc}`);
+    if (parts.length) plannedSessionsLine = `\nPlanned key sessions this week: ${parts.join('; ')}.\n`;
+  }
   
   // Build analysis context
   let analysisContext = `Analyze the athlete's training week and provide an encouraging, positive message.
@@ -1419,6 +1495,7 @@ WEEK SUMMARY:
 - Total Mileage: ${totalMiles.toFixed(1)} miles
 - Total Time: ${Math.floor(totalTime / 60)} minutes
 ${avgRating ? `- Average Difficulty Rating: ${avgRating.toFixed(1)}/5 (1=too easy, 3=perfect, 5=too hard)` : '- No difficulty ratings provided'}
+${plannedSessionsLine}
 
 GENERATE AN ENCOURAGING MESSAGE:
 - Always be positive and supportive
@@ -1428,6 +1505,9 @@ GENERATE AN ENCOURAGING MESSAGE:
 - If mileage is increasing, note the progress
 - Keep it brief (2-3 sentences max)
 - Use encouraging language like "Great job!", "Nice work!", "Keep it up!", "You're building consistency!"
+- If the week included a tempo or threshold session, mention it specifically — e.g. "Your 4-mile tempo on Thursday is exactly the stimulus you need for 1:45."
+- If the long run had a progression finish, acknowledge it — e.g. "Finishing strong on Sunday is building the race-specific strength you'll need."
+- Keep the overall tone encouraging but reference the specific sessions by name when applicable.
 
 Examples of good messages:
 - "Excellent work this week! You completed all 3 runs and hit your mileage target. Keep building that base!"
@@ -1505,7 +1585,7 @@ export const adjustWeeklyPlanForPostponement = async (apiKey, currentPlan, postp
   }
   if (!savedPrompt) {
     savedPrompt =
-      localStorage.getItem('coaching_prompt') || 'You are an expert running coach.';
+      localStorage.getItem('coaching_prompt') || DEFAULT_COACHING_PROMPT;
   }
   let basePrompt = updatePromptWithCurrentData(savedPrompt, activities);
   
@@ -1833,7 +1913,7 @@ CRITICAL: Every workout block MUST have both "distance" and "pace" fields. Do no
 };
 
 export const generateWeeklyPlan = async (apiKey, activities = [], isInjured = false) => {
-  const savedPrompt = localStorage.getItem('coaching_prompt') || 'You are an expert running coach.';
+  const savedPrompt = localStorage.getItem('coaching_prompt') || DEFAULT_COACHING_PROMPT;
   let basePrompt = updatePromptWithCurrentData(savedPrompt, activities);
   
   // Add weekly plan specific instructions
@@ -2287,7 +2367,7 @@ export const generateInsights = async (apiKey, activities, streamData = null, ra
 
   const activity = activities[0]; // Most recent activity
   const savedPrompt =
-    localStorage.getItem('coaching_prompt') || 'You are an expert running coach.';
+    localStorage.getItem('coaching_prompt') || DEFAULT_COACHING_PROMPT;
 
   // Ensure we have stream data; if not, try to load compact cache from localStorage
   let effectiveStreams = streamData;
@@ -2467,8 +2547,15 @@ export async function regenerateDayWorkout(
   const lowerDayName = dayName.toLowerCase();
   const existingWorkout = currentWeekPlan?.[lowerDayName] || null;
 
+  // Current training week (same formula as elsewhere) for Sunday progression vs easy
+  const raceDate = new Date('2026-05-02');
+  const today = new Date();
+  const daysUntilRace = Math.ceil((raceDate - today) / (1000 * 60 * 60 * 24));
+  const weeksUntilRace = Math.ceil(daysUntilRace / 7);
+  const currentWeek = Math.max(1, 15 - weeksUntilRace);
+
   // Build base prompt from provided trainingContext plus four-week summary
-  let basePrompt = trainingContext || (coachingPrompt || 'You are an expert running coach.');
+  let basePrompt = trainingContext || (coachingPrompt || DEFAULT_COACHING_PROMPT);
   if (trainingContext && !trainingContext.includes('RECENT TRAINING HISTORY')) {
     basePrompt += formatFourWeekSummaryForPrompt(fourWeekSummary);
   }
@@ -2510,6 +2597,12 @@ ${JSON.stringify(
 
 CURRENT "${dayName}" WORKOUT (to be replaced):
 ${JSON.stringify(existingWorkout || null, null, 2)}
+
+PHILOSOPHY COMPLIANCE (this regeneration must follow the athlete's training philosophy exactly):
+- Current training week: ${currentWeek} of 14. For Sunday: use progression finish unless currentWeek % 3 === 0 (easy week).
+- Thursday: Default to threshold/tempo (Type A). Only use short intervals (Type B) if explicitly the right stimulus for this week. See the coaching prompt above for full Type A/B definitions. To alternate Type A format: if the current plan's Thursday is 2x2 mile, generate 4-mile tempo; if it is 4-mile tempo, generate 2x2 mile.
+- Sunday: Apply progression finish (first ~70–75% easy 9:30–10:00/mi Zone 2, final 2–3 miles at 8:20–8:30/mi Zone 3) unless currentWeek % 3 === 0; on easy weeks, entire run at 9:30–10:00/mi Zone 2, no progression.
+- Never generate a vague workout. Every block must have exact pace ranges, distances, and HR zones.
 
 Respond by returning ONLY a JSON object for the regenerated "${dayName}" workout in this shape:
 {
@@ -2692,7 +2785,6 @@ Return ONLY the corrected JSON object for the "${dayName}" workout.`;
   }
 
   // Compute weekKey (Monday of current week) for storage
-  const today = new Date();
   const monday = new Date(today);
   monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
   monday.setHours(0, 0, 0, 0);

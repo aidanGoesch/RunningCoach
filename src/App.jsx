@@ -12,7 +12,7 @@ import PostponeWorkout from './components/PostponeWorkout';
 import PullToRefresh from './components/PullToRefresh';
 import NewActivityRatingModal from './components/NewActivityRatingModal';
 import RecoveryPage from './components/RecoveryPage';
-import { generateWorkout, generateWeeklyPlan, generateDataDrivenWeeklyPlan, generateWeeklyAnalysis, matchActivitiesToWorkouts, syncWithStrava, generateInsights, detectNewActivities, adjustWeeklyPlanForPostponement, regenerateDayWorkout, updatePromptWithCurrentData, buildFourWeekSummary, buildRatingQueue } from './services/api';
+import { generateWorkout, generateWeeklyPlan, generateDataDrivenWeeklyPlan, generateWeeklyAnalysis, matchActivitiesToWorkouts, syncWithStrava, generateInsights, detectNewActivities, adjustWeeklyPlanForPostponement, regenerateDayWorkout, updatePromptWithCurrentData, buildFourWeekSummary, buildRatingQueue, DEFAULT_COACHING_PROMPT } from './services/api';
 import { dataService, setupRealtimeSync, syncAllDataFromSupabase, enableSupabase, getActivityRating, getActivityRatings, getStravaTokens } from './services/supabase';
 
 function App() {
@@ -1902,7 +1902,7 @@ function App() {
       setIsFixingWorkout(true);
       try {
         const coachingPromptBase =
-          localStorage.getItem('coaching_prompt') || 'You are an expert running coach.';
+          localStorage.getItem('coaching_prompt') || DEFAULT_COACHING_PROMPT;
         const trainingContext = updatePromptWithCurrentData(
           coachingPromptBase,
           activities || []
@@ -2821,7 +2821,7 @@ function App() {
                       
                       setIsFixingWorkout(true);
                       try {
-                        const coachingPromptBase = localStorage.getItem('coaching_prompt') || 'You are an expert running coach.';
+                        const coachingPromptBase = localStorage.getItem('coaching_prompt') || DEFAULT_COACHING_PROMPT;
                         const trainingContext = updatePromptWithCurrentData(coachingPromptBase, activities || []);
                         
                         const updatedPlan = await regenerateDayWorkout(
