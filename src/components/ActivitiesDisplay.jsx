@@ -1,6 +1,6 @@
 import ActivityMapThumbnail from './ActivityMapThumbnail';
 
-const ActivitiesDisplay = ({ activities, onActivityClick }) => {
+const ActivitiesDisplay = ({ activities, activityRatings = {}, onActivityClick }) => {
   if (!activities || activities.length === 0) return null;
 
   // Sort by date (most recent first) and filter to runs only
@@ -48,8 +48,7 @@ const ActivitiesDisplay = ({ activities, onActivityClick }) => {
   };
   
   const getActivityRating = (activityId) => {
-    const activityRatings = JSON.parse(localStorage.getItem('activity_ratings') || '{}');
-    return activityRatings[activityId]?.rating || null;
+    return activityRatings[activityId]?.rating ?? activityRatings[String(activityId)]?.rating ?? null;
   };
 
   return (

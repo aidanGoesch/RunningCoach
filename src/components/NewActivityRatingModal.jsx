@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
-import { getActivityDetails, getActivityStreams } from '../services/api';
+import { useState } from 'react';
+import { routeToSvg } from '../utils/routeToSvg';
 import { saveActivityRating } from '../services/supabase';
 
 const formatPace = (speedMs) => {
@@ -15,62 +15,7 @@ const formatDuration = (seconds) => {
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 };
 
-const ActivityMap = ({ activity, streams }) => {
-  const mapId = `modal-map-${activity.id}`;
-  const mapRef = useRef(null);
-  const tileLayerRef = useRef(null);
-  
-  useEffect(() => {
-    if (!streams?.latlng?.data || streams.latlng.data.length === 0) return;
-    if (typeof L === 'undefined') return;
-
-    // Create map
-    const map = L.map(mapId).setView(streams.latlng.data[0], 13);
-    mapRef.current = map;
-
-    // Add route polyline - blue color #378ADD
-    const polyline = L.polyline(streams.latlng.data, { color: '#378ADD', weight: 4 }).addTo(map);
-    map.fitBounds(polyline.getBounds());
-
-    // Always use dark tiles for modal map
-    tileLayerRef.current = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-      attribution: '© OpenStreetMap contributors © CARTO',
-      subdomains: 'abcd',
-      maxZoom: 19
-    }).addTo(map);
-
-    return () => {
-      if (mapRef.current) {
-        mapRef.current.remove();
-      }
-      mapRef.current = null;
-      tileLayerRef.current = null;
-    };
-  }, [streams, mapId]);
-
-  if (!streams?.latlng?.data) {
-    return (
-      <div style={{ 
-        height: '160px', 
-        display: 'flex', 
-        alignItems: 'center', 
-        justifyContent: 'center',
-        backgroundColor: '#1a1f2e',
-        color: 'var(--color-text-tertiary)'
-      }}>
-        No GPS data available
-      </div>
-    );
-  }
-
-  return (
-    <div id={mapId} style={{ height: '160px' }}></div>
-  );
-};
-
 const NewActivityRatingModal = ({ activity, onClose, onComplete }) => {
-  const [streams, setStreams] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [ratingValue, setRatingValue] = useState(null);
   const [ratingComment, setRatingComment] = useState('');
   const [savingRating, setSavingRating] = useState(false);
@@ -87,36 +32,8 @@ const NewActivityRatingModal = ({ activity, onClose, onComplete }) => {
 
   const ratingLabels = ['Very easy', 'Easy', 'Moderate', 'Hard', 'Very hard'];
 
-  useEffect(() => {
-    const fetchActivityData = async () => {
-      if (!activity) return;
-      
-      try {
-        const { getStravaTokens } = await import('../services/supabase');
-        const tokens = await getStravaTokens();
-        const token = tokens?.accessToken;
-        
-        if (!token) {
-          console.error('No Strava token available');
-          setLoading(false);
-          return;
-        }
-
-        const [activityData, streamData] = await Promise.all([
-          getActivityDetails(token, activity.id),
-          getActivityStreams(token, activity.id).catch(() => null)
-        ]);
-        
-        setStreams(streamData);
-      } catch (error) {
-        console.error('Error fetching activity data:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchActivityData();
-  }, [activity]);
+  const encoded = activity?.map?.summary_polyline || activity?.map?.polyline;
+  const svg = encoded ? routeToSvg(encoded, 160, 160) : null;
 
   const handleSubmit = async () => {
     if (!ratingValue) {
@@ -184,21 +101,24 @@ const NewActivityRatingModal = ({ activity, onClose, onComplete }) => {
         />
       </div>
 
-      {/* Map hero */}
+      {/* Map hero - static SVG from summary_polyline, no API fetch */}
       <div style={{ width: '100%', height: '160px', background: '#1a1f2e' }}>
-        {loading ? (
-          <div style={{ 
-            height: '160px', 
-            display: 'flex', 
-            alignItems: 'center', 
+        {svg ? (
+          <div
+            style={{ width: '100%', height: '100%' }}
+            dangerouslySetInnerHTML={{ __html: svg }}
+          />
+        ) : (
+          <div style={{
+            height: '160px',
+            display: 'flex',
+            alignItems: 'center',
             justifyContent: 'center',
             backgroundColor: '#1a1f2e',
             color: 'var(--color-text-tertiary)'
           }}>
-            Loading map...
+            No GPS data available
           </div>
-        ) : (
-          <ActivityMap activity={activity} streams={streams} />
         )}
       </div>
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import WorkoutDisplay from './components/WorkoutDisplay';
 import WorkoutDetail from './components/WorkoutDetail';
 import WeeklyPlan from './components/WeeklyPlan';
@@ -43,8 +43,25 @@ function App() {
   const [recoveryBlockStatus, setRecoveryBlockStatus] = useState({});
   const [isFixingWorkout, setIsFixingWorkout] = useState(false);
   const [showRecovery, setShowRecovery] = useState(false);
+  const [activityRatings, setActivityRatings] = useState(() =>
+    JSON.parse(localStorage.getItem('activity_ratings') || '{}')
+  );
 
   const todayDate = new Date().toISOString().split('T')[0];
+
+  const refreshActivityRatings = useCallback(() => {
+    setActivityRatings(JSON.parse(localStorage.getItem('activity_ratings') || '{}'));
+  }, []);
+
+  const activityMatches = useMemo(
+    () => (weeklyPlan && activities?.length ? matchActivitiesToWorkouts(activities, weeklyPlan) : {}),
+    [weeklyPlan, activities]
+  );
+
+  const fourWeekSummary = useMemo(
+    () => buildFourWeekSummary(activities || [], activityRatings),
+    [activities, activityRatings]
+  );
 
   // Determine if a run activity was completed today
   const hasRunToday = (() => {
@@ -774,6 +791,7 @@ function App() {
           }
         }
         
+        refreshActivityRatings();
         console.log('Preload completed');
         return { newActivities };
       } catch (error) {
@@ -826,8 +844,30 @@ function App() {
           }
         },
         onWeeklyPlanChange: async (payload) => {
-          console.log('Weekly plan changed via realtime:', payload);
-          // Could trigger a reload of weekly plan view if needed
+          if (!payload?.new) return;
+          const today = new Date();
+          const monday = new Date(today);
+          monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+          monday.setHours(0, 0, 0, 0);
+          const currentWeekKey = monday.toISOString().split('T')[0];
+          const changedWeekKey = payload.new.week_start_date;
+          if (changedWeekKey !== currentWeekKey) return;
+          let plan = payload.new.plan_data;
+          if (typeof plan === 'string') {
+            try {
+              plan = JSON.parse(plan);
+            } catch {
+              return;
+            }
+          }
+          if (!plan) return;
+          setWeeklyPlan((prev) => {
+            if (!prev) return plan;
+            const incomingTime = new Date(plan._updatedAt || 0).getTime();
+            const currentTime = new Date(prev._updatedAt || 0).getTime();
+            if (incomingTime > currentTime) return plan;
+            return prev;
+          });
         }
       });
     }
@@ -840,22 +880,30 @@ function App() {
       localStorage.removeItem('postponed_workout');
     }
 
-    // Auto-sync with Strava on page load if we have tokens
-    // Check Supabase first, then localStorage
+    // Auto-sync with Strava on page load if we have tokens (only when tab is visible)
     (async () => {
       const tokens = await getStravaTokens();
-      if (tokens && tokens.accessToken) {
-        // Always auto-sync on page refresh to get latest activities
-        // Small delay to let the page load first
+      if (tokens && tokens.accessToken && !document.hidden) {
         setTimeout(() => {
-          handleStravaSync(false); // Don't show loading for background sync
+          if (!document.hidden) handleStravaSync(false);
         }, 1000);
       }
     })();
 
+    // When tab becomes visible, optionally sync (user may have updated from another device)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && !document.hidden) {
+        getStravaTokens().then((tokens) => {
+          if (tokens?.accessToken) handleStravaSync(false);
+        });
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     // Cleanup on unmount
     return () => {
       window.removeEventListener('popstate', handlePopState);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (cleanupSync) {
         cleanupSync();
       }
@@ -1041,7 +1089,7 @@ function App() {
     return () => clearInterval(pollInterval);
   }, [isStravaCallback]);
 
-  const handleGenerateWeeklyPlan = async (isAutoGeneration = false) => {
+  const handleGenerateWeeklyPlan = useCallback(async (isAutoGeneration = false) => {
     const availableApiKey = import.meta.env.VITE_OPENAI_API_KEY || apiKey;
     
     if (!availableApiKey) {
@@ -1157,7 +1205,7 @@ function App() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [activities, isInjured, apiKey]);
 
   // Expose regenerate function to console for debugging
   useEffect(() => {
@@ -1288,12 +1336,32 @@ function App() {
     matchAndUpdate();
   }, [weeklyPlan, activities, isPreloading]);
 
-  const handlePlannedWorkoutClick = (plannedWorkout, dayName) => {
-    console.log('Planned workout clicked:', plannedWorkout, dayName);
+  const handlePlannedWorkoutClick = useCallback((plannedWorkout, dayName) => {
     setSelectedPlannedWorkout({ workout: plannedWorkout, dayName });
     setShowWorkoutDetail(true);
     window.history.pushState({ view: 'plannedWorkout', dayName }, '', window.location.pathname);
-  };
+  }, []);
+
+  const handleRecoveryClick = useCallback(() => {
+    setShowRecovery(true);
+    window.history.pushState({ view: 'recovery' }, '', window.location.pathname);
+  }, []);
+
+  const handleWeeklyPlanActivitiesChange = useCallback(async () => {
+    const today = new Date();
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+    monday.setHours(0, 0, 0, 0);
+    const weekKey = monday.toISOString().split('T')[0];
+    const storedPlan = await dataService.get(`weekly_plan_${weekKey}`);
+    if (storedPlan) {
+      const parsedPlan = JSON.parse(storedPlan);
+      const activityMatches = matchActivitiesToWorkouts(activities, parsedPlan);
+      parsedPlan._activityMatches = activityMatches;
+      await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan));
+      localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan));
+    }
+  }, [activities]);
 
   const handleGenerateWorkout = async (repeatLast = false, postponeData = null) => {
     // Check for API key in environment variables first, then localStorage
@@ -1833,10 +1901,6 @@ function App() {
       try {
         const coachingPromptBase =
           localStorage.getItem('coaching_prompt') || 'You are an expert running coach.';
-        const activityRatings = JSON.parse(
-          localStorage.getItem('activity_ratings') || '{}'
-        );
-        const fourWeekSummary = buildFourWeekSummary(activities || [], activityRatings);
         const trainingContext = updatePromptWithCurrentData(
           coachingPromptBase,
           activities || []
@@ -2486,8 +2550,7 @@ function App() {
                 phaseName = "Taper";
               }
               
-              // Calculate stats from matched activities
-              const activityMatches = weeklyPlan?._activityMatches || {};
+              // Calculate stats from matched activities (use memoized value)
               
               // Miles this week: sum of distance for all matched activities
               const matchedActivities = Object.values(activityMatches).flatMap(match => match.activities || []);
@@ -2502,8 +2565,6 @@ function App() {
               const matchedActivityIds = Object.values(activityMatches).flatMap(match => match.matchedActivityIds || []);
               let avgRating = null;
               if (matchedActivityIds.length > 0) {
-                // Get ratings from localStorage (getActivityRating checks this first, but we need sync access here)
-                const activityRatings = JSON.parse(localStorage.getItem('activity_ratings') || '{}');
                 const ratings = matchedActivityIds
                   .map(id => {
                     const rating = activityRatings[id] || activityRatings[String(id)];
@@ -2715,29 +2776,8 @@ function App() {
               onWorkoutClick={handlePlannedWorkoutClick}
               onGenerateWeeklyPlan={handleGenerateWeeklyPlan}
               apiKey={apiKey}
-              onRecoveryClick={() => {
-                setShowRecovery(true);
-                window.history.pushState({ view: 'recovery' }, '', window.location.pathname);
-              }}
-              onActivitiesChange={async () => {
-                // When activities change, re-match them to workouts
-                const today = new Date();
-                const monday = new Date(today);
-                monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-                monday.setHours(0, 0, 0, 0);
-                const weekKey = `${monday.getFullYear()}-${monday.getMonth()}-${monday.getDate()}`;
-                
-                const storedPlan = await dataService.get(`weekly_plan_${weekKey}`);
-                if (storedPlan) {
-                  const parsedPlan = JSON.parse(storedPlan);
-                  const activityMatches = matchActivitiesToWorkouts(activities, parsedPlan);
-                  parsedPlan._activityMatches = activityMatches;
-                  
-                  // Save updated plan with matches
-                  await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan));
-                  localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan));
-                }
-              }}
+              onRecoveryClick={handleRecoveryClick}
+              onActivitiesChange={handleWeeklyPlanActivitiesChange}
             />
 
             {/* Two-column grid: Workout Card | Activities List */}
@@ -2780,8 +2820,6 @@ function App() {
                       setIsFixingWorkout(true);
                       try {
                         const coachingPromptBase = localStorage.getItem('coaching_prompt') || 'You are an expert running coach.';
-                        const activityRatings = JSON.parse(localStorage.getItem('activity_ratings') || '{}');
-                        const fourWeekSummary = buildFourWeekSummary(activities || [], activityRatings);
                         const trainingContext = updatePromptWithCurrentData(coachingPromptBase, activities || []);
                         
                         const updatedPlan = await regenerateDayWorkout(
@@ -2886,7 +2924,8 @@ function App() {
                   Recent runs
                 </div>
                 <ActivitiesDisplay 
-                  activities={activities} 
+                  activities={activities}
+                  activityRatings={activityRatings}
                   onActivityClick={(activityId) => {
                     setSelectedActivityId(activityId);
                     window.history.pushState({ view: 'activity', activityId }, '', window.location.pathname);
@@ -3009,7 +3048,7 @@ function App() {
             });
           }}
           onComplete={() => {
-            // Remove current activity from queue and show next one
+            refreshActivityRatings();
             setNewActivityQueue(prev => {
               const updated = prev.filter(a => a.id !== currentActivityForRating.id);
               if (updated.length > 0) {

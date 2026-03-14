@@ -148,9 +148,9 @@ const ActivityDetail = ({ activityId, onBack }) => {
         try {
           const { activity: activityData, streams: streamData, timestamp } = JSON.parse(cachedData);
           
-          // Use cached data if it's less than 1 hour old
-          const oneHour = 60 * 60 * 1000;
-          if (Date.now() - timestamp < oneHour) {
+          // Use cached data if it's less than 24 hours old
+          const cacheTTL = 24 * 60 * 60 * 1000;
+          if (Date.now() - timestamp < cacheTTL) {
             console.log('Using cached activity data for', activityId);
             setActivity(activityData);
             setStreams(streamData);

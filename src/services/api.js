@@ -1999,7 +1999,7 @@ export const syncWithStrava = async () => {
 
   try {
     console.log('Fetching activities with token...');
-    const activities = await getStravaActivities(token, 15);
+    const activities = await getStravaActivities(token, 30);
     console.log('Activities fetched:', activities?.length || 0);
     localStorage.setItem('strava_activities', JSON.stringify(activities));
 
@@ -2011,7 +2011,7 @@ export const syncWithStrava = async () => {
       try {
         const newToken = await refreshStravaToken();
         console.log('Token refreshed, fetching activities...');
-        const activities = await getStravaActivities(newToken, 15);
+        const activities = await getStravaActivities(newToken, 30);
         localStorage.setItem('strava_activities', JSON.stringify(activities));
 
         return activities;
@@ -2250,8 +2250,9 @@ export const exchangeStravaCode = async (code) => {
   return data;
 };
 
-const getStravaActivities = async (token, perPage = 15) => {
-  const response = await fetch(`https://www.strava.com/api/v3/athlete/activities?per_page=${perPage}`, {
+const getStravaActivities = async (token, perPage = 30) => {
+  const sixtyDaysAgo = Math.floor((Date.now() - 60 * 24 * 60 * 60 * 1000) / 1000);
+  const response = await fetch(`https://www.strava.com/api/v3/athlete/activities?after=${sixtyDaysAgo}&per_page=${perPage}`, {
     headers: { 'Authorization': `Bearer ${token}` }
   });
   

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { dataService } from '../services/supabase';
 
 const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, onActivitiesChange, onRecoveryClick }) => {
@@ -47,7 +47,7 @@ const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, on
     monday.setDate(today.getDate() - ((today.getDay() + 6) % 7)); // Get Monday
     monday.setHours(0, 0, 0, 0);
     
-    const weekKey = `${monday.getFullYear()}-${monday.getMonth()}-${monday.getDate()}`;
+    const weekKey = monday.toISOString().split('T')[0];
     setCurrentWeek({ start: monday, key: weekKey });
     
     // Load weekly plan
@@ -175,60 +175,7 @@ const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, on
     };
 
     loadWeeklyPlan();
-    
-    // Set up interval to check for plan updates (e.g., after postponement)
-    const checkInterval = setInterval(async () => {
-      try {
-        // Prioritize Supabase (shared across devices), then localStorage as fallback
-        let planToCheck = null;
-        const storedPlan = await dataService.get(`weekly_plan_${weekKey}`).catch(() => null);
-        if (storedPlan) {
-          planToCheck = storedPlan;
-        } else {
-          const localPlan = localStorage.getItem(`weekly_plan_${weekKey}`);
-          if (localPlan) {
-            planToCheck = localPlan;
-          }
-        }
-        
-        if (planToCheck) {
-          const parsedPlan = typeof planToCheck === 'string' ? JSON.parse(planToCheck) : planToCheck;
-          
-          // CRITICAL: If the new plan doesn't have postpone info but current plan does, preserve it
-          const currentHasPostponements = weeklyPlanRef.current?._postponements && Object.keys(weeklyPlanRef.current._postponements).length > 0;
-          const newHasPostponements = parsedPlan._postponements && Object.keys(parsedPlan._postponements).length > 0;
-          
-          if (currentHasPostponements && !newHasPostponements) {
-            parsedPlan._postponements = weeklyPlanRef.current._postponements;
-            // Preserve the timestamp from current plan if it's newer
-            if (weeklyPlanRef.current?._updatedAt) {
-              const currentTime = new Date(weeklyPlanRef.current._updatedAt).getTime();
-              const incomingTime = new Date(parsedPlan._updatedAt || 0).getTime();
-              if (currentTime > incomingTime) {
-                parsedPlan._updatedAt = weeklyPlanRef.current._updatedAt;
-              }
-            }
-            // Save the corrected plan immediately
-            localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan));
-            dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan)).catch(() => {});
-            console.log('Preserved postpone info in polling - plan was missing postpone data');
-            // Only update if the corrected plan is newer
-            if (!applyPlanIfNewer(parsedPlan, weeklyPlanRef.current, 'Polling (postpone fix)')) {
-              // If not newer, still update ref but don't trigger state change
-              weeklyPlanRef.current = parsedPlan;
-            }
-            return; // Skip further comparison since we've already updated
-          }
-          
-          // Use timestamp-based comparison to prevent overwriting fresh state
-          applyPlanIfNewer(parsedPlan, weeklyPlanRef.current, 'Polling');
-        }
-      } catch (e) {
-        console.error('Error checking plan updates in interval:', e);
-      }
-    }, 1000); // Check every second
-    
-    return () => clearInterval(checkInterval);
+    // Polling removed - plan updates come via onWeeklyPlanChange (Supabase realtime) and weeklyPlanProp
   }, [apiKey]); // Removed onGenerateWeeklyPlan from dependencies to prevent infinite loops
 
   // Sync weeklyPlan prop to internal state immediately when it changes
@@ -237,6 +184,8 @@ const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, on
       applyPlanIfNewer(weeklyPlanProp, weeklyPlan, 'Prop Sync');
     }
   }, [weeklyPlanProp, weeklyPlan]); // Include weeklyPlan to compare against
+
+  const reloadTimeoutRef = useRef(null);
 
   // Re-match activities when they change and reload plan
   useEffect(() => {
@@ -249,11 +198,10 @@ const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, on
       if (activityIds !== lastActivityIds) {
         localStorage.setItem(`last_activity_ids_${currentWeek.key}`, activityIds);
         
-        // Trigger matching in parent, then reload plan
         const updateMatches = async () => {
           await onActivitiesChange();
-          // Small delay to ensure plan is saved, then reload
-          setTimeout(async () => {
+          if (reloadTimeoutRef.current) clearTimeout(reloadTimeoutRef.current);
+          reloadTimeoutRef.current = setTimeout(async () => {
             try {
               const storedPlan = await dataService.get(`weekly_plan_${currentWeek.key}`);
               if (storedPlan) {
@@ -268,11 +216,18 @@ const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, on
             } catch (error) {
               console.error('Error reloading weekly plan:', error);
             }
+            reloadTimeoutRef.current = null;
           }, 100);
         };
         updateMatches();
       }
     }
+    return () => {
+      if (reloadTimeoutRef.current) {
+        clearTimeout(reloadTimeoutRef.current);
+        reloadTimeoutRef.current = null;
+      }
+    };
   }, [activities, currentWeek?.key, weeklyPlan, onActivitiesChange]);
 
   const getDayInfo = (dayOffset) => {
@@ -790,4 +745,4 @@ const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, on
   );
 };
 
-export default WeeklyPlan;
+export default React.memo(WeeklyPlan);
