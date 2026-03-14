@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from 'react';
-import ReactMarkdown from 'react-markdown';
 import { getActivityDetails, getActivityStreams, generateInsights } from '../services/api';
 import { getActivityInsights, saveActivityInsights, saveActivityRating, getActivityRating } from '../services/supabase';
 import { useSwipeBack } from '../hooks/useSwipeBack';
@@ -81,14 +80,19 @@ const ActivityDetail = ({ activityId, onBack }) => {
   const [insights, setInsights] = useState(null);
   const [generatingInsights, setGeneratingInsights] = useState(false);
   const [rating, setRating] = useState(null);
-  const [showRatingForm, setShowRatingForm] = useState(false);
-  const [ratingValue, setRatingValue] = useState(null);
-  const [ratingComment, setRatingComment] = useState('');
-  const [isInjured, setIsInjured] = useState(false);
-  const [injuryDetails, setInjuryDetails] = useState('');
   const [savingRating, setSavingRating] = useState(false);
+  const [hoveredRating, setHoveredRating] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 720);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth <= 720);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   useEffect(() => {
     const fetchActivityData = async () => {
@@ -272,6 +276,84 @@ const ActivityDetail = ({ activityId, onBack }) => {
     }
   };
 
+  // Helper function to format date
+  const formatDate = (dateString) => {
+    const date = new Date(dateString);
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return `${months[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
+  };
+
+  // Helper function to format duration
+  const formatDuration = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    return `${mins} min`;
+  };
+
+  // Helper functions for graph stat summaries
+  const getPaceStats = () => {
+    if (!streams?.velocity_smooth?.data) return null;
+    const paceData = streams.velocity_smooth.data
+      .map(v => v > 0 ? 26.8224 / v : 0)
+      .filter(pace => pace > 0 && pace < 20);
+    if (paceData.length === 0) return null;
+    const avgPace = paceData.reduce((a, b) => a + b, 0) / paceData.length;
+    const bestPace = Math.min(...paceData);
+    const slowestPace = Math.max(...paceData);
+    const formatPaceMin = (paceMin) => {
+      const mins = Math.floor(paceMin);
+      const secs = Math.round((paceMin - mins) * 60);
+      return `${mins}:${secs.toString().padStart(2, '0')}`;
+    };
+    return {
+      avg: formatPaceMin(avgPace),
+      best: formatPaceMin(bestPace),
+      slowest: formatPaceMin(slowestPace)
+    };
+  };
+
+  const getHRStats = () => {
+    if (!streams?.heartrate?.data) return null;
+    const hrData = streams.heartrate.data.filter(hr => hr > 0);
+    if (hrData.length === 0) return null;
+    const avgHR = Math.round(hrData.reduce((a, b) => a + b, 0) / hrData.length);
+    const maxHR = Math.max(...hrData);
+    // Simple zone calculation (assuming max HR of 220 - age, but using average zones)
+    const zone = avgHR < 120 ? 'Zone 1' : avgHR < 150 ? 'Zone 2' : avgHR < 170 ? 'Zone 3' : avgHR < 185 ? 'Zone 4' : 'Zone 5';
+    return { avg: avgHR, max: maxHR, zone };
+  };
+
+  const getCadenceStats = () => {
+    if (!streams?.cadence?.data) return null;
+    const cadenceData = streams.cadence.data.map(c => c * 2).filter(c => c > 0);
+    if (cadenceData.length === 0) return null;
+    const avgCadence = Math.round(cadenceData.reduce((a, b) => a + b, 0) / cadenceData.length);
+    return { avg: avgCadence };
+  };
+
+  // Rating box colors
+  const ratingColors = [
+    { muted: '#C0DD97', vivid: '#639922' },
+    { muted: '#9FE1CB', vivid: '#1D9E75' },
+    { muted: '#FAC775', vivid: '#BA7517' },
+    { muted: '#F0997B', vivid: '#D85A30' },
+    { muted: '#F7C1C1', vivid: '#E24B4A' }
+  ];
+
+  const ratingLabels = ['Very easy', 'Easy', 'Moderate', 'Hard', 'Very hard'];
+
+  const handleRatingClick = async (value) => {
+    setSavingRating(true);
+    try {
+      await saveActivityRating(activity.id, value, '', false, '');
+      const updatedRating = await getActivityRating(activity.id);
+      setRating(updatedRating);
+    } catch (error) {
+      console.error('Error saving rating:', error);
+    } finally {
+      setSavingRating(false);
+    }
+  };
+
   if (loading) {
     return (
       <div style={{
@@ -303,361 +385,482 @@ const ActivityDetail = ({ activityId, onBack }) => {
   if (error) return <div className="error">Error: {error}</div>;
   if (!activity) return <div className="error">Activity not found</div>;
 
+  const paceStats = getPaceStats();
+  const hrStats = getHRStats();
+  const cadenceStats = getCadenceStats();
+  const currentRating = rating?.rating || null;
+
   return (
-    <div className="app" ref={swipeBackRef}>
-      <div className="header">
-        <h1>{activity.name}</h1>
-        <p>{new Date(activity.start_date).toLocaleDateString()}</p>
+    <div ref={swipeBackRef} style={{ 
+      width: '100%',
+      minHeight: '100vh',
+      backgroundColor: 'var(--color-background-tertiary)'
+    }}>
+      {/* Map Hero */}
+      <div style={{ width: '100%', position: 'relative' }}>
+        <ActivityMap activity={activity} streams={streams} isMobile={isMobile} />
+        <div style={{
+          borderBottom: '0.5px solid var(--color-border-tertiary)',
+          width: '100%'
+        }}></div>
       </div>
 
-      {/* Map */}
-      <div style={{ marginBottom: '20px' }}>
-        <ActivityMap activity={activity} streams={streams} />
-      </div>
-      
-      {/* Stats */}
-      <div className="workout-display" style={{ marginBottom: '20px' }}>
-        <div className="workout-title">Activity Stats</div>
-        <div className="workout-block">
-          <div className="block-details">
-            <div className="detail-item">
-              <span className="detail-label">Distance</span>
-              <span className="detail-value">{(activity.distance / 1609.34).toFixed(2)} mi</span>
-            </div>
-            <div className="detail-item">
-              <span className="detail-label">Duration</span>
-              <span className="detail-value">{Math.floor(activity.moving_time / 60)}:{(activity.moving_time % 60).toString().padStart(2, '0')}</span>
-            </div>
-            <div className="detail-item">
-              <span className="detail-label">Avg Pace</span>
-              <span className="detail-value">{formatPace(activity.average_speed)}</span>
-            </div>
-            <div className="detail-item">
-              <span className="detail-label">Elevation</span>
-              <span className="detail-value">{Math.round(activity.total_elevation_gain * 3.28084)} ft</span>
-            </div>
-            {activity.average_heartrate && (
-              <div className="detail-item">
-                <span className="detail-label">Avg HR</span>
-                <span className="detail-value">{Math.round(activity.average_heartrate)} bpm</span>
-              </div>
-            )}
-            {activity.average_cadence && (
-              <div className="detail-item">
-                <span className="detail-label">Avg Cadence</span>
-                <span className="detail-value">{Math.round(activity.average_cadence * 2)} spm</span>
-              </div>
-            )}
+      {/* Main Content Container */}
+      <div style={{
+        maxWidth: '960px',
+        margin: '0 auto',
+        paddingBottom: '32px'
+      }}>
+        {/* Activity Title + Date */}
+        <div style={{
+          padding: isMobile ? '16px 16px 0' : '16px 24px 0'
+        }}>
+          <div style={{
+            fontSize: '22px',
+            fontWeight: '500',
+            color: 'var(--color-text-primary)',
+            marginBottom: '4px'
+          }}>
+            {activity.name}
+          </div>
+          <div style={{
+            fontSize: '12px',
+            color: 'var(--color-text-tertiary)',
+            marginBottom: '20px'
+          }}>
+            {formatDate(activity.start_date)} · {formatDuration(activity.moving_time)}
           </div>
         </div>
-      </div>
 
-      {/* Activity Rating */}
-      {rating && !showRatingForm ? (
-        <div className="workout-display" style={{ marginBottom: '20px' }}>
-          <div className="workout-title">📝 Your Rating</div>
-          <div className="workout-block">
-            <div className="block-details">
-              <div className="detail-item">
-                <span className="detail-label">Rating</span>
-                <span className="detail-value">
-                  {rating.rating === 1 ? '😊' : 
-                   rating.rating === 2 ? '🙂' : 
-                   rating.rating === 3 ? '😐' : 
-                   rating.rating === 4 ? '😓' : '😫'} 
-                  ({rating.rating === 1 ? 'Too easy' : 
-                    rating.rating === 2 ? 'Easy' : 
-                    rating.rating === 3 ? 'Perfect' : 
-                    rating.rating === 4 ? 'Hard' : 'Too hard'})
-                </span>
+        {/* Metrics Grid */}
+        <div style={{
+          padding: isMobile ? '0 16px' : '0 24px',
+          marginBottom: '20px'
+        }}>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            gap: 0,
+            border: '0.5px solid var(--color-border-tertiary)',
+            borderRadius: '10px',
+            overflow: 'hidden',
+            background: 'var(--color-background-primary)'
+          }}>
+            {/* Distance */}
+            <div style={{
+              padding: '14px 0 14px 0',
+              paddingRight: '20px',
+              borderRight: '0.5px solid var(--color-border-tertiary)',
+              borderBottom: '0.5px solid var(--color-border-tertiary)',
+              paddingLeft: '20px'
+            }}>
+              <div style={{
+                fontSize: '22px',
+                fontWeight: '500',
+                color: 'var(--color-text-primary)',
+                lineHeight: 1
+              }}>
+                {(activity.distance / 1609.34).toFixed(1)} mi
               </div>
-              {rating.feedback && (
-                <div className="detail-item full-width">
-                  <span className="detail-label">Comment</span>
-                  <span className="detail-value">{rating.feedback}</span>
-                </div>
-              )}
-              {rating.isInjured && (
-                <div className="detail-item full-width">
-                  <span className="detail-label">Injury</span>
-                  <span className="detail-value">⚠️ {rating.injuryDetails || 'Reported'}</span>
-                </div>
-              )}
+              <div style={{
+                fontSize: '10px',
+                color: 'var(--color-text-tertiary)',
+                marginTop: '4px',
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase'
+              }}>
+                Distance
+              </div>
             </div>
-            <button
-              className="btn btn-secondary"
-              onClick={() => {
-                setShowRatingForm(true);
-                setRatingValue(rating.rating);
-                setRatingComment(rating.feedback || '');
-                setIsInjured(rating.isInjured || false);
-                setInjuryDetails(rating.injuryDetails || '');
-              }}
-              style={{ marginTop: '10px', width: '100%' }}
-            >
-              Edit Rating
-            </button>
+            {/* Avg Pace */}
+            <div style={{
+              padding: '14px 0 14px 20px',
+              borderBottom: '0.5px solid var(--color-border-tertiary)'
+            }}>
+              <div style={{
+                fontSize: '22px',
+                fontWeight: '500',
+                color: 'var(--color-text-primary)',
+                lineHeight: 1
+              }}>
+                {formatPace(activity.average_speed)}
+              </div>
+              <div style={{
+                fontSize: '10px',
+                color: 'var(--color-text-tertiary)',
+                marginTop: '4px',
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase'
+              }}>
+                Avg pace
+              </div>
+            </div>
+            {/* Avg Heart Rate */}
+            <div style={{
+              padding: '14px 0 14px 0',
+              paddingRight: '20px',
+              borderRight: '0.5px solid var(--color-border-tertiary)',
+              borderBottom: '0.5px solid var(--color-border-tertiary)',
+              paddingLeft: '20px'
+            }}>
+              <div style={{
+                fontSize: '22px',
+                fontWeight: '500',
+                color: 'var(--color-text-primary)',
+                lineHeight: 1
+              }}>
+                {activity.average_heartrate ? `${Math.round(activity.average_heartrate)} bpm` : '—'}
+              </div>
+              <div style={{
+                fontSize: '10px',
+                color: 'var(--color-text-tertiary)',
+                marginTop: '4px',
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase'
+              }}>
+                Avg heart rate
+              </div>
+            </div>
+            {/* Max Heart Rate */}
+            <div style={{
+              padding: '14px 0 14px 20px',
+              borderBottom: '0.5px solid var(--color-border-tertiary)'
+            }}>
+              <div style={{
+                fontSize: '22px',
+                fontWeight: '500',
+                color: 'var(--color-text-primary)',
+                lineHeight: 1
+              }}>
+                {activity.max_heartrate ? `${Math.round(activity.max_heartrate)} bpm` : '—'}
+              </div>
+              <div style={{
+                fontSize: '10px',
+                color: 'var(--color-text-tertiary)',
+                marginTop: '4px',
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase'
+              }}>
+                Max heart rate
+              </div>
+            </div>
+            {/* Avg Cadence */}
+            <div style={{
+              padding: '14px 0 14px 0',
+              paddingRight: '20px',
+              borderRight: '0.5px solid var(--color-border-tertiary)',
+              paddingLeft: '20px'
+            }}>
+              <div style={{
+                fontSize: '22px',
+                fontWeight: '500',
+                color: 'var(--color-text-primary)',
+                lineHeight: 1
+              }}>
+                {activity.average_cadence ? `${Math.round(activity.average_cadence * 2)} spm` : '—'}
+              </div>
+              <div style={{
+                fontSize: '10px',
+                color: 'var(--color-text-tertiary)',
+                marginTop: '4px',
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase'
+              }}>
+                Avg cadence
+              </div>
+            </div>
+            {/* Elevation Gain */}
+            <div style={{
+              padding: '14px 0 14px 20px'
+            }}>
+              <div style={{
+                fontSize: '22px',
+                fontWeight: '500',
+                color: 'var(--color-text-primary)',
+                lineHeight: 1
+              }}>
+                {Math.round(activity.total_elevation_gain * 3.28084)} ft
+              </div>
+              <div style={{
+                fontSize: '10px',
+                color: 'var(--color-text-tertiary)',
+                marginTop: '4px',
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase'
+              }}>
+                Elevation gain
+              </div>
+            </div>
           </div>
         </div>
-      ) : showRatingForm ? (
-        <div className="workout-display" style={{ marginBottom: '20px' }}>
-          <div className="workout-title">📝 Rate This Activity</div>
-          <div className="workout-block">
-            <div className="block-title">How was this run?</div>
-            
-            {/* Rating */}
-            <div style={{ marginBottom: '20px' }}>
-              <div className="detail-label" style={{ marginBottom: '10px' }}>Rate this activity:</div>
-              <div style={{ display: 'flex', gap: '10px' }}>
-                {[
-                  { value: 1, emoji: '😊', label: 'Too easy' },
-                  { value: 2, emoji: '🙂', label: 'Easy' },
-                  { value: 3, emoji: '😐', label: 'Perfect' },
-                  { value: 4, emoji: '😓', label: 'Hard' },
-                  { value: 5, emoji: '😫', label: 'Too hard' }
-                ].map(({ value, emoji, label }) => (
-                  <button
-                    key={value}
-                    onClick={() => setRatingValue(value)}
-                    style={{
-                      background: ratingValue === value ? 'var(--accent)' : 'var(--grid-color)',
-                      border: ratingValue === value ? '2px solid var(--accent)' : '2px solid transparent',
-                      borderRadius: '12px',
-                      fontSize: '32px',
-                      cursor: 'pointer',
-                      padding: '10px',
-                      transition: 'all 0.2s ease',
-                      transform: ratingValue === value ? 'scale(1.15)' : 'scale(1)',
-                      boxShadow: ratingValue === value ? '0 4px 12px rgba(59, 130, 246, 0.3)' : 'none',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      gap: '4px',
-                      minWidth: '50px'
-                    }}
-                    onMouseEnter={(e) => {
-                      if (ratingValue !== value) {
-                        e.currentTarget.style.transform = 'scale(1.1)';
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (ratingValue !== value) {
-                        e.currentTarget.style.transform = 'scale(1)';
-                      }
-                    }}
-                    title={label}
-                  >
-                    <span>{emoji}</span>
-                    {ratingValue === value && (
-                      <span style={{ fontSize: '9px', color: 'white', fontWeight: '600' }}>
-                        {label}
-                      </span>
-                    )}
-                  </button>
-                ))}
-              </div>
-              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '5px' }}>
-                Click an emoji to rate this activity
-              </div>
-            </div>
 
-            {/* Comment */}
-            <div style={{ marginBottom: '20px' }}>
-              <div className="detail-label" style={{ marginBottom: '8px' }}>Comments (optional):</div>
-              <textarea
-                value={ratingComment}
-                onChange={(e) => setRatingComment(e.target.value)}
-                placeholder="How did this run feel? Any notes..."
-                style={{
-                  width: '100%',
-                  padding: '8px',
-                  border: '1px solid var(--border-color)',
-                  borderRadius: '4px',
-                  fontSize: '14px',
-                  minHeight: '60px',
-                  backgroundColor: 'var(--card-bg)',
-                  color: 'var(--text-color)'
-                }}
-              />
-            </div>
-
-            {/* Injury Status */}
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={isInjured}
-                  onChange={(e) => setIsInjured(e.target.checked)}
-                />
-                <span className="detail-label">I'm currently injured or experiencing pain</span>
-              </label>
-              
-              {isInjured && (
-                <textarea
-                  value={injuryDetails}
-                  onChange={(e) => setInjuryDetails(e.target.value)}
-                  placeholder="Describe your injury or pain (e.g., 'knee pain', 'shin splints', 'general fatigue')"
+        {/* AI Insights Section */}
+        <div style={{
+          padding: isMobile ? '0 16px' : '0 24px',
+          marginBottom: '24px'
+        }}>
+          <div style={{
+            border: '0.5px solid var(--color-border-tertiary)',
+            borderRadius: '10px',
+            overflow: 'hidden',
+            background: 'var(--color-background-primary)'
+          }}>
+            <div style={{
+              padding: '14px 16px',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
+            }}>
+              <div>
+                <div style={{
+                  fontSize: '12px',
+                  fontWeight: '500',
+                  color: 'var(--color-text-primary)'
+                }}>
+                  Coach insights
+                </div>
+                <div style={{
+                  fontSize: '11px',
+                  color: 'var(--color-text-tertiary)',
+                  marginTop: '2px'
+                }}>
+                  AI analysis of this run
+                </div>
+              </div>
+              {insights ? (
+                <div
+                  onClick={handleGenerateInsights}
                   style={{
-                    width: '100%',
-                    marginTop: '10px',
-                    padding: '8px',
-                    border: '1px solid var(--border-color)',
-                    borderRadius: '4px',
-                    fontSize: '14px',
-                    minHeight: '60px',
-                    backgroundColor: 'var(--card-bg)',
-                    color: 'var(--text-color)'
+                    fontSize: '11px',
+                    color: 'var(--color-text-tertiary)',
+                    cursor: generatingInsights ? 'default' : 'pointer',
+                    opacity: generatingInsights ? 0.5 : 1
                   }}
-                />
-              )}
-            </div>
-
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <button
-                className="btn btn-primary"
-                onClick={async () => {
-                  if (!ratingValue) {
-                    alert('Please select a rating');
-                    return;
-                  }
-                  setSavingRating(true);
-                  try {
-                    await saveActivityRating(activity.id, ratingValue, ratingComment, isInjured, injuryDetails);
-                    const updatedRating = await getActivityRating(activity.id);
-                    setRating(updatedRating);
-                    setShowRatingForm(false);
-                    setRatingValue(null);
-                    setRatingComment('');
-                    setIsInjured(false);
-                    setInjuryDetails('');
-                  } catch (error) {
-                    console.error('Error saving rating:', error);
-                    alert('Failed to save rating');
-                  } finally {
-                    setSavingRating(false);
-                  }
-                }}
-                disabled={savingRating}
-                style={{ flex: 1 }}
-              >
-                {savingRating ? 'Saving...' : 'Save Rating'}
-              </button>
-              <button
-                className="btn btn-secondary"
-                onClick={() => {
-                  setShowRatingForm(false);
-                  setRatingValue(null);
-                  setRatingComment('');
-                  setIsInjured(false);
-                  setInjuryDetails('');
-                }}
-                disabled={savingRating}
-                style={{ flex: 1 }}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="workout-display" style={{ marginBottom: '20px' }}>
-          <div className="workout-title">📝 Rate This Activity</div>
-          <div className="workout-block">
-            <button
-              className="btn btn-primary"
-              onClick={() => setShowRatingForm(true)}
-              style={{ width: '100%' }}
-            >
-              Rate This Activity
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* AI Insights */}
-      <div className="workout-display" style={{ marginBottom: '20px' }}>
-        <div className="workout-title">AI Insights</div>
-        {insights ? (
-          <div
-            className="workout-block"
-            data-ai-insights-panel="true"
-            style={{
-              height: 'var(--chart-height)',
-              overflowY: 'auto',
-              WebkitOverflowScrolling: 'touch',
-              paddingRight: '12px'
-            }}
-          >
-            {insights === '[object Object]' || insights.includes('[object Object]') ? (
-              <div style={{ textAlign: 'center', padding: '20px' }}>
-                <div style={{ color: 'var(--text-secondary)', marginBottom: '15px' }}>
-                  Insights data corrupted. Click to regenerate:
+                >
+                  {generatingInsights ? '...' : 'Regenerate'}
                 </div>
-                <button 
-                  className="btn btn-primary"
+              ) : (
+                <button
                   onClick={handleGenerateInsights}
                   disabled={generatingInsights}
-                  style={{ fontSize: '14px', padding: '10px 20px' }}
+                  style={{
+                    fontSize: '11px',
+                    color: 'var(--color-text-tertiary)',
+                    border: '0.5px solid var(--color-border-secondary)',
+                    borderRadius: '5px',
+                    padding: '5px 10px',
+                    cursor: generatingInsights ? 'default' : 'pointer',
+                    background: 'transparent',
+                    transition: 'all 0.15s'
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!generatingInsights) {
+                      e.currentTarget.style.color = 'var(--color-text-primary)';
+                      e.currentTarget.style.borderColor = 'var(--color-border-primary)';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!generatingInsights) {
+                      e.currentTarget.style.color = 'var(--color-text-tertiary)';
+                      e.currentTarget.style.borderColor = 'var(--color-border-secondary)';
+                    }
+                  }}
                 >
-                  {generatingInsights ? 'Generating Insights...' : 'Regenerate Insights'}
+                  {generatingInsights ? '...' : 'Generate'}
                 </button>
-              </div>
-            ) : (
-              <ReactMarkdown 
-                style={{ 
-                  whiteSpace: 'normal', 
-                  lineHeight: '1.6',
-                  color: 'var(--text-color)',
-                  paddingBottom: '8px'
-                }}
-              >
-                {insights}
-              </ReactMarkdown>
-            )}
-          </div>
-        ) : (
-          <div
-            className="workout-block"
-            style={{ 
-              backgroundColor: '#000', 
-              color: '#888', 
-              textAlign: 'center', 
-              padding: '40px 20px',
-              cursor: generatingInsights ? 'default' : 'pointer',
-              border: '1px solid #333',
-              position: 'relative',
-              height: 'var(--chart-height)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}
-          onClick={generatingInsights ? undefined : handleGenerateInsights}>
-            {generatingInsights ? (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
+              )}
+            </div>
+            {insights && (
+              <>
                 <div style={{
-                  width: '20px',
-                  height: '20px',
-                  border: '2px solid #333',
-                  borderTop: '2px solid #888',
-                  borderRadius: '50%',
-                  animation: 'spin 1s linear infinite'
+                  borderTop: '0.5px solid var(--color-border-tertiary)'
                 }}></div>
-                Generating insights...
-              </div>
-            ) : (
-              'Click to generate insights'
+                <div style={{
+                  padding: '14px 16px',
+                  fontSize: '13px',
+                  color: 'var(--color-text-secondary)',
+                  lineHeight: '1.7'
+                }}>
+                  {insights === '[object Object]' || insights.includes('[object Object]') ? (
+                    <div style={{ textAlign: 'center', padding: '20px' }}>
+                      <div style={{ color: 'var(--text-secondary)', marginBottom: '15px' }}>
+                        Insights data corrupted. Click regenerate above.
+                      </div>
+                    </div>
+                  ) : (
+                    insights
+                  )}
+                </div>
+              </>
             )}
           </div>
-        )}
-      </div>
+        </div>
 
-      {/* Charts */}
-      <ActivityCharts streams={streams} />
+        {/* Graphs Section */}
+        <div style={{
+          padding: isMobile ? '0 16px' : '0 24px'
+        }}>
+          {/* Pace Graph */}
+          {streams?.velocity_smooth && (
+            <div style={{ marginBottom: '24px' }}>
+              <div style={{
+                fontSize: '10px',
+                letterSpacing: '0.1em',
+                textTransform: 'uppercase',
+                color: 'var(--color-text-tertiary)',
+                marginBottom: '10px'
+              }}>
+                Pace
+              </div>
+              <div style={{
+                border: '0.5px solid var(--color-border-tertiary)',
+                borderRadius: '10px',
+                overflow: 'hidden',
+                background: 'var(--color-background-primary)',
+                padding: '16px'
+              }}>
+                <PaceChart data={streams} xAxisMode="time" />
+                {paceStats && (
+                  <div style={{
+                    fontSize: '11px',
+                    color: 'var(--color-text-tertiary)',
+                    marginTop: '10px'
+                  }}>
+                    Avg {paceStats.avg} · Best {paceStats.best} · Slowest {paceStats.slowest}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Heart Rate Graph */}
+          {streams?.heartrate && (
+            <div style={{ marginBottom: '24px' }}>
+              <div style={{
+                fontSize: '10px',
+                letterSpacing: '0.1em',
+                textTransform: 'uppercase',
+                color: 'var(--color-text-tertiary)',
+                marginBottom: '10px'
+              }}>
+                Heart rate
+              </div>
+              <div style={{
+                border: '0.5px solid var(--color-border-tertiary)',
+                borderRadius: '10px',
+                overflow: 'hidden',
+                background: 'var(--color-background-primary)',
+                padding: '16px'
+              }}>
+                <HeartRateChart data={streams} xAxisMode="time" />
+                {hrStats && (
+                  <div style={{
+                    fontSize: '11px',
+                    color: 'var(--color-text-tertiary)',
+                    marginTop: '10px'
+                  }}>
+                    Avg {hrStats.avg} · Max {hrStats.max} · {hrStats.zone}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Cadence Graph */}
+          {streams?.cadence && (
+            <div style={{ marginBottom: '24px' }}>
+              <div style={{
+                fontSize: '10px',
+                letterSpacing: '0.1em',
+                textTransform: 'uppercase',
+                color: 'var(--color-text-tertiary)',
+                marginBottom: '10px'
+              }}>
+                Cadence
+              </div>
+              <div style={{
+                border: '0.5px solid var(--color-border-tertiary)',
+                borderRadius: '10px',
+                overflow: 'hidden',
+                background: 'var(--color-background-primary)',
+                padding: '16px'
+              }}>
+                <CadenceChart data={streams} xAxisMode="time" />
+                {cadenceStats && (
+                  <div style={{
+                    fontSize: '11px',
+                    color: 'var(--color-text-tertiary)',
+                    marginTop: '10px'
+                  }}>
+                    Avg {cadenceStats.avg} · Target 170–180 spm
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Difficulty Rating */}
+        <div style={{
+          padding: isMobile ? '0 16px 0' : '0 24px 0',
+          marginBottom: '8px'
+        }}>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: '4px'
+          }}>
+            <div style={{
+              fontSize: '11px',
+              color: 'var(--color-text-tertiary)',
+              letterSpacing: '0.04em'
+            }}>
+              Effort rating
+            </div>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              {[1, 2, 3, 4, 5].map((value) => {
+                const isSelected = currentRating === value;
+                const isHovered = hoveredRating === value;
+                const colors = ratingColors[value - 1];
+                const shouldShowVivid = isSelected || isHovered;
+                const baseOpacity = currentRating ? (shouldShowVivid ? 1 : 0.5) : (isHovered ? 1 : 0.5);
+                return (
+                  <div
+                    key={value}
+                    onClick={() => handleRatingClick(value)}
+                    onMouseEnter={() => setHoveredRating(value)}
+                    onMouseLeave={() => setHoveredRating(null)}
+                    style={{
+                      width: '32px',
+                      height: '14px',
+                      borderRadius: '3px',
+                      cursor: 'pointer',
+                      transition: 'opacity 0.15s',
+                      backgroundColor: shouldShowVivid ? colors.vivid : colors.muted,
+                      opacity: baseOpacity
+                    }}
+                  />
+                );
+              })}
+            </div>
+          </div>
+          {currentRating && (
+            <div style={{
+              fontSize: '10px',
+              color: 'var(--color-text-tertiary)',
+              textAlign: 'right'
+            }}>
+              {ratingLabels[currentRating - 1]}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 };
 
-const ActivityMap = ({ activity, streams }) => {
+const ActivityMap = ({ activity, streams, isMobile = false }) => {
   const mapId = `map-${activity.id}`;
   const mapRef = useRef(null);
   const tileLayerRef = useRef(null);
@@ -670,7 +873,7 @@ const ActivityMap = ({ activity, streams }) => {
     mapRef.current = map;
 
     // Add route polyline - blue color
-    const polyline = L.polyline(streams.latlng.data, { color: '#3b82f6', weight: 4 }).addTo(map);
+    const polyline = L.polyline(streams.latlng.data, { color: '#378ADD', weight: 4 }).addTo(map);
     map.fitBounds(polyline.getBounds());
 
     // Function to update tile layer based on theme
@@ -724,20 +927,26 @@ const ActivityMap = ({ activity, streams }) => {
 
   if (!streams?.latlng?.data) {
     return (
-      <div className="workout-display">
-        <div className="workout-title">Route Map</div>
-        <div style={{ padding: '40px', textAlign: 'center', color: '#7f8c8d' }}>
-          No GPS data available for this activity
-        </div>
+      <div style={{ 
+        width: '100%',
+        height: isMobile ? '42vh' : '45vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'var(--color-background-secondary)',
+        color: 'var(--color-text-tertiary)',
+        fontSize: '14px'
+      }}>
+        No GPS data available for this activity
       </div>
     );
   }
 
   return (
-    <div className="workout-display">
-      <div className="workout-title">Route Map</div>
-      <div id={mapId} style={{ height: '300px', borderRadius: '8px' }}></div>
-    </div>
+    <div id={mapId} style={{ 
+      width: '100%',
+      height: isMobile ? '42vh' : '45vh'
+    }}></div>
   );
 };
 
@@ -1357,9 +1566,7 @@ const HeartRateChart = ({ data, xAxisMode = 'time' }) => {
   if (!data.heartrate?.data) return null;
 
   return (
-    <div className="workout-display">
-      <div className="workout-title">Heart Rate</div>
-      <div ref={containerRef} style={{ position: 'relative', marginLeft: '8px' }}>
+    <div ref={containerRef} style={{ position: 'relative' }}>
         <canvas
           className="mobile-wide-chart"
           ref={canvasRef}
@@ -1370,7 +1577,7 @@ const HeartRateChart = ({ data, xAxisMode = 'time' }) => {
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
-          style={{ width: '100%', height: 'var(--chart-height)', borderRadius: '8px', cursor: 'crosshair' }}
+          style={{ width: '100%', height: 'var(--chart-height)', cursor: 'crosshair' }}
         />
         {tooltip && (() => {
           const container = containerRef.current;
@@ -1413,7 +1620,6 @@ const HeartRateChart = ({ data, xAxisMode = 'time' }) => {
             </div>
           );
         })()}
-      </div>
     </div>
   );
 };
@@ -1709,9 +1915,7 @@ const PaceChart = ({ data, xAxisMode = 'time' }) => {
   if (!data.velocity_smooth?.data) return null;
 
   return (
-    <div className="workout-display">
-      <div className="workout-title">Pace</div>
-      <div ref={containerRef} style={{ position: 'relative', marginLeft: '8px' }}>
+    <div ref={containerRef} style={{ position: 'relative' }}>
         <canvas
           className="mobile-wide-chart"
           ref={canvasRef}
@@ -1722,7 +1926,7 @@ const PaceChart = ({ data, xAxisMode = 'time' }) => {
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
-          style={{ width: '100%', height: 'var(--chart-height)', borderRadius: '8px', cursor: 'crosshair' }}
+          style={{ width: '100%', height: 'var(--chart-height)', cursor: 'crosshair' }}
         />
         {tooltip && (() => {
           const container = containerRef.current;
@@ -1765,7 +1969,6 @@ const PaceChart = ({ data, xAxisMode = 'time' }) => {
             </div>
           );
         })()}
-      </div>
     </div>
   );
 };
@@ -2110,19 +2313,14 @@ const CadenceChart = ({ data, xAxisMode = 'time' }) => {
   
   if (!data.cadence?.data) {
     return (
-      <div className="workout-display">
-        <div className="workout-title">Cadence</div>
-        <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
-          No cadence data available
-        </div>
+      <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+        No cadence data available
       </div>
     );
   }
   
   return (
-    <div className="workout-display">
-      <div className="workout-title">Cadence</div>
-      <div ref={containerRef} style={{ position: 'relative', marginLeft: '8px' }}>
+    <div ref={containerRef} style={{ position: 'relative' }}>
         <canvas
           className="mobile-wide-chart"
           ref={canvasRef}
@@ -2133,7 +2331,7 @@ const CadenceChart = ({ data, xAxisMode = 'time' }) => {
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
-          style={{ width: '100%', height: 'var(--chart-height)', borderRadius: '8px', cursor: 'crosshair' }}
+          style={{ width: '100%', height: 'var(--chart-height)', cursor: 'crosshair' }}
         />
         {tooltip && (() => {
           const container = containerRef.current;
@@ -2176,7 +2374,6 @@ const CadenceChart = ({ data, xAxisMode = 'time' }) => {
             </div>
           );
         })()}
-      </div>
     </div>
   );
 };
