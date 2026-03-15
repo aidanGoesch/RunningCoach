@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { dataService } from '../services/supabase';
+import { getLegacyWeekKey, getWeekKey } from '../utils/weekKey';
 
 const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, onActivitiesChange, onRecoveryClick }) => {
   const [weeklyPlan, setWeeklyPlan] = useState(null);
@@ -46,8 +47,8 @@ const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, on
     const monday = new Date(today);
     monday.setDate(today.getDate() - ((today.getDay() + 6) % 7)); // Get Monday
     monday.setHours(0, 0, 0, 0);
-    
-    const weekKey = monday.toISOString().split('T')[0];
+    const weekKey = getWeekKey(today);
+    const legacyWeekKey = getLegacyWeekKey(today);
     setCurrentWeek({ start: monday, key: weekKey });
     
     // Load weekly plan
@@ -74,6 +75,16 @@ const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, on
         }
         
         // If Supabase failed or returned null, fallback to localStorage
+        if (!parsedPlan && legacyWeekKey !== weekKey) {
+          const legacyPlan = await dataService.get(`weekly_plan_${legacyWeekKey}`).catch(() => null);
+          if (legacyPlan) {
+            parsedPlan = JSON.parse(legacyPlan);
+            localStorage.setItem(`weekly_plan_${weekKey}`, legacyPlan);
+            await dataService.set(`weekly_plan_${weekKey}`, legacyPlan).catch(() => {});
+            console.log('Migrated legacy weekly plan key to canonical key');
+          }
+        }
+
         if (!parsedPlan) {
           const localPlan = localStorage.getItem(`weekly_plan_${weekKey}`);
           if (localPlan) {
@@ -152,8 +163,7 @@ const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, on
             }
           }
           
-          setWeeklyPlan(parsedPlan);
-          weeklyPlanRef.current = parsedPlan;
+          applyPlanIfNewer(parsedPlan, weeklyPlanRef.current, 'Initial Load');
           console.log('Weekly plan state set successfully');
         } else {
           console.log('No weekly plan found - NOT auto-generating to avoid API spam');
@@ -166,8 +176,7 @@ const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, on
         console.log('localStorage weekly plan:', localPlan);
         if (localPlan) {
           const parsedPlan = JSON.parse(localPlan);
-          setWeeklyPlan(parsedPlan);
-          weeklyPlanRef.current = parsedPlan;
+          applyPlanIfNewer(parsedPlan, weeklyPlanRef.current, 'Fallback Load');
         } else {
           console.log('No weekly plan found in localStorage either - use Generate Weekly Plan button');
         }
@@ -185,9 +194,7 @@ const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, on
     }
   }, [weeklyPlanProp, weeklyPlan]); // Include weeklyPlan to compare against
 
-  const reloadTimeoutRef = useRef(null);
-
-  // Re-match activities when they change and reload plan
+  // Re-match activities when they change; parent pushes updated plan via props
   useEffect(() => {
     if (weeklyPlan && activities.length > 0 && currentWeek && onActivitiesChange) {
       // Create a simple hash of activity IDs to detect changes
@@ -197,37 +204,9 @@ const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, on
       // Only update if activities actually changed
       if (activityIds !== lastActivityIds) {
         localStorage.setItem(`last_activity_ids_${currentWeek.key}`, activityIds);
-        
-        const updateMatches = async () => {
-          await onActivitiesChange();
-          if (reloadTimeoutRef.current) clearTimeout(reloadTimeoutRef.current);
-          reloadTimeoutRef.current = setTimeout(async () => {
-            try {
-              const storedPlan = await dataService.get(`weekly_plan_${currentWeek.key}`);
-              if (storedPlan) {
-                const parsedPlan = JSON.parse(storedPlan);
-                setWeeklyPlan(parsedPlan);
-              } else {
-                const localPlan = localStorage.getItem(`weekly_plan_${currentWeek.key}`);
-                if (localPlan) {
-                  setWeeklyPlan(JSON.parse(localPlan));
-                }
-              }
-            } catch (error) {
-              console.error('Error reloading weekly plan:', error);
-            }
-            reloadTimeoutRef.current = null;
-          }, 100);
-        };
-        updateMatches();
+        void onActivitiesChange();
       }
     }
-    return () => {
-      if (reloadTimeoutRef.current) {
-        clearTimeout(reloadTimeoutRef.current);
-        reloadTimeoutRef.current = null;
-      }
-    };
   }, [activities, currentWeek?.key, weeklyPlan, onActivitiesChange]);
 
   const getDayInfo = (dayOffset) => {

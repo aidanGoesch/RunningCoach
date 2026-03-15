@@ -1,4 +1,5 @@
 import { getStravaTokens, saveStravaTokens, deleteStravaTokens, getRecentRecoveryWorkouts, dataService } from './supabase';
+import { getWeekKey } from '../utils/weekKey';
 
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 const STRAVA_CLIENT_ID = import.meta.env.VITE_STRAVA_CLIENT_ID;
@@ -2875,12 +2876,8 @@ Return ONLY the corrected JSON object for the "${dayName}" workout.`;
     updatedPlan._ratingAnalysis = currentWeekPlan._ratingAnalysis;
   }
 
-  // Compute weekKey (Monday of current week) for storage
-  const monday = new Date(today);
-  monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-  monday.setHours(0, 0, 0, 0);
-  // Use ISO date format (YYYY-MM-DD) for weekKey
-  const weekKey = monday.toISOString().split('T')[0];
+  // Compute canonical local week key (Monday) for storage
+  const weekKey = getWeekKey(today);
 
   // Save via DataService and localStorage
   const planJson = JSON.stringify(updatedPlan);

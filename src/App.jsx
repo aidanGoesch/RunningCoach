@@ -13,7 +13,8 @@ import PullToRefresh from './components/PullToRefresh';
 import NewActivityRatingModal from './components/NewActivityRatingModal';
 import RecoveryPage from './components/RecoveryPage';
 import { generateWorkout, generateWeeklyPlan, generateDataDrivenWeeklyPlan, generateWeeklyAnalysis, matchActivitiesToWorkouts, syncWithStrava, generateInsights, detectNewActivities, adjustWeeklyPlanForPostponement, regenerateDayWorkout, updatePromptWithCurrentData, buildFourWeekSummary, buildRatingQueue, DEFAULT_COACHING_PROMPT, getAppBasePath, refreshStravaToken, getValidStravaAccessToken } from './services/api';
-import { dataService, setupRealtimeSync, syncAllDataFromSupabase, enableSupabase, getActivityRating, getActivityRatings, getStravaTokens } from './services/supabase';
+import { dataService, setupRealtimeSync, syncAllDataFromSupabase, enableSupabase, getActivityRating, getActivityRatings, getStravaTokens, saveActivityRating } from './services/supabase';
+import { getLegacyWeekKey, getWeekKey } from './utils/weekKey';
 
 function App() {
   const [workout, setWorkout] = useState(null);
@@ -49,8 +50,40 @@ function App() {
 
   const todayDate = new Date().toISOString().split('T')[0];
 
-  const refreshActivityRatings = useCallback(() => {
-    setActivityRatings(JSON.parse(localStorage.getItem('activity_ratings') || '{}'));
+  const refreshActivityRatings = useCallback(async () => {
+    try {
+      const localRatings = JSON.parse(localStorage.getItem('activity_ratings') || '{}');
+
+      if (!dataService.useSupabase) {
+        setActivityRatings(localRatings);
+        return;
+      }
+
+      const ratingsData = await dataService.get('activity_ratings');
+      const supabaseRatings = ratingsData ? JSON.parse(ratingsData) : {};
+
+      // One-time backfill behavior: upload ratings that only exist locally.
+      const localOnlyIds = Object.keys(localRatings).filter((id) => !supabaseRatings[id]);
+      for (const activityId of localOnlyIds) {
+        const rating = localRatings[activityId];
+        if (!rating) continue;
+        await saveActivityRating(
+          activityId,
+          rating.rating,
+          rating.feedback || null,
+          !!rating.isInjured,
+          rating.injuryDetails || null
+        );
+      }
+
+      const mergedRatings = { ...localRatings, ...supabaseRatings };
+      setActivityRatings(mergedRatings);
+      localStorage.setItem('activity_ratings', JSON.stringify(mergedRatings));
+    } catch (err) {
+      console.error('Failed to refresh activity ratings:', err);
+      const fallback = JSON.parse(localStorage.getItem('activity_ratings') || '{}');
+      setActivityRatings(fallback);
+    }
   }, []);
 
   const activityMatches = useMemo(
@@ -297,10 +330,8 @@ function App() {
         console.log('Starting preload...');
         
         const today = new Date();
-        const monday = new Date(today);
-        monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-        monday.setHours(0, 0, 0, 0);
-        const weekKey = `${monday.getFullYear()}-${monday.getMonth()}-${monday.getDate()}`;
+        const weekKey = getWeekKey(today);
+        const legacyWeekKey = getLegacyWeekKey(today);
         
         // Load all data in parallel
         const [
@@ -335,6 +366,16 @@ function App() {
             return null;
           })
         ]);
+
+        let effectiveWeeklyPlanData = weeklyPlanData;
+        if (!effectiveWeeklyPlanData && legacyWeekKey !== weekKey) {
+          const legacyPlanData = await dataService.get(`weekly_plan_${legacyWeekKey}`).catch(() => null);
+          if (legacyPlanData) {
+            effectiveWeeklyPlanData = legacyPlanData;
+            await dataService.set(`weekly_plan_${weekKey}`, legacyPlanData).catch(() => {});
+            localStorage.setItem(`weekly_plan_${weekKey}`, legacyPlanData);
+          }
+        }
         
         // Process Supabase data if available
         if (supabaseData) {
@@ -343,6 +384,10 @@ function App() {
           }
           if (supabaseData.workout) {
             setWorkout(supabaseData.workout);
+          }
+          if (supabaseData.activityRatings) {
+            setActivityRatings(supabaseData.activityRatings);
+            localStorage.setItem('activity_ratings', JSON.stringify(supabaseData.activityRatings));
           }
         }
         
@@ -392,8 +437,8 @@ function App() {
         
         let todayWorkout = null;
         let isTodayPostponed = false;
-        if (weeklyPlanData) {
-          const parsedPlan = JSON.parse(weeklyPlanData);
+        if (effectiveWeeklyPlanData) {
+          const parsedPlan = JSON.parse(effectiveWeeklyPlanData);
           // Check if today was postponed
           const postponements = parsedPlan._postponements || {};
           const todayPostponeInfo = postponements[dayNameMap[dayOfWeek]];
@@ -434,8 +479,8 @@ function App() {
         // Store weekly plan in state for checking postpone status
         // Prioritize Supabase data (already loaded above), fallback to localStorage
         let parsedPlanForState = null;
-        if (weeklyPlanData) {
-          parsedPlanForState = JSON.parse(weeklyPlanData);
+        if (effectiveWeeklyPlanData) {
+          parsedPlanForState = JSON.parse(effectiveWeeklyPlanData);
           // CRITICAL: If Supabase plan doesn't have postpone info, check localStorage and merge it
           if (!parsedPlanForState._postponements || Object.keys(parsedPlanForState._postponements).length === 0) {
             const localPlan = localStorage.getItem(`weekly_plan_${weekKey}`);
@@ -789,7 +834,7 @@ function App() {
           }
         }
         
-        refreshActivityRatings();
+        await refreshActivityRatings();
         console.log('Preload completed');
         return { newActivities };
       } catch (error) {
@@ -843,11 +888,7 @@ function App() {
         },
         onWeeklyPlanChange: async (payload) => {
           if (!payload?.new) return;
-          const today = new Date();
-          const monday = new Date(today);
-          monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-          monday.setHours(0, 0, 0, 0);
-          const currentWeekKey = monday.toISOString().split('T')[0];
+          const currentWeekKey = getWeekKey();
           const changedWeekKey = payload.new.week_start_date;
           if (changedWeekKey !== currentWeekKey) return;
           let plan = payload.new.plan_data;
@@ -866,6 +907,9 @@ function App() {
             if (incomingTime > currentTime) return plan;
             return prev;
           });
+        },
+        onRatingsChange: async () => {
+          await refreshActivityRatings();
         }
       });
     }
@@ -1189,11 +1233,7 @@ function App() {
       
       // Store weekly plan
       const today = new Date();
-      const monday = new Date(today);
-      monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-      monday.setHours(0, 0, 0, 0);
-      // Use ISO date format (YYYY-MM-DD) for weekKey
-      const weekKey = monday.toISOString().split('T')[0];
+      const weekKey = getWeekKey(today);
       
       // Match activities to workouts
       const activityMatches = matchActivitiesToWorkouts(activities, weeklyPlan);
@@ -1393,11 +1433,7 @@ function App() {
         const updatedPlan = { ...weeklyPlan, _activityMatches: activityMatches };
         setWeeklyPlan(updatedPlan);
 
-        const today = new Date();
-        const monday = new Date(today);
-        monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-        monday.setHours(0, 0, 0, 0);
-        const weekKey = monday.toISOString().split('T')[0];
+        const weekKey = getWeekKey();
 
         localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(updatedPlan));
         await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(updatedPlan));
@@ -1421,20 +1457,30 @@ function App() {
   }, []);
 
   const handleWeeklyPlanActivitiesChange = useCallback(async () => {
-    const today = new Date();
-    const monday = new Date(today);
-    monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-    monday.setHours(0, 0, 0, 0);
-    const weekKey = monday.toISOString().split('T')[0];
-    const storedPlan = await dataService.get(`weekly_plan_${weekKey}`);
-    if (storedPlan) {
-      const parsedPlan = JSON.parse(storedPlan);
-      const activityMatches = matchActivitiesToWorkouts(activities, parsedPlan);
-      parsedPlan._activityMatches = activityMatches;
-      await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan));
-      localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan));
+    const weekKey = getWeekKey();
+    let basePlan = weeklyPlan;
+
+    if (!basePlan) {
+      const storedPlan = await dataService.get(`weekly_plan_${weekKey}`);
+      if (storedPlan) {
+        basePlan = JSON.parse(storedPlan);
+      }
     }
-  }, [activities]);
+
+    if (!basePlan) return;
+
+    const activityMatches = matchActivitiesToWorkouts(activities, basePlan);
+    const updatedPlan = {
+      ...basePlan,
+      _activityMatches: activityMatches,
+      _updatedAt: new Date().toISOString()
+    };
+
+    setWeeklyPlan(updatedPlan);
+    const serializedPlan = JSON.stringify(updatedPlan);
+    await dataService.set(`weekly_plan_${weekKey}`, serializedPlan);
+    localStorage.setItem(`weekly_plan_${weekKey}`, serializedPlan);
+  }, [activities, weeklyPlan]);
 
   const handleGenerateWorkout = async (repeatLast = false, postponeData = null) => {
     // Check for API key in environment variables first, then localStorage
@@ -1492,10 +1538,7 @@ function App() {
       };
       const currentDayName = dayNameMap[dayOfWeek];
       
-      const monday = new Date(today);
-      monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-      monday.setHours(0, 0, 0, 0);
-      const weekKey = `${monday.getFullYear()}-${monday.getMonth()}-${monday.getDate()}`;
+      const weekKey = getWeekKey(today);
       
       // Load current weekly plan
       let weeklyPlan = null;
@@ -1739,11 +1782,7 @@ function App() {
         }
         
         // Re-match activities to workouts after sync
-        const today = new Date();
-        const monday = new Date(today);
-        monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-        monday.setHours(0, 0, 0, 0);
-        const weekKey = `${monday.getFullYear()}-${monday.getMonth()}-${monday.getDate()}`;
+        const weekKey = getWeekKey();
         
         const storedPlan = await dataService.get(`weekly_plan_${weekKey}`);
         if (storedPlan) {
@@ -2025,10 +2064,7 @@ function App() {
         console.log('[Do Today] Selected workout:', selectedPlannedWorkout);
         
         // Get current week key
-        const monday = new Date(today);
-        monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-        monday.setHours(0, 0, 0, 0);
-        const weekKey = `${monday.getFullYear()}-${monday.getMonth()}-${monday.getDate()}`;
+        const weekKey = getWeekKey(today);
         
         // Create a copy of the weekly plan
         const updatedPlan = { ...weeklyPlan };
@@ -2476,6 +2512,10 @@ function App() {
                     if (syncedData.workout) {
                       setWorkout(syncedData.workout);
                     }
+                    if (syncedData.activityRatings) {
+                      setActivityRatings(syncedData.activityRatings);
+                      localStorage.setItem('activity_ratings', JSON.stringify(syncedData.activityRatings));
+                    }
                   }
                   // Setup real-time sync
                   setupRealtimeSync({
@@ -2490,6 +2530,9 @@ function App() {
                       if (workoutData) {
                         setWorkout(JSON.parse(workoutData));
                       }
+                    },
+                    onRatingsChange: async () => {
+                      await refreshActivityRatings();
                     }
                   });
                 } else {
@@ -3121,7 +3164,7 @@ function App() {
             });
           }}
           onComplete={() => {
-            refreshActivityRatings();
+            void refreshActivityRatings();
             setNewActivityQueue(prev => {
               const updated = prev.filter(a => a.id !== currentActivityForRating.id);
               if (updated.length > 0) {

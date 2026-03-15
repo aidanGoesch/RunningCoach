@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { getWeekKey } from '../utils/weekKey'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://dkpxqlbhmyahjizvastq.supabase.co'
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRrcHhxbGJobXlhaGppenZhc3RxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk0NjczMzcsImV4cCI6MjA4NTA0MzMzN30.IKL72HO1Xxq2fHFcMrNrM9wUJkJwyFX8tO-ofs0ezu8'
@@ -1085,7 +1086,27 @@ export const setupRealtimeSync = (callbacks = {}) => {
       )
       .subscribe();
 
-    subscriptions = [activitiesChannel, workoutChannel, weeklyPlanChannel];
+    // Subscribe to workout ratings changes
+    const ratingsChannel = supabase
+      .channel('workout_ratings_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'workout_ratings',
+          filter: `user_id=eq.${user.id}`
+        },
+        (payload) => {
+          console.log('Workout ratings changed:', payload);
+          if (callbacks.onRatingsChange) {
+            callbacks.onRatingsChange(payload);
+          }
+        }
+      )
+      .subscribe();
+
+    subscriptions = [activitiesChannel, workoutChannel, weeklyPlanChannel, ratingsChannel];
   }).catch(err => {
     console.error('Error setting up realtime sync:', err);
   });
@@ -1101,25 +1122,23 @@ export const syncAllDataFromSupabase = async () => {
   }
 
   try {
-    const user = await ensureUser();
-    
     // Sync activities
     const activities = await dataService.get('strava_activities');
     
     // Sync current workout
     const workout = await dataService.get('current_workout');
+
+    // Sync activity ratings
+    const activityRatings = await dataService.get('activity_ratings');
     
     // Sync weekly plans (get current week)
-    const today = new Date();
-    const monday = new Date(today);
-    monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-    monday.setHours(0, 0, 0, 0);
-    const weekKey = `${monday.getFullYear()}-${monday.getMonth()}-${monday.getDate()}`;
+    const weekKey = getWeekKey();
     const weeklyPlan = await dataService.get(`weekly_plan_${weekKey}`);
 
     return {
       activities: activities ? JSON.parse(activities) : [],
       workout: workout ? JSON.parse(workout) : null,
+      activityRatings: activityRatings ? JSON.parse(activityRatings) : {},
       weeklyPlan: weeklyPlan ? JSON.parse(weeklyPlan) : null
     };
   } catch (error) {
