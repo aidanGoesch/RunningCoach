@@ -59,8 +59,28 @@ function App() {
         return;
       }
 
-      const ratingsData = await dataService.get('activity_ratings');
-      const supabaseRatings = ratingsData ? JSON.parse(ratingsData) : {};
+      // Prefer direct Supabase rows for cloud truth, but keep DataService as fallback.
+      let supabaseRatings = {};
+      try {
+        const rows = await getActivityRatings();
+        if (rows.length > 0) {
+          supabaseRatings = rows.reduce((acc, row) => {
+            acc[row.activity_id] = {
+              rating: row.rating,
+              feedback: row.feedback || '',
+              isInjured: !!row.is_injured,
+              injuryDetails: row.injury_details || ''
+            };
+            return acc;
+          }, {});
+        } else {
+          const ratingsData = await dataService.get('activity_ratings');
+          supabaseRatings = ratingsData ? JSON.parse(ratingsData) : {};
+        }
+      } catch {
+        const ratingsData = await dataService.get('activity_ratings');
+        supabaseRatings = ratingsData ? JSON.parse(ratingsData) : {};
+      }
 
       // One-time backfill behavior: upload ratings that only exist locally.
       const localOnlyIds = Object.keys(localRatings).filter((id) => !supabaseRatings[id]);
@@ -85,6 +105,25 @@ function App() {
       setActivityRatings(fallback);
     }
   }, []);
+
+  // Cloud ratings fallback pull: keeps devices in sync even if realtime misses events.
+  useEffect(() => {
+    if (!supabaseEnabled) return;
+
+    const refreshIfVisible = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshActivityRatings();
+      }
+    };
+
+    const intervalId = setInterval(refreshIfVisible, 15000);
+    document.addEventListener('visibilitychange', refreshIfVisible);
+
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', refreshIfVisible);
+    };
+  }, [supabaseEnabled, refreshActivityRatings]);
 
   const activityMatches = useMemo(
     () => (weeklyPlan && activities?.length ? matchActivitiesToWorkouts(activities, weeklyPlan) : {}),
