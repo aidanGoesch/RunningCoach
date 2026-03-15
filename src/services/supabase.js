@@ -994,11 +994,37 @@ export const saveActivityRating = async (activityId, rating, feedback, isInjured
   if (dataService.useSupabase) {
     try {
       const user = await ensureUser()
+      const numericActivityId = parseInt(activityId)
+
+      // Ensure referenced activity exists to satisfy workout_ratings FK.
+      // Some rating flows can happen before the activity has been synced.
+      const localActivities = JSON.parse(localStorage.getItem('strava_activities') || '[]')
+      const localActivity = localActivities.find((a) => String(a?.id) === String(activityId))
+      const activityData = localActivity || {
+        id: numericActivityId,
+        name: 'Run',
+        type: 'Run',
+        start_date: new Date().toISOString()
+      }
+
+      await supabase
+        .from('strava_activities')
+        .upsert(
+          {
+            user_id: user.id,
+            strava_activity_id: numericActivityId,
+            activity_data: activityData
+          },
+          {
+            onConflict: 'user_id,strava_activity_id'
+          }
+        )
+
       const { error } = await supabase
         .from('workout_ratings')
         .upsert({
           user_id: user.id,
-          strava_activity_id: parseInt(activityId),
+          strava_activity_id: numericActivityId,
           rating,
           feedback,
           is_injured: isInjured,
