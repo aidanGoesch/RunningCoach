@@ -12,7 +12,7 @@ import PostponeWorkout from './components/PostponeWorkout';
 import PullToRefresh from './components/PullToRefresh';
 import NewActivityRatingModal from './components/NewActivityRatingModal';
 import RecoveryPage from './components/RecoveryPage';
-import { generateWorkout, generateWeeklyPlan, generateDataDrivenWeeklyPlan, generateWeeklyAnalysis, matchActivitiesToWorkouts, syncWithStrava, generateInsights, detectNewActivities, adjustWeeklyPlanForPostponement, regenerateDayWorkout, updatePromptWithCurrentData, buildFourWeekSummary, buildRatingQueue, DEFAULT_COACHING_PROMPT } from './services/api';
+import { generateWorkout, generateWeeklyPlan, generateDataDrivenWeeklyPlan, generateWeeklyAnalysis, matchActivitiesToWorkouts, syncWithStrava, generateInsights, detectNewActivities, adjustWeeklyPlanForPostponement, regenerateDayWorkout, updatePromptWithCurrentData, buildFourWeekSummary, buildRatingQueue, DEFAULT_COACHING_PROMPT, getAppBasePath, refreshStravaToken, getValidStravaAccessToken } from './services/api';
 import { dataService, setupRealtimeSync, syncAllDataFromSupabase, enableSupabase, getActivityRating, getActivityRatings, getStravaTokens } from './services/supabase';
 
 function App() {
@@ -187,10 +187,8 @@ function App() {
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get('code');
     const error = urlParams.get('error');
-    const isCallback = window.location.pathname === '/strava-callback' || 
-                      window.location.pathname === '/RunningCoach/strava-callback' ||
-                      window.location.pathname === '/strava-callback.html' ||
-                      (code !== null || error !== null);
+    const isCallbackPath = /\/strava-callback(?:\.html)?$/.test(window.location.pathname);
+    const isCallback = isCallbackPath || (code !== null || error !== null);
     
     // Check if there's an activity ID in the URL (after Strava auth redirect)
     const activityIdFromUrl = urlParams.get('activity');
@@ -907,6 +905,79 @@ function App() {
       if (cleanupSync) {
         cleanupSync();
       }
+    };
+  }, [isStravaCallback]);
+
+  // Keep Strava token fresh across all app instances by refreshing before expiry.
+  useEffect(() => {
+    if (isStravaCallback) return;
+
+    let timerId = null;
+    let stopped = false;
+
+    const clearTimer = () => {
+      if (timerId) {
+        clearTimeout(timerId);
+        timerId = null;
+      }
+    };
+
+    const scheduleRefresh = async () => {
+      if (stopped) return;
+      clearTimer();
+
+      try {
+        const tokens = await getStravaTokens();
+        if (!tokens?.refreshToken) return;
+
+        const fallbackDelayMs = 10 * 60 * 1000;
+        let delayMs = fallbackDelayMs;
+
+        if (tokens.expiresAt) {
+          const expiresMs = new Date(tokens.expiresAt).getTime();
+          if (!Number.isNaN(expiresMs)) {
+            const refreshAtMs = expiresMs - 5 * 60 * 1000; // refresh 5 minutes early
+            delayMs = refreshAtMs - Date.now();
+          }
+        }
+
+        // Clamp delay to avoid tight loops or very long inactive timers.
+        delayMs = Math.max(30 * 1000, Math.min(delayMs, 60 * 60 * 1000));
+
+        timerId = setTimeout(async () => {
+          if (stopped) return;
+          try {
+            await refreshStravaToken();
+          } catch (error) {
+            console.warn('Scheduled Strava token refresh failed:', error);
+          } finally {
+            await scheduleRefresh();
+          }
+        }, delayMs);
+      } catch (error) {
+        console.warn('Could not schedule Strava token refresh:', error);
+        timerId = setTimeout(scheduleRefresh, 5 * 60 * 1000);
+      }
+    };
+
+    const handleVisibilityForRefresh = async () => {
+      if (document.visibilityState !== 'visible' || stopped) return;
+      try {
+        await getValidStravaAccessToken({ minValiditySeconds: 300, allowAuthRedirect: false });
+      } catch (error) {
+        console.warn('Visibility token check failed:', error);
+      } finally {
+        await scheduleRefresh();
+      }
+    };
+
+    scheduleRefresh();
+    document.addEventListener('visibilitychange', handleVisibilityForRefresh);
+
+    return () => {
+      stopped = true;
+      clearTimer();
+      document.removeEventListener('visibilitychange', handleVisibilityForRefresh);
     };
   }, [isStravaCallback]);
 
@@ -1715,7 +1786,7 @@ function App() {
       urlParams.delete('code');
       urlParams.delete('state');
       urlParams.delete('scope');
-      const cleanUrl = window.location.pathname + (urlParams.toString() ? '?' + urlParams.toString() : '');
+      const cleanUrl = getAppBasePath() + (urlParams.toString() ? '?' + urlParams.toString() : '');
       window.history.replaceState({}, '', cleanUrl);
       
       // Check if we should redirect to an activity
@@ -1730,7 +1801,7 @@ function App() {
     } else {
       setError('Strava authentication failed');
       // Clean up URL even on error
-      window.history.replaceState({}, '', window.location.pathname);
+      window.history.replaceState({}, '', getAppBasePath());
     }
   };
 

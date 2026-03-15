@@ -2,34 +2,45 @@ import { createClient } from '@supabase/supabase-js'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://dkpxqlbhmyahjizvastq.supabase.co'
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRrcHhxbGJobXlhaGppenZhc3RxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk0NjczMzcsImV4cCI6MjA4NTA0MzMzN30.IKL72HO1Xxq2fHFcMrNrM9wUJkJwyFX8tO-ofs0ezu8'
+const appUserEmail = import.meta.env.VITE_SUPABASE_APP_USER_EMAIL || 'runningcoach@example.com'
+const appUserPassword = import.meta.env.VITE_SUPABASE_APP_USER_PASSWORD || 'runningcoach123'
 
 export const supabase = createClient(supabaseUrl, supabaseKey)
+
+const signInOrCreateAppUser = async () => {
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: appUserEmail,
+    password: appUserPassword
+  })
+
+  if (error && error.message.includes('Invalid login credentials')) {
+    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+      email: appUserEmail,
+      password: appUserPassword
+    })
+    if (signUpError) throw signUpError
+    return signUpData.user
+  }
+
+  if (error) throw error
+  return data.user
+}
 
 // Simple auth for single user
 export const ensureUser = async () => {
   const { data: { user } } = await supabase.auth.getUser()
   
-  if (!user) {
-    // Sign in with a real email format for single user setup
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: 'runningcoach@example.com',
-      password: 'runningcoach123'
-    })
-    
-    if (error && error.message.includes('Invalid login credentials')) {
-      // User doesn't exist, create them
-      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-        email: 'runningcoach@example.com',
-        password: 'runningcoach123'
-      })
-      if (signUpError) throw signUpError
-      return signUpData.user
-    }
-    
-    if (error) throw error
-    return data.user
+  // Force app to use the configured single app user.
+  // This avoids stale sessions for another Supabase user causing token lookups to miss.
+  if (user && user.email && user.email !== appUserEmail) {
+    await supabase.auth.signOut()
+    return signInOrCreateAppUser()
   }
   
+  if (!user) {
+    return signInOrCreateAppUser()
+  }
+
   return user
 }
 
@@ -494,7 +505,7 @@ export const migrateToSupabase = async (exportedData) => {
         .from('users')
         .insert({
           id: user.id,
-          email: user.email || 'runningcoach@example.com'
+          email: user.email || appUserEmail
         })
       if (userError) {
         console.error('User creation error:', userError);
@@ -1117,7 +1128,67 @@ export const syncAllDataFromSupabase = async () => {
   }
 };
 // Strava token storage functions
-export const saveStravaTokens = async (accessToken, refreshToken, expiresAt = null) => {
+const STRAVA_OWNER_ID_KEY = 'strava_athlete_id';
+const STRAVA_OWNER_USERNAME_KEY = 'strava_athlete_username';
+const STRAVA_OWNER_NAME_KEY = 'strava_athlete_name';
+
+const normalizeAthleteMetadata = (athlete = null) => {
+  if (!athlete) return null;
+  if (athlete.athleteId) {
+    return {
+      athleteId: String(athlete.athleteId),
+      athleteUsername: athlete.athleteUsername || null,
+      athleteName: athlete.athleteName || null
+    };
+  }
+  if (!athlete.id) return null;
+  return {
+    athleteId: String(athlete.id),
+    athleteUsername: athlete.username || null,
+    athleteName: [athlete.firstname, athlete.lastname].filter(Boolean).join(' ').trim() || null
+  };
+};
+
+const persistAthleteMetadataLocally = (athleteMetadata) => {
+  if (!athleteMetadata || !athleteMetadata.athleteId) return;
+  localStorage.setItem(STRAVA_OWNER_ID_KEY, athleteMetadata.athleteId);
+  if (athleteMetadata.athleteUsername) {
+    localStorage.setItem(STRAVA_OWNER_USERNAME_KEY, athleteMetadata.athleteUsername);
+  }
+  if (athleteMetadata.athleteName) {
+    localStorage.setItem(STRAVA_OWNER_NAME_KEY, athleteMetadata.athleteName);
+  }
+};
+
+const clearAthleteMetadataLocally = () => {
+  localStorage.removeItem(STRAVA_OWNER_ID_KEY);
+  localStorage.removeItem(STRAVA_OWNER_USERNAME_KEY);
+  localStorage.removeItem(STRAVA_OWNER_NAME_KEY);
+};
+
+const getAthleteMetadataFromLocalStorage = () => {
+  const athleteId = localStorage.getItem(STRAVA_OWNER_ID_KEY);
+  if (!athleteId) return null;
+  return {
+    athleteId,
+    athleteUsername: localStorage.getItem(STRAVA_OWNER_USERNAME_KEY),
+    athleteName: localStorage.getItem(STRAVA_OWNER_NAME_KEY)
+  };
+};
+
+const getAthleteMetadataFromTokenRow = (row) => {
+  if (!row) return null;
+  const athleteId = row.athlete_id || row.strava_athlete_id || row.athleteId;
+  if (!athleteId) return null;
+  return {
+    athleteId: String(athleteId),
+    athleteUsername: row.athlete_username || row.strava_athlete_username || null,
+    athleteName: row.athlete_name || row.strava_athlete_name || null
+  };
+};
+
+export const saveStravaTokens = async (accessToken, refreshToken, expiresAt = null, athleteMetadata = null) => {
+  const resolvedAthleteMetadata = normalizeAthleteMetadata(athleteMetadata);
   // Check if we're on mobile - if so, always try Supabase first (even if useSupabase isn't set yet)
   const isMobile = typeof window !== 'undefined' && (
     (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) ||
@@ -1132,6 +1203,7 @@ export const saveStravaTokens = async (accessToken, refreshToken, expiresAt = nu
     localStorage.setItem('strava_access_token', accessToken);
     localStorage.setItem('strava_refresh_token', refreshToken);
     if (expiresAt) localStorage.setItem('strava_token_expires_at', expiresAt);
+    persistAthleteMetadataLocally(resolvedAthleteMetadata);
     return;
   }
   
@@ -1141,13 +1213,32 @@ export const saveStravaTokens = async (accessToken, refreshToken, expiresAt = nu
     
     console.log('Saving tokens to Supabase for user:', user.id);
     
-    const { error } = await supabase.from('strava_tokens').upsert({
+    const basePayload = {
       user_id: user.id,
       access_token: accessToken,
       refresh_token: refreshToken,
       expires_at: expiresAtTimestamp,
       updated_at: new Date().toISOString()
-    }, { onConflict: 'user_id' });
+    };
+    const enrichedPayload = resolvedAthleteMetadata
+      ? {
+          ...basePayload,
+          athlete_id: resolvedAthleteMetadata.athleteId,
+          athlete_username: resolvedAthleteMetadata.athleteUsername,
+          athlete_name: resolvedAthleteMetadata.athleteName
+        }
+      : basePayload;
+
+    let { error } = await supabase.from('strava_tokens').upsert(enrichedPayload, { onConflict: 'user_id' });
+    if (error && resolvedAthleteMetadata) {
+      const mightBeMissingMetadataColumns =
+        /column|schema cache|does not exist/i.test(error.message || '');
+      if (mightBeMissingMetadataColumns) {
+        // Fallback for older schemas that don't yet include athlete metadata columns.
+        const retry = await supabase.from('strava_tokens').upsert(basePayload, { onConflict: 'user_id' });
+        error = retry.error;
+      }
+    }
     
     if (error) {
       console.error('Error saving Strava tokens to Supabase:', error);
@@ -1164,17 +1255,19 @@ export const saveStravaTokens = async (accessToken, refreshToken, expiresAt = nu
     localStorage.setItem('strava_access_token', accessToken);
     localStorage.setItem('strava_refresh_token', refreshToken);
     if (expiresAt) localStorage.setItem('strava_token_expires_at', expiresAt);
+    persistAthleteMetadataLocally(resolvedAthleteMetadata);
   } catch (error) {
     console.error('Failed to save Strava tokens:', error);
     // Fallback to localStorage
     localStorage.setItem('strava_access_token', accessToken);
     localStorage.setItem('strava_refresh_token', refreshToken);
     if (expiresAt) localStorage.setItem('strava_token_expires_at', expiresAt);
+    persistAthleteMetadataLocally(resolvedAthleteMetadata);
   }
 };
 
-export const getStravaTokens = async () => {
-  // Always try Supabase first (default), then fall back to localStorage
+export const getStravaTokens = async ({ allowLocalFallback = false } = {}) => {
+  // Always try Supabase first. Local fallback is opt-in only.
   try {
     // Add timeout to prevent hanging
     const timeoutPromise = new Promise((_, reject) => 
@@ -1185,27 +1278,46 @@ export const getStravaTokens = async () => {
       const user = await ensureUser();
       const { data, error } = await supabase
         .from('strava_tokens')
-        .select('access_token, refresh_token, expires_at')
+        .select('*')
         .eq('user_id', user.id)
         .single();
       
       if (error) {
         if (error.code === 'PGRST116') {
-          // No tokens in Supabase - this is fine, will fall back to localStorage
+          // No tokens in Supabase
           return null;
         }
         throw error;
       }
       
       if (data) {
+        const existingLocalMetadata = getAthleteMetadataFromLocalStorage();
+        const rowMetadata = getAthleteMetadataFromTokenRow(data);
+        const resolvedMetadata = rowMetadata || existingLocalMetadata;
+
+        if (
+          rowMetadata?.athleteId &&
+          existingLocalMetadata?.athleteId &&
+          rowMetadata.athleteId !== existingLocalMetadata.athleteId
+        ) {
+          console.warn(
+            'Strava athlete mismatch detected for current Supabase user. Local athlete id:',
+            existingLocalMetadata.athleteId,
+            'Supabase athlete id:',
+            rowMetadata.athleteId
+          );
+        }
+
         // Update localStorage with tokens from Supabase for faster access
         localStorage.setItem('strava_access_token', data.access_token);
         localStorage.setItem('strava_refresh_token', data.refresh_token);
         if (data.expires_at) localStorage.setItem('strava_token_expires_at', data.expires_at);
+        persistAthleteMetadataLocally(resolvedMetadata);
         return { 
           accessToken: data.access_token, 
           refreshToken: data.refresh_token, 
-          expiresAt: data.expires_at 
+          expiresAt: data.expires_at,
+          ...resolvedMetadata
         };
       }
       
@@ -1224,11 +1336,15 @@ export const getStravaTokens = async () => {
     }
   }
   
-  // Fall back to localStorage
+  if (!allowLocalFallback) {
+    return null;
+  }
+
+  // Optional fallback to localStorage
   const accessToken = localStorage.getItem('strava_access_token');
   const refreshToken = localStorage.getItem('strava_refresh_token');
   if (accessToken && refreshToken) {
-    return { accessToken, refreshToken };
+    return { accessToken, refreshToken, ...getAthleteMetadataFromLocalStorage() };
   }
   
   return null;
@@ -1239,6 +1355,7 @@ export const deleteStravaTokens = async () => {
     localStorage.removeItem('strava_access_token');
     localStorage.removeItem('strava_refresh_token');
     localStorage.removeItem('strava_token_expires_at');
+    clearAthleteMetadataLocally();
     return;
   }
   try {
@@ -1248,10 +1365,12 @@ export const deleteStravaTokens = async () => {
     localStorage.removeItem('strava_access_token');
     localStorage.removeItem('strava_refresh_token');
     localStorage.removeItem('strava_token_expires_at');
+    clearAthleteMetadataLocally();
   } catch (error) {
     console.error('Failed to delete Strava tokens:', error);
     localStorage.removeItem('strava_access_token');
     localStorage.removeItem('strava_refresh_token');
     localStorage.removeItem('strava_token_expires_at');
+    clearAthleteMetadataLocally();
   }
 };

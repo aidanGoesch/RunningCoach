@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { exchangeStravaCode } from '../services/api';
+import { exchangeStravaCode, getAppBasePath } from '../services/api';
 
 const StravaCallback = ({ onAuthComplete }) => {
   useEffect(() => {
@@ -49,7 +49,7 @@ const StravaCallback = ({ onAuthComplete }) => {
           urlParams.delete('code');
           urlParams.delete('state');
           urlParams.delete('scope');
-          const cleanPath = window.location.pathname.replace('/strava-callback', '').replace('/strava-callback.html', '') || '/';
+          const cleanPath = getAppBasePath();
           const cleanUrl = cleanPath + (urlParams.toString() ? '?' + urlParams.toString() : '');
           window.history.replaceState({}, '', cleanUrl);
           
@@ -62,8 +62,7 @@ const StravaCallback = ({ onAuthComplete }) => {
       } else if (!error) {
         // No code and no error - might be stuck, try to redirect
         console.log('No code found in callback, redirecting to main app');
-        const cleanPath = window.location.pathname.replace('/strava-callback', '').replace('/strava-callback.html', '') || '/';
-        window.location.replace(cleanPath);
+        window.location.replace(getAppBasePath());
       }
     };
 

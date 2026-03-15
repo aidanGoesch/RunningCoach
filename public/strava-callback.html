@@ -48,6 +48,13 @@
       // Handle Strava callback - works for both web and mobile
       (async function() {
         try {
+          const resolveBasePath = () => {
+            const path = window.location.pathname || '/';
+            const stripped = path.replace(/strava-callback(?:\.html)?$/, '');
+            if (!stripped || stripped === path) return '/';
+            return stripped.endsWith('/') ? stripped : `${stripped}/`;
+          };
+
           const params = new URLSearchParams(window.location.search);
           const code = params.get('code');
           const error = params.get('error');
@@ -107,15 +114,7 @@
             if (state) redirectParams.set('state', state);
             if (scope) redirectParams.set('scope', scope);
             
-            let basePath = '/';
-            const pathname = window.location.pathname;
-            const hostname = window.location.hostname;
-            
-            if (pathname.includes('/RunningCoach/')) {
-              basePath = '/RunningCoach/';
-            } else if (hostname === 'localhost' || hostname === '127.0.0.1') {
-              basePath = '/';
-            }
+            const basePath = resolveBasePath();
             
             const redirectUrl = basePath + '?' + redirectParams.toString();
             console.log('Strava callback - redirecting to:', redirectUrl);
@@ -130,10 +129,7 @@
             if (statusEl) {
               statusEl.textContent = 'No callback parameters found. Redirecting...';
             }
-            let basePath = '/';
-            if (window.location.pathname.includes('/RunningCoach/')) {
-              basePath = '/RunningCoach/';
-            }
+            const basePath = resolveBasePath();
             setTimeout(() => {
               window.location.replace(basePath);
             }, 1000);

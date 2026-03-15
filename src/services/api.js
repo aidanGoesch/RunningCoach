@@ -3,21 +3,52 @@ import { getStravaTokens, saveStravaTokens, deleteStravaTokens, getRecentRecover
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 const STRAVA_CLIENT_ID = import.meta.env.VITE_STRAVA_CLIENT_ID;
 
-// Determine redirect URI based on platform
-// Note: Strava doesn't support custom URL schemes, so we use web URLs
-// For mobile apps, we'll use the web URL and intercept it
-const getStravaRedirectUri = () => {
-  // For development
-  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
-    return 'http://localhost:5173/strava-callback';
-  }
-  
-  // For production (web or mobile app)
-  // Use GitHub Pages URL - the app will intercept this
-  return 'https://aidangoesch.github.io/RunningCoach/strava-callback.html';
+const normalizeBasePath = () => {
+  let basePath = import.meta.env.BASE_URL || '/';
+  if (!basePath.startsWith('/')) basePath = `/${basePath}`;
+  if (!basePath.endsWith('/')) basePath = `${basePath}/`;
+  return basePath;
 };
 
-const STRAVA_REDIRECT_URI = getStravaRedirectUri();
+export const getAppBasePath = () => normalizeBasePath();
+
+// Determine redirect URI based on runtime host + app base path.
+export const getStravaRedirectUri = () => {
+  const basePath = normalizeBasePath();
+
+  if (typeof window === 'undefined') {
+    return `https://aidangoesch.github.io${basePath}strava-callback.html`;
+  }
+
+  const host = window.location.hostname;
+  const isLocalhost = host === 'localhost' || host === '127.0.0.1';
+
+  if (isLocalhost) {
+    return `${window.location.origin}${basePath}strava-callback`;
+  }
+
+  return `${window.location.origin}${basePath}strava-callback.html`;
+};
+
+export const buildStravaAuthUrl = ({ approvalPrompt = 'auto', scope = 'read,activity:read', state } = {}) => {
+  if (!STRAVA_CLIENT_ID) {
+    throw new Error('Strava client ID not configured');
+  }
+
+  const params = new URLSearchParams({
+    client_id: STRAVA_CLIENT_ID,
+    response_type: 'code',
+    redirect_uri: getStravaRedirectUri(),
+    approval_prompt: approvalPrompt,
+    scope
+  });
+
+  if (state) {
+    params.set('state', state);
+  }
+
+  return `https://www.strava.com/oauth/authorize?${params.toString()}`;
+};
 
 console.log('Environment check:', {
   STRAVA_CLIENT_ID: STRAVA_CLIENT_ID ? 'set' : 'missing',
@@ -2062,13 +2093,11 @@ export const buildRatingQueue = (newActivities, existingRatings = []) => {
 export const syncWithStrava = async () => {
   console.log('syncWithStrava called');
   
-  // Try to get tokens from Supabase (or platform-specific storage)
-  const tokens = await getStravaTokens();
-  const token = tokens?.accessToken || null;
+  // Always resolve token from Supabase (with proactive refresh if near expiry).
+  const token = await getValidStravaAccessToken({ allowAuthRedirect: true });
   
   console.log('Token check:', {
-    hasTokens: !!tokens,
-    hasAccessToken: !!tokens?.accessToken,
+    hasAccessToken: !!token,
     hasLocalStorageToken: !!localStorage.getItem('strava_access_token'),
     useSupabase: typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.()
   });
@@ -2115,7 +2144,7 @@ export const refreshStravaToken = async () => {
   const clientSecret = import.meta.env.VITE_STRAVA_CLIENT_SECRET;
   
   if (!refreshToken || !clientSecret) {
-    throw new Error('No refresh token or client secret available');
+    throw new Error('No refresh token or Strava client secret available for token refresh');
   }
 
   const response = await fetch('https://www.strava.com/oauth/token', {
@@ -2144,8 +2173,49 @@ export const refreshStravaToken = async () => {
   return data.access_token;
 };
 
-const initiateStravaAuth = async () => {
-  const authUrl = `https://www.strava.com/oauth/authorize?client_id=${STRAVA_CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(STRAVA_REDIRECT_URI)}&approval_prompt=force&scope=read,activity:read`;
+export const getValidStravaAccessToken = async ({
+  minValiditySeconds = 300,
+  allowAuthRedirect = false
+} = {}) => {
+  const tokens = await getStravaTokens();
+  const accessToken = tokens?.accessToken || null;
+  const expiresAtRaw = tokens?.expiresAt || null;
+
+  if (!accessToken) {
+    if (allowAuthRedirect) {
+      await initiateStravaAuth();
+    }
+    return null;
+  }
+
+  if (!expiresAtRaw) {
+    return accessToken;
+  }
+
+  const expiresAtMs = new Date(expiresAtRaw).getTime();
+  if (Number.isNaN(expiresAtMs)) {
+    return accessToken;
+  }
+
+  const refreshThresholdMs = Date.now() + minValiditySeconds * 1000;
+  if (expiresAtMs > refreshThresholdMs) {
+    return accessToken;
+  }
+
+  try {
+    return await refreshStravaToken();
+  } catch (error) {
+    console.error('Auto-refresh failed while resolving valid token:', error);
+    if (allowAuthRedirect) {
+      await deleteStravaTokens();
+      await initiateStravaAuth();
+    }
+    return null;
+  }
+};
+
+export const initiateStravaAuth = async () => {
+  const authUrl = buildStravaAuthUrl();
   
   // Use Capacitor Browser plugin for mobile apps, fallback to window.location for web
   if (typeof window !== 'undefined' && window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) {
@@ -2301,7 +2371,7 @@ export const exchangeStravaCode = async (code) => {
   const clientSecret = import.meta.env.VITE_STRAVA_CLIENT_SECRET;
   
   if (!clientSecret) {
-    throw new Error('Strava client secret not configured');
+    throw new Error('Strava client secret not configured. Set VITE_STRAVA_CLIENT_SECRET in your local .env file.');
   }
 
   const response = await fetch('https://www.strava.com/oauth/token', {
@@ -2320,6 +2390,27 @@ export const exchangeStravaCode = async (code) => {
   }
 
   const data = await response.json();
+  const athleteMetadata = data?.athlete
+    ? {
+        athleteId: String(data.athlete.id),
+        athleteUsername: data.athlete.username || null,
+        athleteName: [data.athlete.firstname, data.athlete.lastname].filter(Boolean).join(' ').trim() || null
+      }
+    : null;
+
+  const previousTokens = await getStravaTokens();
+  if (
+    athleteMetadata?.athleteId &&
+    previousTokens?.athleteId &&
+    athleteMetadata.athleteId !== previousTokens.athleteId
+  ) {
+    console.warn(
+      'Strava athlete changed during token exchange. Previous athlete id:',
+      previousTokens.athleteId,
+      'new athlete id:',
+      athleteMetadata.athleteId
+    );
+  }
   
   // Calculate expiration time (Strava tokens typically expire in 6 hours)
   const expiresAt = data.expires_at 
@@ -2327,7 +2418,7 @@ export const exchangeStravaCode = async (code) => {
     : new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString();
   
   // Save to Supabase first (and localStorage as backup)
-  await saveStravaTokens(data.access_token, data.refresh_token, expiresAt);
+  await saveStravaTokens(data.access_token, data.refresh_token, expiresAt, athleteMetadata);
   
   return data;
 };

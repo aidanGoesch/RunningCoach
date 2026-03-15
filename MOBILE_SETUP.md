@@ -205,6 +205,8 @@ VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
 VITE_STRAVA_CLIENT_ID=your_strava_client_id
 VITE_STRAVA_CLIENT_SECRET=your_strava_client_secret
 VITE_OPENAI_API_KEY=your_openai_key (optional)
+VITE_SUPABASE_APP_USER_EMAIL=runningcoach@example.com (optional)
+VITE_SUPABASE_APP_USER_PASSWORD=runningcoach123 (optional)
 ```
 
 ## Data Sync

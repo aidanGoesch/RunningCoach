@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { getActivityDetails, getActivityStreams, generateInsights } from '../services/api';
+import { getActivityDetails, getActivityStreams, generateInsights, getValidStravaAccessToken } from '../services/api';
 import { getActivityInsights, saveActivityInsights, saveActivityRating, getActivityRating } from '../services/supabase';
 import { useSwipeBack } from '../hooks/useSwipeBack';
 
@@ -109,10 +109,7 @@ const ActivityDetail = ({ activityId, onBack }) => {
         ]);
 
       try {
-      // Try to get token from Supabase first, then localStorage
-      const { getStravaTokens } = await import('../services/supabase');
-      const tokens = await withTimeout(getStravaTokens());
-      const token = tokens?.accessToken;
+      const token = await withTimeout(getValidStravaAccessToken({ allowAuthRedirect: false }));
       const apiKey = import.meta.env.VITE_OPENAI_API_KEY || localStorage.getItem('openai_api_key');
       
       console.log('Token exists:', !!token);
@@ -120,34 +117,10 @@ const ActivityDetail = ({ activityId, onBack }) => {
       
       if (!token) {
         console.log('No Strava token found, redirecting to Strava authentication...');
-        // Automatically redirect to Strava authentication
-        const STRAVA_CLIENT_ID = import.meta.env.VITE_STRAVA_CLIENT_ID;
-        
-        // Use web redirect URI (Strava doesn't support custom URL schemes)
-        // For mobile, we'll intercept the web redirect
-        const STRAVA_REDIRECT_URI = window.location.hostname === 'localhost'
-          ? 'http://localhost:5173/strava-callback'
-          : 'https://aidangoesch.github.io/RunningCoach/strava-callback.html';
-        
-        const authUrl = `https://www.strava.com/oauth/authorize?client_id=${STRAVA_CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(STRAVA_REDIRECT_URI)}&approval_prompt=force&scope=read,activity:read`;
+        const { initiateStravaAuth } = await import('../services/api');
         // Store the current activity ID so we can return to it after auth
         sessionStorage.setItem('pending_activity_id', activityId);
-        
-        // Use Capacitor Browser plugin for mobile apps, fallback to window.location for web
-        if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) {
-          try {
-            const { Browser } = await import('@capacitor/browser');
-            await Browser.open({
-              url: authUrl,
-              windowName: '_self'
-            });
-          } catch (err) {
-            console.error('Failed to open Browser, falling back to window.location:', err);
-            window.location.href = authUrl;
-          }
-        } else {
-          window.location.href = authUrl;
-        }
+        await initiateStravaAuth();
         return;
       }
 

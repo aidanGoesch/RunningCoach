@@ -14,9 +14,15 @@
 
 3. **Open your browser** to the URL shown (typically `http://localhost:5173`)
 
-## Environment Variables (Optional)
+## Environment Variables (Required for Strava auth)
 
-You can create a `.env` file in the root directory to override defaults:
+Create a `.env` file in the project root. You can copy from `.env.example`:
+
+```bash
+cp .env.example .env
+```
+
+Then set at least the Strava values:
 
 ```env
 # OpenAI API Key (required for workout generation)
@@ -26,10 +32,42 @@ VITE_OPENAI_API_KEY=your_openai_api_key_here
 VITE_SUPABASE_URL=your_supabase_url
 VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
 
-# Strava (optional - for Strava integration)
+# Strava (required for localhost OAuth)
 VITE_STRAVA_CLIENT_ID=your_strava_client_id
 VITE_STRAVA_CLIENT_SECRET=your_strava_client_secret
+
+# Optional: use a dedicated local Supabase app user
+VITE_SUPABASE_APP_USER_EMAIL=runningcoach@example.com
+VITE_SUPABASE_APP_USER_PASSWORD=runningcoach123
 ```
+
+## Strava app callback setup for localhost
+
+In your Strava developer app settings, make sure localhost callback domain is allowed:
+
+- `localhost`
+- `127.0.0.1` (recommended)
+
+This app now uses a localhost callback route at:
+
+- `http://localhost:5173/RunningCoach/strava-callback`
+
+If you use a different port, update your running URL accordingly and allow that host in Strava settings.
+
+## One-time reset when account mismatch happens
+
+If localhost seems stuck on the wrong Strava athlete:
+
+1. Open browser DevTools for localhost and clear:
+   - `strava_access_token`
+   - `strava_refresh_token`
+   - `strava_token_expires_at`
+   - `strava_athlete_id`
+   - `strava_athlete_username`
+   - `strava_athlete_name`
+2. In the app, trigger Strava reconnect.
+3. Complete OAuth while logged into the intended Strava account.
+4. Verify new activities sync from Supabase/Strava.
 
 ## Testing the New Features
 
