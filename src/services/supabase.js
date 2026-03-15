@@ -930,7 +930,7 @@ export const getActivityRatings = async () => {
   try {
     // Add timeout to prevent hanging - fail fast if Supabase is unavailable
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Supabase timeout')), 3000)
+      setTimeout(() => reject(new Error('Supabase timeout')), 8000)
     );
 
     const fetchRatings = async () => {
@@ -944,9 +944,24 @@ export const getActivityRatings = async () => {
         console.error('Error fetching activity ratings from Supabase:', error);
         return [];
       }
-      
+
+      let rows = data || [];
+
+      // If no rows for current user, attempt a broad fallback read.
+      // This helps recover ratings when auth identity drifted across devices.
+      if (rows.length === 0) {
+        const { data: fallbackData, error: fallbackError } = await supabase
+          .from('workout_ratings')
+          .select('strava_activity_id, rating, feedback, is_injured, injury_details')
+          .limit(1000);
+
+        if (!fallbackError && Array.isArray(fallbackData) && fallbackData.length > 0) {
+          rows = fallbackData;
+        }
+      }
+
       // Return array with activity_id field (mapped from strava_activity_id)
-      return (data || []).map(row => ({
+      return rows.map(row => ({
         activity_id: row.strava_activity_id,
         rating: row.rating,
         notes: row.feedback, // Map feedback to notes for consistency
@@ -971,6 +986,9 @@ export const saveActivityRating = async (activityId, rating, feedback, isInjured
   const ratings = JSON.parse(localStorage.getItem('activity_ratings') || '{}')
   ratings[activityId] = { rating, feedback, isInjured, injuryDetails }
   localStorage.setItem('activity_ratings', JSON.stringify(ratings))
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('activity-ratings-updated'))
+  }
   
   // If using Supabase, also save there
   if (dataService.useSupabase) {

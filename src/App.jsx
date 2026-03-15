@@ -247,12 +247,23 @@ function App() {
       } else if (e.key === 'current_workout') {
         const newWorkout = e.newValue ? JSON.parse(e.newValue) : null;
         setWorkout(newWorkout);
+      } else if (e.key === 'activity_ratings') {
+        void refreshActivityRatings();
       }
     };
 
     window.addEventListener('storage', handleStorageChange);
     return () => window.removeEventListener('storage', handleStorageChange);
-  }, []);
+  }, [refreshActivityRatings]);
+
+  useEffect(() => {
+    const handleRatingsUpdated = () => {
+      void refreshActivityRatings();
+    };
+
+    window.addEventListener('activity-ratings-updated', handleRatingsUpdated);
+    return () => window.removeEventListener('activity-ratings-updated', handleRatingsUpdated);
+  }, [refreshActivityRatings]);
 
   useEffect(() => {
     // Check if this is a Strava callback - handle both paths and URL params
