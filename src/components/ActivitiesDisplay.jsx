@@ -51,6 +51,15 @@ const ActivitiesDisplay = ({ activities, activityRatings = {}, onActivityClick }
     return activityRatings[activityId]?.rating ?? activityRatings[String(activityId)]?.rating ?? null;
   };
 
+  // Single color per rating value (matches requested behavior).
+  const ratingColorByValue = {
+    1: '#639922', // very easy
+    2: '#1D9E75', // easy
+    3: '#BA7517', // moderate
+    4: '#D85A30', // hard
+    5: '#E24B4A'  // very hard
+  };
+
   return (
     <div className="activity-list" style={{
       border: '0.5px solid var(--color-border-tertiary)',
@@ -178,25 +187,29 @@ const ActivitiesDisplay = ({ activities, activityRatings = {}, onActivityClick }
                 {formatPace(activity.average_speed)}
               </div>
               
-              {/* Star rating */}
-              {rating !== null && (
-                <div style={{
-                  display: 'flex',
-                  gap: '2px',
-                  marginTop: '5px',
-                  justifyContent: 'flex-end'
-                }}>
-                  {[1, 2, 3, 4, 5].map((star) => (
-                    <div
-                      key={star}
-                      style={{
-                        width: '6px',
-                        height: '6px',
-                        borderRadius: '1px',
-                        background: star <= rating ? '#639922' : 'var(--color-border-secondary)'
-                      }}
-                    />
-                  ))}
+              {/* Star rating - gradient by difficulty: sq1=green (easy) … sq5=red (hard) */}
+              {rating != null && (
+                <div
+                  className="activity-rating-bar"
+                  data-rating-value={Number(rating)}
+                  style={{ display: 'flex', gap: '2px', marginTop: '5px', justifyContent: 'flex-end' }}
+                >
+                  {[1, 2, 3, 4, 5].map((star) => {
+                    const filled = star <= Number(rating);
+                    const filledColor = ratingColorByValue[Number(rating)] || '#639922';
+                    return (
+                      <div
+                        key={star}
+                        className={`activity-rating-dot ${filled ? 'activity-rating-dot-filled' : 'activity-rating-dot-empty'}`}
+                        style={{
+                          width: '6px',
+                          height: '6px',
+                          borderRadius: '1px',
+                          backgroundColor: filled ? filledColor : 'var(--color-border-secondary)'
+                        }}
+                      />
+                    );
+                  })}
                 </div>
               )}
             </div>

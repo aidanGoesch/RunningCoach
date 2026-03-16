@@ -618,6 +618,16 @@ body {
   min-width: 72px;
 }
 
+/* Activity rating bar: gradient by position (easy → hard) */
+.activity-rating-dot-empty {
+  background-color: var(--color-border-secondary);
+}
+.activity-rating-dot-1 { background-color: #639922; }   /* Very easy - green */
+.activity-rating-dot-2 { background-color: #1D9E75; }   /* Easy - teal */
+.activity-rating-dot-3 { background-color: #BA7517; }   /* Moderate - orange */
+.activity-rating-dot-4 { background-color: #D85A30; }   /* Hard - red-orange */
+.activity-rating-dot-5 { background-color: #E24B4A; }   /* Very hard - red */
+
 /* Border utilities */
 .border-tertiary {
   border: 0.5px solid var(--color-border-tertiary);

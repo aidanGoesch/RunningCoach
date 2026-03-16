@@ -128,7 +128,7 @@ export class DataService {
               .from('activity_insights')
               .select('insights_text')
               .eq('strava_activity_id', parseInt(activityId))
-              .single()
+              .maybeSingle()
           } else if (key.startsWith('recovery_workout_')) {
             const workoutDate = key.replace('recovery_workout_', '')
             dataPromise = supabase
@@ -223,31 +223,47 @@ export class DataService {
             })
           break
 
-        case 'strava_activities':
-        const activities = JSON.parse(value || '[]')
-        // Batch upsert all activities at once with proper conflict resolution
-        if (activities.length > 0) {
-          const activityRecords = activities.map(activity => ({
-            user_id: user.id,
-            strava_activity_id: activity.id,
-            activity_data: activity
-          }))
-          
-          // Upsert with conflict resolution - try composite key first (most common pattern)
-          // This will update existing records or insert new ones
-          const { error } = await supabase
+        case 'strava_activities': {
+          const activities = JSON.parse(value || '[]')
+          if (activities.length === 0) break
+          const activityIds = activities.map(a => a.id).filter(Boolean)
+          const { data: existingRows } = await supabase
             .from('strava_activities')
-            .upsert(activityRecords, {
-              onConflict: 'user_id,strava_activity_id'
-            })
-          
-          // 409 errors (duplicate key) are expected when records already exist
-          // Only log actual errors, not conflicts
-          if (error && error.code !== '23505' && error.status !== 409 && error.message && !error.message.includes('duplicate')) {
-            console.error('Error upserting activities:', error)
+            .select('id, strava_activity_id')
+            .eq('user_id', user.id)
+            .in('strava_activity_id', activityIds)
+          const existingByStravaId = new Map((existingRows || []).map(r => [r.strava_activity_id, r.id]))
+          const toInsert = []
+          const toUpdate = []
+          for (const activity of activities) {
+            if (!activity.id) continue
+            const row = {
+              user_id: user.id,
+              strava_activity_id: activity.id,
+              activity_data: activity
+            }
+            if (existingByStravaId.has(activity.id)) {
+              toUpdate.push({ id: existingByStravaId.get(activity.id), activity })
+            } else {
+              toInsert.push(row)
+            }
           }
+          if (toInsert.length > 0) {
+            const { error: insertErr } = await supabase
+              .from('strava_activities')
+              .insert(toInsert)
+            if (insertErr) console.error('Error inserting activities:', insertErr)
+          }
+          await Promise.all(
+            toUpdate.map(({ id, activity }) =>
+              supabase
+                .from('strava_activities')
+                .update({ activity_data: activity })
+                .eq('id', id)
+            )
+          )
+          break
         }
-        break
 
       case 'current_workout':
         if (value === null || value === 'null') {
@@ -861,8 +877,8 @@ export const getActivityInsights = async (activityId) => {
     .from('activity_insights')
     .select('insights_text')
     .eq('strava_activity_id', activityId)
-    .single()
-  
+    .maybeSingle()
+
   return data?.insights_text || null
 }
 
@@ -898,9 +914,9 @@ export const getActivityRating = async (activityId) => {
         .select('rating, feedback, is_injured, injury_details')
         .eq('user_id', user.id)
         .eq('strava_activity_id', parseInt(activityId))
-        .single();
-      
-      if (error && error.code !== 'PGRST116') { // PGRST116 is "not found"
+        .maybeSingle();
+
+      if (error) {
         console.error('Error fetching rating:', error);
         return null;
       }
@@ -997,40 +1013,86 @@ export const saveActivityRating = async (activityId, rating, feedback, isInjured
       const numericActivityId = parseInt(activityId)
 
       // Ensure referenced activity exists to satisfy workout_ratings FK.
-      // Some rating flows can happen before the activity has been synced.
       const localActivities = JSON.parse(localStorage.getItem('strava_activities') || '[]')
       const localActivity = localActivities.find((a) => String(a?.id) === String(activityId))
-      const activityData = localActivity || {
+      const activityPayload = localActivity || {
         id: numericActivityId,
         name: 'Run',
         type: 'Run',
-        start_date: new Date().toISOString()
+        start_date: new Date().toISOString(),
+        distance: 0,
+        moving_time: 0,
+        average_speed: 0
       }
 
-      await supabase
+      // Use select-then-insert to avoid 400 from upsert (schema/constraint differences).
+      const { data: existingRow } = await supabase
         .from('strava_activities')
-        .upsert(
-          {
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('strava_activity_id', numericActivityId)
+        .maybeSingle()
+
+      if (!existingRow) {
+        const { error: insertErr } = await supabase
+          .from('strava_activities')
+          .insert({
             user_id: user.id,
             strava_activity_id: numericActivityId,
-            activity_data: activityData
-          },
-          {
-            onConflict: 'user_id,strava_activity_id'
-          }
-        )
+            activity_data: activityPayload
+          })
+        if (insertErr && insertErr.code !== '23505') {
+          console.warn('Could not ensure strava_activity for rating:', insertErr.message)
+          return
+        }
+      }
 
-      const { error } = await supabase
+      const { data: parentExists } = await supabase
+        .from('strava_activities')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('strava_activity_id', numericActivityId)
+        .maybeSingle()
+      if (!parentExists) {
+        console.warn('strava_activities row missing for activity', numericActivityId)
+        return
+      }
+
+      const payload = {
+        user_id: user.id,
+        strava_activity_id: numericActivityId,
+        rating,
+        feedback,
+        is_injured: isInjured,
+        injury_details: injuryDetails
+      }
+
+      const { data: existing } = await supabase
         .from('workout_ratings')
-        .upsert({
-          user_id: user.id,
-          strava_activity_id: numericActivityId,
-          rating,
-          feedback,
-          is_injured: isInjured,
-          injury_details: injuryDetails
-        })
-      
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('strava_activity_id', numericActivityId)
+        .maybeSingle()
+
+      let error
+      if (existing) {
+        const result = await supabase
+          .from('workout_ratings')
+          .update({
+            rating: payload.rating,
+            feedback: payload.feedback,
+            is_injured: payload.is_injured,
+            injury_details: payload.injury_details
+          })
+          .eq('id', existing.id)
+        error = result.error
+      } else {
+        const result = await supabase
+          .from('workout_ratings')
+          .insert(payload)
+        error = result.error
+      }
+
       if (error) {
         console.error('Error saving rating to Supabase:', error);
         throw error;

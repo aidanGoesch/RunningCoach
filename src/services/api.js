@@ -2178,7 +2178,26 @@ export const getValidStravaAccessToken = async ({
   minValiditySeconds = 300,
   allowAuthRedirect = false
 } = {}) => {
-  const tokens = await getStravaTokens();
+  let tokens = await getStravaTokens();
+  if (!tokens) {
+    // Recover gracefully from transient Supabase misses by using local backup,
+    // then rehydrating Supabase so other app instances can pull it.
+    const localTokens = await getStravaTokens({ allowLocalFallback: true });
+    if (localTokens?.accessToken && localTokens?.refreshToken) {
+      try {
+        await saveStravaTokens(
+          localTokens.accessToken,
+          localTokens.refreshToken,
+          localTokens.expiresAt || null,
+          localTokens
+        );
+      } catch (rehydrateError) {
+        console.warn('Failed to rehydrate Supabase token from local backup:', rehydrateError);
+      }
+      tokens = localTokens;
+    }
+  }
+
   const accessToken = tokens?.accessToken || null;
   const expiresAtRaw = tokens?.expiresAt || null;
 

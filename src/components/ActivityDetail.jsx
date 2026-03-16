@@ -328,13 +328,15 @@ const ActivityDetail = ({ activityId, onBack }) => {
   const ratingLabels = ['Very easy', 'Easy', 'Moderate', 'Hard', 'Very hard'];
 
   const handleRatingClick = async (value) => {
+    // Optimistic update so the square looks selected immediately
+    const previousRating = rating;
+    setRating({ rating: value, feedback: previousRating?.feedback ?? '', isInjured: previousRating?.isInjured ?? false, injuryDetails: previousRating?.injuryDetails ?? '' });
     setSavingRating(true);
     try {
       await saveActivityRating(activity.id, value, '', false, '');
-      const updatedRating = await getActivityRating(activity.id);
-      setRating(updatedRating);
     } catch (error) {
       console.error('Error saving rating:', error);
+      setRating(previousRating);
     } finally {
       setSavingRating(false);
     }
@@ -810,7 +812,7 @@ const ActivityDetail = ({ activityId, onBack }) => {
                 const isHovered = hoveredRating === value;
                 const colors = ratingColors[value - 1];
                 const shouldShowVivid = isSelected || isHovered;
-                const baseOpacity = currentRating ? (shouldShowVivid ? 1 : 0.5) : (isHovered ? 1 : 0.5);
+                const isUnselectedWithSelection = currentRating && !shouldShowVivid;
                 return (
                   <div
                     key={value}
@@ -822,9 +824,11 @@ const ActivityDetail = ({ activityId, onBack }) => {
                       height: '14px',
                       borderRadius: '3px',
                       cursor: 'pointer',
-                      transition: 'opacity 0.15s',
-                      backgroundColor: shouldShowVivid ? colors.vivid : colors.muted,
-                      opacity: baseOpacity
+                      transition: 'opacity 0.15s, background-color 0.15s',
+                      backgroundColor: isUnselectedWithSelection
+                        ? 'var(--color-border-secondary)'
+                        : (shouldShowVivid ? colors.vivid : colors.muted),
+                      opacity: isUnselectedWithSelection ? 0.35 : (shouldShowVivid || isHovered ? 1 : 0.6)
                     }}
                   />
                 );
