@@ -326,31 +326,20 @@ export class DataService {
           }
         } else if (key.startsWith('weekly_analysis_')) {
           const weekStart = key.replace('weekly_analysis_', '')
-          // Store analysis in weekly_plans table's weekly_analysis column
-          // First check if plan exists, then update or create
-          const { data: existing } = await supabase
+          // Store analysis in weekly_plans table's weekly_analysis column.
+          // Use conflict-safe upsert to avoid duplicate rows for the same week.
+          const { error } = await supabase
             .from('weekly_plans')
-            .select('id')
-            .eq('user_id', user.id)
-            .eq('week_start_date', weekStart)
-            .single()
-          
-          if (existing) {
-            // Update existing plan with analysis
-            await supabase
-              .from('weekly_plans')
-              .update({ weekly_analysis: value })
-              .eq('id', existing.id)
-          } else {
-            // Create new plan entry with just analysis
-            await supabase
-              .from('weekly_plans')
-              .insert({
-                user_id: user.id,
-                week_start_date: weekStart,
-                weekly_analysis: value,
-                plan_data: null
-              })
+            .upsert({
+              user_id: user.id,
+              week_start_date: weekStart,
+              weekly_analysis: value
+            }, {
+              onConflict: 'user_id,week_start_date'
+            })
+
+          if (error) {
+            throw error
           }
         } else if (key.startsWith('activity_insights_')) {
           const activityId = key.replace('activity_insights_', '')
@@ -631,50 +620,31 @@ export const migrateToSupabase = async (exportedData) => {
           continue;
         }
         
-        // Check if plan exists (ignore errors, just try to insert)
+        let parsedPlan;
         try {
-          const { data: existing } = await supabase
-            .from('weekly_plans')
-            .select('id')
-            .eq('user_id', user.id)
-            .eq('week_start_date', weekStart)
-            .single()
-          
-          if (existing) {
-            // Update existing
-            const { error } = await supabase
-              .from('weekly_plans')
-              .update({ plan_data: JSON.parse(value) })
-              .eq('id', existing.id)
-            if (error) {
-              console.error('Weekly plan update error for', weekStart, ':', error);
-            }
-          } else {
-            // Insert new
-            const { error } = await supabase
-              .from('weekly_plans')
-              .insert({
-                user_id: user.id,
-                week_start_date: weekStart,
-                plan_data: JSON.parse(value)
-              })
-            if (error) {
-              console.error('Weekly plan insert error for', weekStart, ':', error);
-            }
-          }
-        } catch (queryError) {
-          // If query fails, just try to insert
-          console.log('Query failed, attempting direct insert for', weekStart);
+          parsedPlan = JSON.parse(value);
+        } catch (parseError) {
+          console.error('Invalid weekly plan JSON for', weekStart, ':', parseError);
+          continue;
+        }
+
+        // Use upsert to ensure we only keep one row per user/week.
+        try {
           const { error } = await supabase
             .from('weekly_plans')
-            .insert({
+            .upsert({
               user_id: user.id,
               week_start_date: weekStart,
-              plan_data: JSON.parse(value)
+              plan_data: parsedPlan
+            }, {
+              onConflict: 'user_id,week_start_date'
             })
+
           if (error) {
-            console.error('Weekly plan insert error for', weekStart, ':', error);
+            console.error('Weekly plan upsert error for', weekStart, ':', error);
           }
+        } catch (queryError) {
+          console.error('Weekly plan upsert failed for', weekStart, ':', queryError);
         }
         console.log('Migrated weekly plan:', weekStart);
       }
