@@ -14,18 +14,8 @@ const WorkoutDisplay = ({
   // Empty state
   if (!workout) {
     return (
-      <div style={{
-        border: '0.5px solid var(--color-border-tertiary)',
-        borderRadius: '10px',
-        background: 'var(--color-background-primary)',
-        overflow: 'hidden',
-        padding: '40px 16px',
-        textAlign: 'center'
-      }}>
-        <div style={{
-          fontSize: '13px',
-          color: 'var(--color-text-tertiary)'
-        }}>
+      <div className="workout-display dashboard-workout-card dashboard-workout-empty">
+        <div className="dashboard-workout-empty-text">
           No workout planned — generate your weekly plan to get started.
         </div>
       </div>
@@ -125,46 +115,19 @@ const WorkoutDisplay = ({
   return (
     <div 
       ref={cardRef}
-      style={{
-        border: '0.5px solid var(--color-border-tertiary)',
-        borderRadius: '10px',
-        background: 'var(--color-background-primary)',
-        overflow: 'hidden'
-      }}
+      className="workout-display dashboard-workout-card"
     >
       {/* Header */}
-      <div style={{
-        padding: '14px 16px 12px',
-        borderBottom: '0.5px solid var(--color-border-tertiary)',
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'flex-start',
-        gap: '12px'
-      }}>
+      <div className="dashboard-workout-header">
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '3px' }}>
+          <div className="dashboard-workout-meta-row">
             {/* Type tag */}
-            <div style={{
-              fontSize: '10px',
-              fontWeight: 500,
-              color: 'var(--color-text-tertiary)',
-              letterSpacing: '0.08em',
-              textTransform: 'uppercase'
-            }}>
+            <div className="dashboard-workout-type">
               {workoutType}
             </div>
             {/* Completion indicator */}
             {isWorkoutCompleted && (
-              <div style={{
-                fontSize: '10px',
-                fontWeight: 500,
-                color: '#1D9E75',
-                letterSpacing: '0.08em',
-                textTransform: 'uppercase',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px'
-              }}>
+              <div className="dashboard-workout-completed">
                 <span style={{ fontSize: '12px' }}>✓</span>
                 Completed
               </div>
@@ -172,26 +135,12 @@ const WorkoutDisplay = ({
           </div>
           
           {/* Title */}
-          <div style={{
-            fontSize: '17px',
-            fontWeight: 500,
-            color: 'var(--color-text-primary)',
-            marginBottom: '2px',
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis'
-          }}>
+          <div className="dashboard-workout-title">
             {workout.title}
           </div>
           
           {/* Target summary */}
-          <div style={{
-            fontSize: '11px',
-            color: 'var(--color-text-secondary)',
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis'
-          }}>
+          <div className="dashboard-workout-summary">
             {getTargetSummary()}
           </div>
         </div>
@@ -201,32 +150,9 @@ const WorkoutDisplay = ({
           <button
             onClick={onFix}
             disabled={isFixingWorkout}
-            style={{
-              fontSize: '11px',
-              color: isFixingWorkout ? 'var(--color-text-tertiary)' : 'var(--color-text-tertiary)',
-              border: '0.5px solid var(--color-border-secondary)',
-              borderRadius: '5px',
-              padding: '5px 10px',
-              whiteSpace: 'nowrap',
-              cursor: isFixingWorkout ? 'not-allowed' : 'pointer',
-              flexShrink: 0,
-              background: 'transparent',
-              transition: 'all 0.15s'
-            }}
-            onMouseEnter={(e) => {
-              if (!isFixingWorkout) {
-                e.target.style.color = 'var(--color-text-primary)';
-                e.target.style.borderColor = 'var(--color-border-primary)';
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (!isFixingWorkout) {
-                e.target.style.color = 'var(--color-text-tertiary)';
-                e.target.style.borderColor = 'var(--color-border-secondary)';
-              }
-            }}
+            className="fix-workout-btn"
           >
-            {isFixingWorkout ? '...' : '⚡ Fix'}
+            {isFixingWorkout ? 'Fixing…' : 'Fix Workout'}
           </button>
         )}
       </div>
@@ -387,42 +313,16 @@ const WorkoutDisplay = ({
       )}
 
       {/* Footer */}
-      <div style={{
-        borderTop: '0.5px solid var(--color-border-tertiary)',
-        padding: '12px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '8px'
-      }}>
+      <div className="dashboard-workout-footer">
         {isSyncedFromStrava && !isWorkoutCompleted && (
-          <div style={{
-            fontSize: '10px',
-            color: 'var(--color-text-tertiary)',
-            textAlign: 'center'
-          }}>
+          <div className="dashboard-workout-synced">
             Synced from Strava
           </div>
         )}
         {onPostpone && !isWorkoutCompleted && (
           <button
             onClick={onPostpone}
-            style={{
-              width: '100%',
-              padding: '12px',
-              fontSize: '13px',
-              fontWeight: 500,
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-              color: 'var(--color-text-secondary)',
-              transition: 'background 0.15s'
-            }}
-            onMouseEnter={(e) => {
-              e.target.style.background = 'var(--color-background-secondary)';
-            }}
-            onMouseLeave={(e) => {
-              e.target.style.background = 'none';
-            }}
+            className="btn btn-secondary dashboard-workout-postpone-btn"
           >
             Postpone workout
           </button>

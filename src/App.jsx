@@ -2634,91 +2634,26 @@ function App() {
   // Full-screen workout detail view (with optional postpone sheet)
   if (showWorkoutDetail && (workout || selectedPlannedWorkout?.workout)) {
     const workoutToShow = selectedPlannedWorkout ? selectedPlannedWorkout.workout : workout;
-    const title = selectedPlannedWorkout ? `${selectedPlannedWorkout.dayName} - ${workoutToShow.title}` : workoutToShow.title;
-    
-    // Check if this workout can be postponed
-    let canPostpone = false;
-    let isTodayPostponed = false;
-    let isPastIncomplete = false; // Track if workout is from past and incomplete
-    
-    const today = new Date();
-    const dayOfWeek = today.getDay();
-    const dayNameMap = {
-      0: 'sunday',
-      1: 'monday',
-      2: 'tuesday',
-      3: 'wednesday',
-      4: 'thursday',
-      5: 'friday',
-      6: 'saturday'
+    const toSentenceCase = (value) => {
+      if (!value || typeof value !== 'string') return '';
+      const trimmed = value.trim();
+      if (!trimmed) return '';
+      const lower = trimmed.toLowerCase();
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
     };
-    const currentDayName = dayNameMap[dayOfWeek];
-    
-    if (weeklyPlan && weeklyPlan._postponements) {
-      const postponeInfo = weeklyPlan._postponements[currentDayName];
-      isTodayPostponed = !!postponeInfo && postponeInfo.postponed;
-    }
-    
-    const oldPostponeData = localStorage.getItem('postponed_workout');
-    if (oldPostponeData && !isTodayPostponed) {
-      try {
-        const postponeData = JSON.parse(oldPostponeData);
-        const postponeDate = new Date(postponeData.postponedDate);
-        const todayStart = new Date(today);
-        todayStart.setHours(0, 0, 0, 0);
-        const todayEnd = new Date(today);
-        todayEnd.setHours(23, 59, 59, 999);
-        if (postponeDate >= todayStart && postponeDate <= todayEnd) {
-          isTodayPostponed = true;
-        }
-      } catch (e) {
-        // Ignore parse errors
-      }
-    }
-    
-    // Check if workout is from past and incomplete
-    if (selectedPlannedWorkout) {
-      const dayNameMapFull = { 'Monday': 1, 'Tuesday': 2, 'Wednesday': 3, 'Thursday': 4, 'Friday': 5, 'Saturday': 6, 'Sunday': 0 };
-      const scheduledDayOfWeek = dayNameMapFull[selectedPlannedWorkout.dayName];
-      canPostpone = scheduledDayOfWeek === dayOfWeek;
-      
-      // Calculate the date of the scheduled workout
-      const todayForCheck = new Date();
-      todayForCheck.setHours(0, 0, 0, 0);
-      const monday = new Date(todayForCheck);
-      monday.setDate(todayForCheck.getDate() - ((todayForCheck.getDay() + 6) % 7)); // Get Monday of current week
-      monday.setHours(0, 0, 0, 0);
-      
-      // Convert day of week to offset from Monday (Monday=0, Tuesday=1, ..., Sunday=6)
-      const dayOffset = scheduledDayOfWeek === 0 ? 6 : scheduledDayOfWeek - 1;
-      
-      // Calculate the date for the scheduled day
-      const scheduledDate = new Date(monday);
-      scheduledDate.setDate(monday.getDate() + dayOffset);
-      scheduledDate.setHours(0, 0, 0, 0);
-      
-      // Check if scheduled date is in the past
-      const isPast = scheduledDate < todayForCheck;
-      
-      // Check if there's an activity for that date (workout was completed)
-      const hasActivityForDate = (activities || []).some(activity => {
-        if (!activity || activity.type !== 'Run' || !activity.start_date) return false;
-        const activityDate = new Date(activity.start_date);
-        activityDate.setHours(0, 0, 0, 0);
-        return activityDate.getTime() === scheduledDate.getTime();
-      });
-      
-      // Also check activity matches from weekly plan
-      const activityMatches = weeklyPlan?._activityMatches || {};
-      const dayNameLower = selectedPlannedWorkout.dayName.toLowerCase();
-      const dayMatch = activityMatches[dayNameLower];
-      const hasMatchedActivity = !!dayMatch && dayMatch.activities && dayMatch.activities.length > 0;
-      
-      // Workout is past and incomplete if it's in the past and has no activity
-      isPastIncomplete = isPast && !hasActivityForDate && !hasMatchedActivity;
-    } else {
-      canPostpone = isScheduledRunDay();
-    }
+    const typeMap = {
+      easy: 'Easy run',
+      'easy run': 'Easy run',
+      speed: 'Speed work',
+      'speed work': 'Speed work',
+      long: 'Long run',
+      'long run': 'Long run',
+      recovery: 'Recovery'
+    };
+    const todayDayLabel = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date().getDay()];
+    const detailDayLabel = selectedPlannedWorkout?.dayName || todayDayLabel;
+    const workoutTypeLabel = typeMap[String(workoutToShow?.type || '').toLowerCase()] || toSentenceCase(workoutToShow?.type || workoutToShow?.title || 'Workout');
+    const detailHeaderTitle = `${detailDayLabel} · ${workoutTypeLabel}`;
     
     const handleBack = () => {
       setShowWorkoutDetail(false);
@@ -2776,102 +2711,63 @@ function App() {
       }
     };
 
-    const handleDoToday = async () => {
-      if (!weeklyPlan || !selectedPlannedWorkout) return;
-      
+    const handleRescheduleWorkout = async (targetDayName) => {
+      if (!weeklyPlan || !targetDayName) return;
+
       try {
         const today = new Date();
-        const dayOfWeek = today.getDay();
-        const dayNameMap = {
-          0: 'sunday',
-          1: 'monday',
-          2: 'tuesday',
-          3: 'wednesday',
-          4: 'thursday',
-          5: 'friday',
-          6: 'saturday'
-        };
-        const todayDayName = dayNameMap[dayOfWeek];
-        const originalDayName = selectedPlannedWorkout.dayName.toLowerCase();
-        
-        console.log('[Do Today] Moving workout from', originalDayName, 'to', todayDayName);
-        console.log('[Do Today] Selected workout:', selectedPlannedWorkout);
-        
-        // Get current week key
+        const todayDayName = dayNameMap[today.getDay()];
+        const sourceDayName = selectedPlannedWorkout
+          ? selectedPlannedWorkout.dayName.toLowerCase()
+          : todayDayName;
+
+        if (sourceDayName === targetDayName) return;
+
+        const workoutToMove = selectedPlannedWorkout?.workout || workout;
+        if (!workoutToMove) return;
+
         const weekKey = getWeekKey(today);
-        
-        // Create a copy of the weekly plan
         const updatedPlan = { ...weeklyPlan };
-        
-        // Get the workout from selectedPlannedWorkout (it has the workout data)
-        const workoutToMove = selectedPlannedWorkout.workout;
-        console.log('[Do Today] Workout to move from', originalDayName, ':', workoutToMove);
-        console.log('[Do Today] Current plan before move -', originalDayName, ':', updatedPlan[originalDayName], todayDayName, ':', updatedPlan[todayDayName]);
-        
-        updatedPlan[originalDayName] = null; // Clear original day
-        updatedPlan[todayDayName] = workoutToMove; // Set today's workout
-        
-        console.log('[Do Today] Plan after move -', originalDayName, ':', updatedPlan[originalDayName], todayDayName, ':', updatedPlan[todayDayName]);
-        
-        // Clear any postpone info for today if it exists
-        if (!updatedPlan._postponements) {
-          updatedPlan._postponements = {};
+
+        updatedPlan[sourceDayName] = null;
+        updatedPlan[targetDayName] = workoutToMove;
+
+        if (updatedPlan._postponements) {
+          delete updatedPlan._postponements[sourceDayName];
+          delete updatedPlan._postponements[targetDayName];
         }
-        if (updatedPlan._postponements[todayDayName]) {
-          delete updatedPlan._postponements[todayDayName];
-        }
-        
-        // Add timestamp to track when this update was made
+
         updatedPlan._updatedAt = new Date().toISOString();
-        
-        // Update state immediately (optimistic update)
+
         setWeeklyPlan(updatedPlan);
-        
-        // Save to localStorage synchronously (immediate)
+
         const planString = JSON.stringify(updatedPlan);
         localStorage.setItem(`weekly_plan_${weekKey}`, planString);
-        console.log('[Do Today] Saving plan with _updatedAt:', updatedPlan._updatedAt, 'Has _postponements:', !!updatedPlan._postponements);
-        console.log('[Do Today] Plan keys before save:', Object.keys(updatedPlan));
-        
-        // Save to Supabase asynchronously (may take time)
-        try {
-          console.log('[Do Today] Calling dataService.set with key:', `weekly_plan_${weekKey}`);
-          await dataService.set(`weekly_plan_${weekKey}`, planString);
-          console.log('[Do Today] dataService.set completed');
-          
-          // Verify it was saved correctly
-          const verifyPlan = await dataService.get(`weekly_plan_${weekKey}`);
-          if (verifyPlan) {
-            const parsed = JSON.parse(verifyPlan);
-            console.log('[Do Today] Verified saved plan has _updatedAt:', parsed._updatedAt, 'Has _postponements:', !!parsed._postponements);
-            console.log('[Do Today] Verified plan keys:', Object.keys(parsed));
-          } else {
-            console.error('[Do Today] Verification failed - no plan returned from get');
-          }
-        } catch (saveError) {
-          console.error('[Do Today] Error saving to Supabase:', saveError);
-          // Still update state even if save fails
-        }
+        await dataService.set(`weekly_plan_${weekKey}`, planString);
         setWeeklyPlanRefreshKey(prev => prev + 1);
-        
-        // Set as current workout
-        setWorkout(workoutToMove);
-        await dataService.set('current_workout', JSON.stringify(workoutToMove));
-        localStorage.setItem('current_workout', JSON.stringify(workoutToMove));
-        
-        // Close workout detail view
+
+        if (targetDayName === todayDayName) {
+          setWorkout(workoutToMove);
+          await dataService.set('current_workout', JSON.stringify(workoutToMove));
+          localStorage.setItem('current_workout', JSON.stringify(workoutToMove));
+        } else if (sourceDayName === todayDayName) {
+          setWorkout(null);
+          await dataService.set('current_workout', null);
+          localStorage.removeItem('current_workout');
+        }
+
         setShowWorkoutDetail(false);
         setSelectedPlannedWorkout(null);
         window.history.pushState({ view: 'main' }, '', window.location.pathname);
-        
-        // Show confirmation
+
+        const dayLabel = `${targetDayName.charAt(0).toUpperCase()}${targetDayName.slice(1)}`;
         setError(null);
         setTimeout(() => {
-          setError('Workout rescheduled to today!');
+          setError(`Workout moved to ${dayLabel}.`);
           setTimeout(() => setError(null), 3000);
         }, 100);
       } catch (err) {
-        console.error('Error rescheduling workout to today:', err);
+        console.error('Error rescheduling workout:', err);
         setError('Failed to reschedule workout. Please try again.');
         setTimeout(() => setError(null), 4000);
       }
@@ -2880,36 +2776,15 @@ function App() {
     return (
       <div className="app">
         <WorkoutDetail 
-          workout={{ ...workoutToShow, title }}
+          workout={workoutToShow}
+          headerTitle={detailHeaderTitle}
           onBack={handleBack}
+          onReschedule={selectedPlannedWorkout ? handleRescheduleWorkout : null}
+          rescheduleSourceDayName={selectedPlannedWorkout ? selectedPlannedWorkout.dayName.toLowerCase() : null}
           onFixWorkout={selectedPlannedWorkout ? handleFixWorkout : null}
           isFixingWorkout={isFixingWorkout}
-          onPostpone={isPastIncomplete ? null : () => {
-            setShowPostpone(true);
-          }}
-          postponeDisabled={isTodayPostponed || dailyUsage.postponed || !canPostpone}
-          postponeReason={isTodayPostponed || dailyUsage.postponed ? 'already_postponed' : (!canPostpone ? 'not_run_day' : null)}
-          onDoToday={isPastIncomplete ? handleDoToday : null}
-          showDoToday={isPastIncomplete}
+          rescheduleDisabled={false}
         />
-
-        {/* Postpone Workout Bottom Sheet (over workout detail) */}
-        {showPostpone && (
-          <PostponeWorkout 
-            workout={workoutToShow}
-            onPostpone={async (postponeData) => {
-              await handlePostponeWorkout(postponeData);
-              updateDailyUsage('postponed');
-              setShowPostpone(false);
-              setShowWorkoutDetail(false);
-              setSelectedPlannedWorkout(null);
-              window.history.pushState({ view: 'main' }, '', window.location.pathname);
-            }}
-            onCancel={() => {
-              setShowPostpone(false);
-            }}
-          />
-        )}
       </div>
     );
   }
@@ -3899,6 +3774,20 @@ function App() {
               </div>
             </div>
             )}
+
+        {showPostpone && workout && (
+          <PostponeWorkout
+            workout={workout}
+            onPostpone={async (postponeData) => {
+              await handlePostponeWorkout(postponeData);
+              updateDailyUsage('postponed');
+              setShowPostpone(false);
+            }}
+            onCancel={() => {
+              setShowPostpone(false);
+            }}
+          />
+        )}
 
         {loading && (
           <div className="loading">

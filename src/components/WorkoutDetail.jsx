@@ -1,9 +1,36 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useSwipeBack } from '../hooks/useSwipeBack';
 
-const WorkoutDetail = ({ workout, onBack, onPostpone, postponeDisabled, postponeReason, onFixWorkout, isFixingWorkout = false, onDoToday, showDoToday = false }) => {
+const DAY_OPTIONS = [
+  { key: 'monday', shortLabel: 'Mon' },
+  { key: 'tuesday', shortLabel: 'Tue' },
+  { key: 'wednesday', shortLabel: 'Wed' },
+  { key: 'thursday', shortLabel: 'Thu' },
+  { key: 'friday', shortLabel: 'Fri' },
+  { key: 'saturday', shortLabel: 'Sat' },
+  { key: 'sunday', shortLabel: 'Sun' }
+];
+
+const WorkoutDetail = ({
+  workout,
+  onBack,
+  headerTitle = '',
+  onReschedule,
+  rescheduleDisabled = false,
+  rescheduleDisabledReason = '',
+  rescheduleSourceDayName = null,
+  onFixWorkout,
+  isFixingWorkout = false
+}) => {
   const [completedBlocks, setCompletedBlocks] = useState(new Set());
+  const [openNoteIndex, setOpenNoteIndex] = useState(null);
+  const [showReschedulePicker, setShowReschedulePicker] = useState(false);
+  const [isRescheduling, setIsRescheduling] = useState(false);
   const swipeBackRef = useSwipeBack(onBack);
+  const todayDayName = useMemo(() => {
+    const dayNameMap = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    return dayNameMap[new Date().getDay()];
+  }, []);
 
   const toggleBlockCompletion = (blockIndex) => {
     const newCompleted = new Set(completedBlocks);
@@ -17,205 +44,276 @@ const WorkoutDetail = ({ workout, onBack, onPostpone, postponeDisabled, postpone
 
   if (!workout) return null;
 
+  const toSentenceCase = (value) => {
+    if (!value || typeof value !== 'string') return '';
+    const trimmed = value.trim();
+    if (!trimmed) return '';
+    const lower = trimmed.toLowerCase();
+    return lower.charAt(0).toUpperCase() + lower.slice(1);
+  };
+
+  const getWorkoutTypeLabel = () => {
+    if (!workout.type) return toSentenceCase(workout.title || 'Workout');
+    const type = String(workout.type).toLowerCase();
+    if (type === 'easy' || type === 'easy run') return 'Easy run';
+    if (type === 'long' || type === 'long run') return 'Long run';
+    if (type === 'speed' || type === 'speed work') return 'Speed work';
+    if (type === 'recovery') return 'Recovery';
+    return toSentenceCase(type);
+  };
+
+  const getTargetSummary = () => {
+    if (!workout.blocks || workout.blocks.length === 0) return '';
+    const mainBlock = workout.blocks.find((block) => {
+      const title = block?.title?.toLowerCase() || '';
+      return !title.includes('warm') && !title.includes('cool');
+    }) || workout.blocks[0];
+    const duration = workout.blocks.reduce((sum, block) => sum + (Number(block.duration) || 0), 0);
+
+    const parts = [];
+    if (mainBlock?.pace) {
+      parts.push(mainBlock.pace.split(',')[0].trim());
+    }
+    if (mainBlock?.heartRateZone) {
+      const zoneMatch = String(mainBlock.heartRateZone).match(/Zone\s*(\d+)/i);
+      if (zoneMatch) {
+        parts.push(`Zone ${zoneMatch[1]}`);
+      }
+    }
+    if (duration > 0) {
+      parts.push(`~${Math.round(duration)} min`);
+    }
+    return parts.join(' · ');
+  };
+
+  const formatBlockSubLabel = (block) => {
+    const details = [];
+    if (block.heartRateZone) {
+      const zoneMatch = String(block.heartRateZone).match(/Zone\s*(\d+)(?:\s*[–-]\s*Zone\s*(\d+))?/i);
+      if (zoneMatch) {
+        details.push(zoneMatch[2] ? `Z${zoneMatch[1]}–Z${zoneMatch[2]}` : `Z${zoneMatch[1]}`);
+      }
+      const hrMatch = String(block.heartRateZone).match(/(\d+)\s*[–-]\s*(\d+)\s*bpm/i);
+      if (hrMatch) {
+        details.push(`${hrMatch[1]}–${hrMatch[2]} bpm`);
+      }
+    }
+    if (block.restInterval || block.rest) {
+      details.push(`${block.restInterval || block.rest}`);
+    }
+    return details.join(' · ');
+  };
+
+  const formatBlockName = (block) => {
+    const repsPrefix = block.repetitions ? `${block.repetitions}× ` : '';
+    return `${repsPrefix}${toSentenceCase(block.title || 'Block')}`;
+  };
+
+  const totalBlocks = workout.blocks?.length || 0;
+  const completedCount = completedBlocks.size;
+  const progressPercent = totalBlocks > 0 ? Math.min(100, Math.round((completedCount / totalBlocks) * 100)) : 0;
+
+  const handleSelectDay = async (targetDayName) => {
+    if (!onReschedule || isRescheduling || targetDayName === rescheduleSourceDayName) {
+      return;
+    }
+
+    setIsRescheduling(true);
+    try {
+      await onReschedule(targetDayName);
+      setShowReschedulePicker(false);
+    } finally {
+      setIsRescheduling(false);
+    }
+  };
+
   return (
     <div className="app" ref={swipeBackRef}>
-      <div className="workout-display">
-        <div style={{ display: 'flex', alignItems: 'center', marginBottom: '20px' }}>
-          <button 
+      <div className="workout-detail-shell">
+        <div className="workout-detail-header-bar">
+          <button
+            className="workout-detail-back-btn"
             onClick={onBack}
-            style={{
-              background: 'none',
-              border: 'none',
-              fontSize: '24px',
-              cursor: 'pointer',
-              marginRight: '15px',
-              color: 'var(--text-color)'
-            }}
           >
-            ←
+            Back
           </button>
-          <div className="workout-title" style={{ margin: 0 }}>
-            {workout.title}
+          <div className="workout-detail-header-title">
+            {headerTitle || `${toSentenceCase(workout.title || 'Workout')}`}
           </div>
         </div>
 
-        {workout.blocks && workout.blocks.map((block, index) => (
-          <div 
-            key={index} 
-            className="workout-block"
-            style={{
-              opacity: completedBlocks.has(index) ? 0.6 : 1,
-              border: completedBlocks.has(index) ? '2px solid var(--accent)' : '1px solid var(--border-color)'
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-              <div className="block-title">{block.title}</div>
-              <button
-                onClick={() => toggleBlockCompletion(index)}
-                style={{
-                  background: completedBlocks.has(index) ? 'var(--accent)' : 'transparent',
-                  color: completedBlocks.has(index) ? 'white' : 'var(--text-color)',
-                  border: '1px solid var(--accent)',
-                  borderRadius: '50%',
-                  width: '24px',
-                  height: '24px',
-                  cursor: 'pointer',
-                  fontSize: '12px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}
-              >
-                {completedBlocks.has(index) ? '✓' : ''}
-              </button>
-            </div>
-
-            {block.description && (
-              <div style={{ 
-                marginBottom: '15px', 
-                color: 'var(--text-secondary)',
-                fontSize: '14px',
-                lineHeight: '1.5'
-              }}>
-                {block.description}
-              </div>
-            )}
-
-            <div className="block-details">
-              {block.distance && (
-                <div className="detail-item">
-                  <span className="detail-label">Distance</span>
-                  <span className="detail-value">{block.distance}</span>
-                </div>
-              )}
-              {block.pace && (
-                <div className="detail-item">
-                  <span className="detail-label">Pace</span>
-                  <span className="detail-value">{block.pace}</span>
-                </div>
-              )}
-              {block.duration && (
-                <div className="detail-item">
-                  <span className="detail-label">Duration</span>
-                  <span className="detail-value">{block.duration}</span>
-                </div>
-              )}
-              {block.heartRate && (
-                <div className="detail-item">
-                  <span className="detail-label">Heart Rate</span>
-                  <span className="detail-value">{block.heartRate}</span>
-                </div>
-              )}
-              {block.rest && (
-                <div className="detail-item">
-                  <span className="detail-label">Rest</span>
-                  <span className="detail-value">{block.rest}</span>
-                </div>
-              )}
-              {block.repetitions && (
-                <div className="detail-item">
-                  <span className="detail-label">Repetitions</span>
-                  <span className="detail-value">{block.repetitions}</span>
-                </div>
-              )}
-            </div>
-
-            {block.notes && (
-              <div style={{ 
-                marginTop: '15px',
-                padding: '12px',
-                backgroundColor: 'var(--grid-color)',
-                borderRadius: '8px',
-                fontSize: '14px',
-                fontStyle: 'italic',
-                color: 'var(--text-secondary)'
-              }}>
-                <strong>Coach Notes:</strong> {block.notes}
-              </div>
-            )}
+        <div className="workout-detail-meta">
+          <div className="workout-detail-type-tag">
+            {String(getWorkoutTypeLabel()).toUpperCase()}
           </div>
-        ))}
-
-        <div style={{ 
-          marginTop: '20px',
-          padding: '15px',
-          backgroundColor: 'var(--grid-color)',
-          borderRadius: '12px'
-        }}>
-          <div style={{ fontWeight: '600', marginBottom: '8px', color: 'var(--text-color)' }}>
-            Workout Summary
+          <div className="workout-detail-main-title">
+            {toSentenceCase(workout.title || '')}
           </div>
-          <div style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>
-            Completed: {completedBlocks.size} of {workout.blocks?.length || 0} blocks
+          <div className="workout-detail-target-line">
+            {getTargetSummary()}
           </div>
         </div>
 
-        {(onPostpone || onFixWorkout || onDoToday) && (
-          <div style={{ marginTop: '20px', textAlign: 'center' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
-                {showDoToday && onDoToday ? (
-                  <button 
-                    className="btn btn-primary" 
-                    onClick={onDoToday}
-                    style={{ 
-                      flex: 1,
-                      fontSize: '14px', 
-                      padding: '12px 16px',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    Do Today
-                  </button>
-                ) : onPostpone ? (
-                  <button 
-                    className="btn btn-secondary" 
-                    onClick={onPostpone}
-                    disabled={postponeDisabled}
-                    style={{ 
-                      flex: 1,
-                      fontSize: '14px', 
-                      padding: '12px 16px',
-                      opacity: postponeDisabled ? 0.5 : 1,
-                      cursor: postponeDisabled ? 'not-allowed' : 'pointer'
-                    }}
-                  >
-                    {postponeDisabled 
-                      ? (postponeReason === 'not_run_day' 
-                          ? 'Can Only Postpone on Scheduled Run Day' 
-                          : 'Postponed Today')
-                      : 'Postpone'}
-                  </button>
-                ) : null}
-                {onFixWorkout && (
-                  <button
-                    className="btn btn-primary"
-                    onClick={onFixWorkout}
-                    disabled={isFixingWorkout}
-                    style={{
-                      flex: 1,
-                      fontSize: '14px',
-                      padding: '12px 16px',
-                      opacity: isFixingWorkout ? 0.7 : 1,
-                      cursor: isFixingWorkout ? 'wait' : 'pointer'
-                    }}
-                  >
-                    {isFixingWorkout ? 'Fixing…' : 'Fix Workout'}
-                  </button>
+        <div className="workout-detail-block-rows">
+          {workout.blocks && workout.blocks.map((block, index) => {
+            const isCompleted = completedBlocks.has(index);
+            const subLabel = formatBlockSubLabel(block);
+            return (
+              <div key={`${index}-${block.title || 'block'}`}>
+                <div
+                  className={`workout-detail-block-row ${isCompleted ? 'is-completed' : ''}`}
+                  onClick={() => toggleBlockCompletion(index)}
+                >
+                  <div className="workout-detail-block-left">
+                    <div className={`workout-detail-block-name ${isCompleted ? 'is-completed' : ''}`}>
+                      {formatBlockName(block)}
+                    </div>
+                    {subLabel && (
+                      <div className={`workout-detail-block-sub ${isCompleted ? 'is-completed' : ''}`}>
+                        {subLabel}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="workout-detail-block-right">
+                    {block.pace && (
+                      <div className={`workout-detail-block-pace ${isCompleted ? 'is-completed' : ''}`}>
+                        {block.pace.split(',')[0].trim()}
+                      </div>
+                    )}
+                    {(block.distance || block.duration) && (
+                      <div className="workout-detail-block-distance-duration">
+                        {[block.distance, block.duration ? `${block.duration} min` : null]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </div>
+                    )}
+                    {isCompleted ? (
+                      <span className="workout-detail-complete-icon" aria-hidden="true">
+                        <svg viewBox="0 0 16 16" fill="none">
+                          <path d="M3.5 8.3L6.5 11.2L12.5 5.1" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </span>
+                    ) : block.notes ? (
+                      <button
+                        type="button"
+                        className="workout-detail-info-btn"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setOpenNoteIndex(openNoteIndex === index ? null : index);
+                        }}
+                      >
+                        i
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+
+                {openNoteIndex === index && block.notes && (
+                  <div className="workout-detail-notes-row">
+                    {block.notes}
+                  </div>
                 )}
               </div>
-              {postponeDisabled && postponeReason === 'not_run_day' && (
-                <div style={{ 
-                  marginTop: '4px', 
-                  fontSize: '12px', 
-                  color: 'var(--text-secondary)',
-                  fontStyle: 'italic'
-                }}>
-                  You can only postpone a workout on the day it's scheduled (Tuesday, Thursday, or Sunday)
-                </div>
+            );
+          })}
+        </div>
+
+        <div className="workout-detail-progress-row">
+          <div className="workout-detail-progress-track">
+            <div
+              className="workout-detail-progress-fill"
+              style={{ width: `${progressPercent}%` }}
+            />
+          </div>
+          <div className="workout-detail-progress-label">
+            {completedCount} of {totalBlocks} blocks
+          </div>
+        </div>
+
+        {(onReschedule || onFixWorkout) && (
+          <>
+            <div className="workout-detail-footer-actions">
+              {onReschedule && (
+                <button
+                  type="button"
+                  className={`workout-detail-footer-btn ${onFixWorkout ? 'with-divider' : ''}`}
+                  onClick={() => setShowReschedulePicker(true)}
+                  disabled={rescheduleDisabled || isRescheduling}
+                >
+                  {isRescheduling ? 'Rescheduling…' : 'Reschedule'}
+                </button>
+              )}
+              {onFixWorkout && (
+                <button
+                  type="button"
+                  className="workout-detail-footer-btn"
+                  onClick={onFixWorkout}
+                  disabled={isFixingWorkout}
+                >
+                  {isFixingWorkout ? 'Fixing…' : 'Fix workout'}
+                </button>
               )}
             </div>
-          </div>
+            {rescheduleDisabled && rescheduleDisabledReason && (
+              <div className="workout-detail-footer-reason">
+                {rescheduleDisabledReason}
+              </div>
+            )}
+          </>
+        )}
+
+        {showReschedulePicker && onReschedule && (
+          <>
+            <div
+              className="reschedule-backdrop"
+              onClick={() => {
+                if (!isRescheduling) {
+                  setShowReschedulePicker(false);
+                }
+              }}
+            />
+            <div className="reschedule-sheet">
+              <div className="reschedule-sheet-handle" />
+              <div className="reschedule-sheet-content">
+                <div className="workout-title" style={{ marginBottom: '8px' }}>
+                  Reschedule Workout
+                </div>
+                <div style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '14px' }}>
+                  Choose the day you want to do this workout.
+                </div>
+                <div className="reschedule-day-grid">
+                  {DAY_OPTIONS.map((day) => {
+                    const isToday = day.key === todayDayName;
+                    const isCurrent = day.key === rescheduleSourceDayName;
+                    return (
+                      <button
+                        key={day.key}
+                        type="button"
+                        className="reschedule-day-btn"
+                        onClick={() => handleSelectDay(day.key)}
+                        disabled={isCurrent || isRescheduling}
+                      >
+                        <span>{day.shortLabel}</span>
+                        <span className="reschedule-day-meta">
+                          {isCurrent ? 'Current' : isToday ? 'Today' : ''}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setShowReschedulePicker(false)}
+                  disabled={isRescheduling}
+                  style={{ marginTop: '14px' }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </>
         )}
       </div>
     </div>
