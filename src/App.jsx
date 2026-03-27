@@ -12,9 +12,20 @@ import PostponeWorkout from './components/PostponeWorkout';
 import PullToRefresh from './components/PullToRefresh';
 import NewActivityRatingModal from './components/NewActivityRatingModal';
 import RecoveryPage from './components/RecoveryPage';
+import CoachChatPanel from './components/CoachChatPanel';
 import { generateWorkout, generateWeeklyPlan, generateDataDrivenWeeklyPlan, generateWeeklyAnalysis, matchActivitiesToWorkouts, syncWithStrava, generateInsights, detectNewActivities, adjustWeeklyPlanForPostponement, regenerateDayWorkout, updatePromptWithCurrentData, buildFourWeekSummary, buildRatingQueue, DEFAULT_COACHING_PROMPT, getAppBasePath, refreshStravaToken, getValidStravaAccessToken } from './services/api';
 import { dataService, setupRealtimeSync, syncAllDataFromSupabase, enableSupabase, getActivityRating, getActivityRatings, getStravaTokens, saveActivityRating } from './services/supabase';
 import { getLegacyWeekKey, getWeekKey } from './utils/weekKey';
+import {
+  loadCoachAgentContext,
+  patchCoachAgentContext,
+  loadCoachChatHistory,
+  saveCoachChatHistory,
+  loadCoachChatMeta,
+  saveCoachChatMeta,
+  buildWeeklyRecoveryCheckinMessage,
+  sendCoachMessage
+} from './services/coachChat';
 
 function App() {
   const [workout, setWorkout] = useState(null);
@@ -48,6 +59,24 @@ function App() {
   const [activityRatings, setActivityRatings] = useState(() =>
     JSON.parse(localStorage.getItem('activity_ratings') || '{}')
   );
+  const [showCoachChat, setShowCoachChat] = useState(false);
+  const [coachChatMessages, setCoachChatMessages] = useState([]);
+  const [coachChatInput, setCoachChatInput] = useState('');
+  const [coachChatLoading, setCoachChatLoading] = useState(false);
+  const [coachAgentContext, setCoachAgentContext] = useState(null);
+  const [coachChatMeta, setCoachChatMeta] = useState(null);
+  const [pendingContextPatch, setPendingContextPatch] = useState(null);
+  const [, setPendingPlanAction] = useState('none');
+  const [askEnableInjuryMode, setAskEnableInjuryMode] = useState(false);
+  const [askApplyPlanUpdate, setAskApplyPlanUpdate] = useState(false);
+  const [deferPlanUpdatePromptUntilInjuryDecision, setDeferPlanUpdatePromptUntilInjuryDecision] = useState(false);
+  const [coachQuickReplies, setCoachQuickReplies] = useState([
+    'What should I prioritize this week?',
+    'I can only do two runs this week',
+    'My knee has been bothering me',
+    'Show me my updated plan'
+  ]);
+  const weeklyCoachPromptShownRef = useRef(false);
 
   const todayDate = new Date().toISOString().split('T')[0];
 
@@ -169,6 +198,67 @@ function App() {
     setDailyUsage(newUsage);
     localStorage.setItem('daily_button_usage', JSON.stringify(newUsage));
   };
+
+  const chatIconSvg = (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <path
+        d="M6 5H18C19.6569 5 21 6.34315 21 8V14C21 15.6569 19.6569 17 18 17H10L6 20V17C4.34315 17 3 15.6569 3 14V8C3 6.34315 4.34315 5 6 5Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M8 10H16M8 13H14"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+
+  const makeCoachMessage = useCallback((role, content, extra = {}) => ({
+    id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    role,
+    content,
+    createdAt: new Date().toISOString(),
+    ...extra
+  }), []);
+
+  const loadCoachState = useCallback(async () => {
+    try {
+      const [context, history, meta] = await Promise.all([
+        loadCoachAgentContext(),
+        loadCoachChatHistory(),
+        loadCoachChatMeta()
+      ]);
+
+      setCoachAgentContext(context);
+      setCoachChatMeta(meta);
+      setCoachChatMessages(Array.isArray(history) ? history : []);
+    } catch (coachLoadError) {
+      console.error('Failed to load coach chat state:', coachLoadError);
+      setCoachAgentContext(null);
+      setCoachChatMeta(null);
+      setCoachChatMessages([]);
+    }
+  }, []);
+
+  const persistCoachMessages = useCallback(async (messages) => {
+    try {
+      await saveCoachChatHistory(messages);
+    } catch (historyError) {
+      console.error('Failed to save coach chat history:', historyError);
+    }
+  }, []);
   const [isAuthenticated, setIsAuthenticated] = useState(localStorage.getItem('authenticated') === 'true');
   const [password, setPassword] = useState('');
   const [apiKey, setApiKey] = useState(
@@ -234,6 +324,10 @@ function App() {
   useEffect(() => {
     localStorage.setItem('isInjured', isInjured);
   }, [isInjured]);
+
+  useEffect(() => {
+    void loadCoachState();
+  }, [loadCoachState]);
 
   // Listen for storage changes from other tabs
   useEffect(() => {
@@ -1206,6 +1300,7 @@ function App() {
 
   const handleGenerateWeeklyPlan = useCallback(async (isAutoGeneration = false) => {
     const availableApiKey = import.meta.env.VITE_OPENAI_API_KEY || apiKey;
+    let generationSucceeded = false;
     
     if (!availableApiKey) {
       if (!isAutoGeneration) {
@@ -1307,6 +1402,7 @@ function App() {
         setError('Weekly plan generated successfully!');
         setTimeout(() => setError(null), 3000);
       }
+      generationSucceeded = true;
     } catch (err) {
       if (!isAutoGeneration) {
         setError(`Failed to generate weekly plan: ${err.message}`);
@@ -1316,7 +1412,230 @@ function App() {
     } finally {
       setLoading(false);
     }
+    return generationSucceeded;
   }, [activities, isInjured, apiKey]);
+
+  const appendCoachMessages = useCallback((messagesToAdd) => {
+    const additions = Array.isArray(messagesToAdd) ? messagesToAdd : [messagesToAdd];
+    setCoachChatMessages((prev) => {
+      const next = [...prev, ...additions.filter(Boolean)];
+      void persistCoachMessages(next);
+      return next;
+    });
+  }, [persistCoachMessages]);
+
+  const applyCoachContextPatch = useCallback(async (patch) => {
+    if (!patch || typeof patch !== 'object') return coachAgentContext;
+    const nextContext = await patchCoachAgentContext(patch);
+    setCoachAgentContext(nextContext);
+    return nextContext;
+  }, [coachAgentContext]);
+
+  const handleCoachSend = useCallback(async (event, overrideText = '') => {
+    if (event?.preventDefault) {
+      event.preventDefault();
+    }
+
+    const text = (overrideText || coachChatInput || '').trim();
+    if (!text || coachChatLoading) return;
+
+    const availableApiKey = import.meta.env.VITE_OPENAI_API_KEY || apiKey;
+    if (!availableApiKey) {
+      setError('Please enter your OpenAI API key first');
+      return;
+    }
+
+    const userMessage = makeCoachMessage('user', text);
+    let historyForRequest = [];
+    setCoachChatMessages((prev) => {
+      const next = [...prev, userMessage];
+      historyForRequest = next;
+      void persistCoachMessages(next);
+      return next;
+    });
+    setCoachChatInput('');
+    setCoachChatLoading(true);
+    setShowCoachChat(true);
+
+    try {
+      const currentContext = coachAgentContext || (await loadCoachAgentContext());
+      if (!coachAgentContext) {
+        setCoachAgentContext(currentContext);
+      }
+
+      const response = await sendCoachMessage({
+        apiKey: availableApiKey,
+        userMessage: text,
+        context: currentContext,
+        activities,
+        weeklyPlan,
+        history: historyForRequest
+      });
+
+      const assistantMessage = makeCoachMessage('assistant', response.assistantMessage);
+      appendCoachMessages(assistantMessage);
+
+      setPendingContextPatch(response.suggestedContextPatch || null);
+      setPendingPlanAction(response.suggestedPlanAction || 'none');
+      const shouldAskInjuryMode = !!response.askEnableInjuryMode;
+      const shouldAskPlanUpdate = !!response.askApplyPlanUpdate;
+      setAskEnableInjuryMode(shouldAskInjuryMode);
+      setAskApplyPlanUpdate(shouldAskPlanUpdate && !shouldAskInjuryMode);
+      setDeferPlanUpdatePromptUntilInjuryDecision(shouldAskInjuryMode && shouldAskPlanUpdate);
+      setCoachQuickReplies(
+        Array.isArray(response.suggestedQuestions) && response.suggestedQuestions.length > 0
+          ? response.suggestedQuestions
+          : coachQuickReplies
+      );
+
+      // Apply immediately only when no explicit confirmation is needed.
+      if (!response.askEnableInjuryMode && !response.askApplyPlanUpdate && response.suggestedContextPatch) {
+        await applyCoachContextPatch(response.suggestedContextPatch);
+      }
+    } catch (coachError) {
+      console.error('Coach chat send failed:', coachError);
+      appendCoachMessages(
+        makeCoachMessage(
+          'assistant',
+          'I hit an issue while processing that. Please try again in a moment.'
+        )
+      );
+    } finally {
+      setCoachChatLoading(false);
+    }
+  }, [
+    apiKey,
+    coachAgentContext,
+    coachChatInput,
+    coachChatLoading,
+    coachQuickReplies,
+    activities,
+    weeklyPlan,
+    makeCoachMessage,
+    persistCoachMessages,
+    appendCoachMessages,
+    applyCoachContextPatch
+  ]);
+
+  const handleInjuryModeDecision = useCallback(async (enabled) => {
+    setAskEnableInjuryMode(false);
+    const patch = {
+      ...(pendingContextPatch || {}),
+      injuryMode: enabled
+    };
+    await applyCoachContextPatch(patch);
+    appendCoachMessages(
+      makeCoachMessage(
+        'assistant',
+        enabled
+          ? 'Injury mode is now on. I will bias toward lower-risk training.'
+          : 'Injury mode stays off. I can still adjust your week cautiously if you want.'
+      )
+    );
+    setPendingContextPatch(patch);
+    if (deferPlanUpdatePromptUntilInjuryDecision) {
+      setAskApplyPlanUpdate(true);
+      setDeferPlanUpdatePromptUntilInjuryDecision(false);
+    }
+  }, [
+    pendingContextPatch,
+    applyCoachContextPatch,
+    appendCoachMessages,
+    makeCoachMessage,
+    deferPlanUpdatePromptUntilInjuryDecision
+  ]);
+
+  const handlePlanUpdateDecision = useCallback(async (shouldUpdate) => {
+    setAskApplyPlanUpdate(false);
+
+    if (pendingContextPatch) {
+      await applyCoachContextPatch(pendingContextPatch);
+    }
+
+    if (!shouldUpdate) {
+      appendCoachMessages(
+        makeCoachMessage(
+          'assistant',
+          'Understood. I saved this context and will use it for future planning.'
+        )
+      );
+      setPendingContextPatch(null);
+      setPendingPlanAction('none');
+      setDeferPlanUpdatePromptUntilInjuryDecision(false);
+      return;
+    }
+
+    appendCoachMessages(
+      makeCoachMessage('assistant', 'Updating your current week now...')
+    );
+
+    try {
+      const updated = await handleGenerateWeeklyPlan(true);
+      appendCoachMessages(
+        makeCoachMessage(
+          'assistant',
+          updated
+            ? 'Plan updated. I applied the changes to this week.'
+            : 'I could not update the plan right now. The context is still saved.'
+        )
+      );
+    } catch (updateError) {
+      console.error('Failed to apply coach plan update:', updateError);
+      appendCoachMessages(
+        makeCoachMessage(
+          'assistant',
+          'I could not apply the plan update automatically. Please try again.'
+        )
+      );
+    } finally {
+      setPendingContextPatch(null);
+      setPendingPlanAction('none');
+      setDeferPlanUpdatePromptUntilInjuryDecision(false);
+    }
+  }, [
+    pendingContextPatch,
+    applyCoachContextPatch,
+    appendCoachMessages,
+    makeCoachMessage,
+    handleGenerateWeeklyPlan
+  ]);
+
+  useEffect(() => {
+    if (isPreloading) return;
+    if (!weeklyPlan) return;
+    if (!coachChatMeta) return;
+    if (!coachAgentContext?.injuryMode) return;
+    if (weeklyCoachPromptShownRef.current) return;
+
+    const weekKey = getWeekKey(new Date());
+    if (coachChatMeta.lastWeeklyRecoveryCheckWeekKey === weekKey) {
+      return;
+    }
+
+    weeklyCoachPromptShownRef.current = true;
+    setShowCoachChat(true);
+
+    const checkInMessage = makeCoachMessage(
+      'assistant',
+      buildWeeklyRecoveryCheckinMessage()
+    );
+    appendCoachMessages(checkInMessage);
+    setCoachQuickReplies(['Still sore', 'About the same', 'Recovering faster', 'No pain now']);
+
+    const nextMeta = {
+      ...(coachChatMeta || {}),
+      lastWeeklyRecoveryCheckWeekKey: weekKey
+    };
+    setCoachChatMeta(nextMeta);
+    void saveCoachChatMeta(nextMeta);
+  }, [
+    isPreloading,
+    weeklyPlan,
+    coachChatMeta,
+    coachAgentContext,
+    makeCoachMessage,
+    appendCoachMessages
+  ]);
 
   // Expose regenerate function to console for debugging
   useEffect(() => {
@@ -2333,6 +2652,32 @@ function App() {
               <span style={{ fontSize: '18px' }}>📅</span>
               <span>Generate Weekly Plan</span>
             </button>
+
+            <button
+              onClick={() => {
+                setShowCoachChat(true);
+                setShowMenu(false);
+              }}
+              style={{
+                width: '100%',
+                padding: '16px 20px',
+                background: 'none',
+                border: 'none',
+                textAlign: 'left',
+                cursor: 'pointer',
+                color: 'var(--text-color)',
+                fontSize: '16px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                borderBottom: '1px solid var(--grid-color)'
+              }}
+              onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--grid-color)'}
+              onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+            >
+              <span style={{ display: 'inline-flex', color: 'var(--text-color)' }}>{chatIconSvg}</span>
+              <span>Open Coach Chat</span>
+            </button>
             
             <button
               onClick={async () => {
@@ -3146,6 +3491,45 @@ function App() {
           </div>
         )}
       </PullToRefresh>
+
+      {!showCoachChat && !isPreloading && !loading && (
+        <button
+          onClick={() => setShowCoachChat(true)}
+          style={{
+            position: 'fixed',
+            right: '18px',
+            bottom: 'calc(18px + env(safe-area-inset-bottom))',
+            width: '56px',
+            height: '56px',
+            borderRadius: '999px',
+            border: 'none',
+            background: '#1f71c2',
+            color: '#fff',
+            cursor: 'pointer',
+            zIndex: 10010,
+            boxShadow: '0 10px 22px rgba(0,0,0,0.35)'
+          }}
+          aria-label="Open coach chat"
+        >
+          <span style={{ display: 'inline-flex', color: '#fff' }}>{chatIconSvg}</span>
+        </button>
+      )}
+
+      <CoachChatPanel
+        isOpen={showCoachChat}
+        onClose={() => setShowCoachChat(false)}
+        messages={coachChatMessages}
+        inputValue={coachChatInput}
+        onInputChange={setCoachChatInput}
+        onSend={(event) => handleCoachSend(event)}
+        isSending={coachChatLoading}
+        quickReplies={coachQuickReplies}
+        onQuickReply={(reply) => void handleCoachSend(null, reply)}
+        askEnableInjuryMode={askEnableInjuryMode}
+        askApplyPlanUpdate={askApplyPlanUpdate}
+        onInjuryModeDecision={(choice) => void handleInjuryModeDecision(choice)}
+        onPlanUpdateDecision={(choice) => void handlePlanUpdateDecision(choice)}
+      />
 
       {/* New Activity Rating Modal */}
       {currentActivityForRating && (

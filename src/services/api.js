@@ -265,6 +265,7 @@ export const generateWorkout = async (apiKey, activities = [], isInjured = false
   }
 
   basePrompt = updatePromptWithCurrentData(basePrompt, activities);
+  basePrompt += await buildCoachAgentContextBlock();
 
   const isRecoveryRequest = !!(postponeData && postponeData.adjustment === 'recovery');
   // If this is a recovery exercise request, override the workout type
@@ -456,6 +457,46 @@ const safeJsonParse = (value, fallback) => {
   } catch {
     return fallback;
   }
+};
+
+const buildCoachAgentContextBlock = async () => {
+  let rawContext = null;
+  try {
+    rawContext = await dataService.get('coach_agent_context');
+  } catch {
+    rawContext = null;
+  }
+
+  const context = safeJsonParse(rawContext, null);
+  if (!context || typeof context !== 'object') {
+    return '';
+  }
+
+  const hasMeaningfulContext = Boolean(
+    context.injuryMode ||
+    context.injurySummary ||
+    context.recoveryStatus ||
+    (context.constraints && (
+      context.constraints.maxRunsThisWeek ||
+      (Array.isArray(context.constraints.availableDays) && context.constraints.availableDays.length > 0) ||
+      context.constraints.notes
+    )) ||
+    (Array.isArray(context.priorities) && context.priorities.length > 0)
+  );
+
+  if (!hasMeaningfulContext) {
+    return '';
+  }
+
+  return `\n\nCOACH CHAT CONTEXT (HARD CONSTRAINTS + PREFERENCES):
+${JSON.stringify(context, null, 2)}
+
+RULES FOR USING THIS CONTEXT:
+- Treat this as the most up-to-date athlete context captured in coach chat.
+- If injuryMode is true, prioritize low-risk training and conservative progressions.
+- If maxRunsThisWeek is set, do not exceed that run count.
+- If priorities are listed, reflect them directly in workout selection and weekly structure.
+- Keep recommendations non-diagnostic.`;
 };
 
 // Helper to format minutes-per-mile numeric values like 9.75 -> "9:45/mi"
@@ -917,6 +958,7 @@ export const generateDataDrivenWeeklyPlan = async (apiKey, activities = [], isIn
   }
 
   let basePrompt = updatePromptWithCurrentData(savedPrompt, activities);
+  basePrompt += await buildCoachAgentContextBlock();
   
   // Load activity ratings via DataService (for four-week summary) with localStorage fallback
   let ratingsRaw = null;
@@ -1620,6 +1662,7 @@ export const adjustWeeklyPlanForPostponement = async (apiKey, currentPlan, postp
       localStorage.getItem('coaching_prompt') || DEFAULT_COACHING_PROMPT;
   }
   let basePrompt = updatePromptWithCurrentData(savedPrompt, activities);
+  basePrompt += await buildCoachAgentContextBlock();
   
   // Load activity ratings for condensed four-week summary context
   let ratingsRaw = null;
@@ -1947,6 +1990,7 @@ CRITICAL: Every workout block MUST have both "distance" and "pace" fields. Do no
 export const generateWeeklyPlan = async (apiKey, activities = [], isInjured = false) => {
   const savedPrompt = localStorage.getItem('coaching_prompt') || DEFAULT_COACHING_PROMPT;
   let basePrompt = updatePromptWithCurrentData(savedPrompt, activities);
+  basePrompt += await buildCoachAgentContextBlock();
   
   // Add weekly plan specific instructions
   basePrompt += `\n\nWEEKLY PLAN GENERATION:

@@ -105,6 +105,30 @@ export class DataService {
             .single()
           break;
 
+        case 'coach_agent_context':
+          dataPromise = supabase
+            .from('coach_states')
+            .select('context_data')
+            .eq('user_id', user.id)
+            .maybeSingle()
+          break;
+
+        case 'coach_chat_history':
+          dataPromise = supabase
+            .from('coach_states')
+            .select('chat_history')
+            .eq('user_id', user.id)
+            .maybeSingle()
+          break;
+
+        case 'coach_chat_meta':
+          dataPromise = supabase
+            .from('coach_states')
+            .select('meta_data')
+            .eq('user_id', user.id)
+            .maybeSingle()
+          break;
+
         default:
           if (key.startsWith('weekly_plan_')) {
             const weekStart = key.replace('weekly_plan_', '')
@@ -164,6 +188,12 @@ export class DataService {
           return JSON.stringify(ratingsObj);
         case 'current_workout':
           return data ? JSON.stringify(data.workout_data) : null;
+        case 'coach_agent_context':
+          return data?.context_data ? JSON.stringify(data.context_data) : null;
+        case 'coach_chat_history':
+          return data?.chat_history ? JSON.stringify(data.chat_history) : null;
+        case 'coach_chat_meta':
+          return data?.meta_data ? JSON.stringify(data.meta_data) : null;
         default:
           if (key.startsWith('weekly_analysis_')) {
             return data?.weekly_analysis || null;
@@ -222,6 +252,51 @@ export class DataService {
               is_active: true
             })
           break
+
+        case 'coach_agent_context': {
+          const parsedValue = value ? JSON.parse(value) : {}
+          await supabase
+            .from('coach_states')
+            .upsert({
+              user_id: user.id,
+              context_data: parsedValue || {},
+              updated_at: new Date().toISOString()
+            }, {
+              onConflict: 'user_id'
+            })
+          localStorage.setItem(key, value || JSON.stringify({}))
+          break
+        }
+
+        case 'coach_chat_history': {
+          const parsedValue = value ? JSON.parse(value) : []
+          await supabase
+            .from('coach_states')
+            .upsert({
+              user_id: user.id,
+              chat_history: Array.isArray(parsedValue) ? parsedValue : [],
+              updated_at: new Date().toISOString()
+            }, {
+              onConflict: 'user_id'
+            })
+          localStorage.setItem(key, value || JSON.stringify([]))
+          break
+        }
+
+        case 'coach_chat_meta': {
+          const parsedValue = value ? JSON.parse(value) : {}
+          await supabase
+            .from('coach_states')
+            .upsert({
+              user_id: user.id,
+              meta_data: parsedValue || {},
+              updated_at: new Date().toISOString()
+            }, {
+              onConflict: 'user_id'
+            })
+          localStorage.setItem(key, value || JSON.stringify({}))
+          break
+        }
 
         case 'strava_activities': {
           const activities = JSON.parse(value || '[]')
@@ -404,6 +479,45 @@ export class DataService {
           .from('coaching_prompts')
           .update({ is_active: false })
           .eq('user_id', user.id)
+        break
+
+      case 'coach_agent_context':
+        await supabase
+          .from('coach_states')
+          .upsert({
+            user_id: user.id,
+            context_data: {},
+            updated_at: new Date().toISOString()
+          }, {
+            onConflict: 'user_id'
+          })
+        localStorage.removeItem(key)
+        break
+
+      case 'coach_chat_history':
+        await supabase
+          .from('coach_states')
+          .upsert({
+            user_id: user.id,
+            chat_history: [],
+            updated_at: new Date().toISOString()
+          }, {
+            onConflict: 'user_id'
+          })
+        localStorage.removeItem(key)
+        break
+
+      case 'coach_chat_meta':
+        await supabase
+          .from('coach_states')
+          .upsert({
+            user_id: user.id,
+            meta_data: {},
+            updated_at: new Date().toISOString()
+          }, {
+            onConflict: 'user_id'
+          })
+        localStorage.removeItem(key)
         break
 
       default:
