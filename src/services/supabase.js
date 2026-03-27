@@ -137,7 +137,7 @@ export class DataService {
               .select('plan_data')
               .eq('user_id', user.id)
               .eq('week_start_date', weekStart)
-              .single()
+              .maybeSingle()
           } else if (key.startsWith('weekly_analysis_')) {
             const weekStart = key.replace('weekly_analysis_', '')
             dataPromise = supabase
@@ -145,7 +145,7 @@ export class DataService {
               .select('weekly_analysis')
               .eq('user_id', user.id)
               .eq('week_start_date', weekStart)
-              .single()
+              .maybeSingle()
           } else if (key.startsWith('activity_insights_')) {
             const activityId = key.replace('activity_insights_', '')
             dataPromise = supabase

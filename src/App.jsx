@@ -16,6 +16,7 @@ import CoachChatPanel from './components/CoachChatPanel';
 import { generateWorkout, generateWeeklyPlan, generateDataDrivenWeeklyPlan, generateWeeklyAnalysis, matchActivitiesToWorkouts, syncWithStrava, generateInsights, detectNewActivities, adjustWeeklyPlanForPostponement, regenerateDayWorkout, updatePromptWithCurrentData, buildFourWeekSummary, buildRatingQueue, DEFAULT_COACHING_PROMPT, getAppBasePath, refreshStravaToken, getValidStravaAccessToken } from './services/api';
 import { dataService, setupRealtimeSync, syncAllDataFromSupabase, enableSupabase, getActivityRating, getActivityRatings, getStravaTokens, saveActivityRating } from './services/supabase';
 import { getLegacyWeekKey, getWeekKey } from './utils/weekKey';
+import { hasValidWeeklyPlanObject, mergeBaselineWithRatedIds, shouldAutoGenerateWeeklyPlan } from './utils/planSync';
 import {
   loadCoachAgentContext,
   patchCoachAgentContext,
@@ -79,6 +80,15 @@ function App() {
   const weeklyCoachPromptShownRef = useRef(false);
 
   const todayDate = new Date().toISOString().split('T')[0];
+  const dayNameMap = {
+    0: 'sunday',
+    1: 'monday',
+    2: 'tuesday',
+    3: 'wednesday',
+    4: 'thursday',
+    5: 'friday',
+    6: 'saturday'
+  };
 
   const refreshActivityRatings = useCallback(async () => {
     try {
@@ -86,7 +96,7 @@ function App() {
 
       if (!dataService.useSupabase) {
         setActivityRatings(localRatings);
-        return;
+        return localRatings;
       }
 
       // Prefer direct Supabase rows for cloud truth, but keep DataService as fallback.
@@ -129,12 +139,72 @@ function App() {
       const mergedRatings = { ...localRatings, ...supabaseRatings };
       setActivityRatings(mergedRatings);
       localStorage.setItem('activity_ratings', JSON.stringify(mergedRatings));
+      return mergedRatings;
     } catch (err) {
       console.error('Failed to refresh activity ratings:', err);
       const fallback = JSON.parse(localStorage.getItem('activity_ratings') || '{}');
       setActivityRatings(fallback);
+      return fallback;
     }
   }, []);
+
+  const mergeRatedIdsIntoBaseline = useCallback((rows = []) => {
+    if (!Array.isArray(rows) || rows.length === 0) return;
+    const knownIds = JSON.parse(localStorage.getItem('last_known_activity_ids') || '[]');
+    const merged = mergeBaselineWithRatedIds(knownIds, rows);
+    localStorage.setItem('last_known_activity_ids', JSON.stringify(merged));
+  }, []);
+
+  const loadAuthoritativeRatingRows = useCallback(async () => {
+    const localRatingsMap = JSON.parse(localStorage.getItem('activity_ratings') || '{}');
+    let cloudRows = [];
+
+    if (dataService.useSupabase) {
+      // Retry once so a transient timeout does not immediately re-prompt on another device.
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const rows = await getActivityRatings();
+          if (Array.isArray(rows) && rows.length > 0) {
+            cloudRows = rows;
+            break;
+          }
+        } catch {
+          // Fall back below.
+        }
+
+        if (attempt === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+      }
+    }
+
+    const cloudMap = cloudRows.reduce((acc, row) => {
+      if (!row || row.activity_id == null) return acc;
+      acc[String(row.activity_id)] = {
+        rating: row.rating,
+        feedback: row.feedback || row.notes || '',
+        isInjured: !!row.is_injured,
+        injuryDetails: row.injury_details || ''
+      };
+      return acc;
+    }, {});
+
+    const mergedMap = { ...localRatingsMap, ...cloudMap };
+    localStorage.setItem('activity_ratings', JSON.stringify(mergedMap));
+    setActivityRatings(mergedMap);
+
+    const mergedRows = Object.entries(mergedMap).map(([activity_id, value]) => ({
+      activity_id,
+      rating: value?.rating,
+      feedback: value?.feedback || '',
+      notes: value?.feedback || '',
+      is_injured: !!value?.isInjured,
+      injury_details: value?.injuryDetails || ''
+    }));
+
+    mergeRatedIdsIntoBaseline(mergedRows);
+    return mergedRows;
+  }, [mergeRatedIdsIntoBaseline]);
 
   // Cloud ratings fallback pull: keeps devices in sync even if realtime misses events.
   useEffect(() => {
@@ -155,10 +225,13 @@ function App() {
     };
   }, [supabaseEnabled, refreshActivityRatings]);
 
-  const activityMatches = useMemo(
-    () => (weeklyPlan && activities?.length ? matchActivitiesToWorkouts(activities, weeklyPlan) : {}),
-    [weeklyPlan, activities]
-  );
+  const activityMatches = useMemo(() => {
+    if (!weeklyPlan) return {};
+    if (activities?.length) {
+      return matchActivitiesToWorkouts(activities, weeklyPlan);
+    }
+    return weeklyPlan._activityMatches || {};
+  }, [weeklyPlan, activities]);
 
   const fourWeekSummary = useMemo(
     () => buildFourWeekSummary(activities || [], activityRatings),
@@ -513,6 +586,9 @@ function App() {
         ]);
 
         let effectiveWeeklyPlanData = weeklyPlanData;
+        if (!effectiveWeeklyPlanData && supabaseData?.weeklyPlan) {
+          effectiveWeeklyPlanData = JSON.stringify(supabaseData.weeklyPlan);
+        }
         if (!effectiveWeeklyPlanData && legacyWeekKey !== weekKey) {
           const legacyPlanData = await dataService.get(`weekly_plan_${legacyWeekKey}`).catch(() => null);
           if (legacyPlanData) {
@@ -668,7 +744,8 @@ function App() {
                     date: postponeData.postponedDate || new Date().toISOString(),
                     originalDay: currentDayName,
                     originalWorkout: parsedPlanForState[currentDayName] || postponeData.originalWorkout,
-                    adjustment: postponeData.adjustment || 'same'
+                    adjustment: postponeData.adjustment || 'same',
+                    rescheduledAt: null
                   };
                   
                   // Clear the workout for the postponed day
@@ -697,6 +774,7 @@ function App() {
           const postponements = parsedPlanForState._postponements || {};
           const todayPostponeInfo = postponements[dayNameMap[dayOfWeek]];
           const isTodayPostponed = !!todayPostponeInfo && todayPostponeInfo.postponed;
+          const hasAlreadyRescheduled = !!todayPostponeInfo?.rescheduledAt;
           const todayWorkoutStillExists = !!parsedPlanForState[dayNameMap[dayOfWeek]];
           
           // Check if plan has been redistributed - if postponed day is null but other days still have
@@ -706,7 +784,7 @@ function App() {
           
           // Trigger rescheduling if today is postponed, regardless of whether workout still exists
           // The workout might have been cleared but plan not yet redistributed
-          if (isTodayPostponed) {
+          if (isTodayPostponed && !hasAlreadyRescheduled) {
             console.log('Detected postponed day. Ensuring plan is rescheduled...', {
               currentDayName: dayNameMap[dayOfWeek],
               workoutStillExists: todayWorkoutStillExists,
@@ -733,6 +811,10 @@ function App() {
               adjustedPlan._postponements = {
                 ...(adjustedPlan._postponements || {}),
                 ...(parsedPlanForState._postponements || {})
+              };
+              adjustedPlan._postponements[dayNameMap[dayOfWeek]] = {
+                ...(adjustedPlan._postponements[dayNameMap[dayOfWeek]] || {}),
+                rescheduledAt: new Date().toISOString()
               };
               
               
@@ -772,23 +854,46 @@ function App() {
               setWeeklyPlan(parsedPlanForState);
               setWeeklyPlanRefreshKey(prev => prev + 1);
             }
+          } else if (isTodayPostponed && hasAlreadyRescheduled) {
+            console.log('Skipping postpone auto-reschedule: already applied for today.');
           }
         }
 
-        // Auto-generate weekly plan when today's entry is missing
+        const hasWeeklyPlan = hasValidWeeklyPlanObject(parsedPlanForState);
+        // Auto-generate weekly plan only when no weekly plan object exists
         let planWasGenerated = false;
-        const todayDayName = dayNameMap[dayOfWeek];
-        const todayPostponeInfo = parsedPlanForState?._postponements?.[todayDayName];
-        const isTodayExplicitlyPostponed = !!todayPostponeInfo?.postponed;
-        const todayPlanEntry = parsedPlanForState ? parsedPlanForState[todayDayName] : null;
-        const hasPlanForToday = !!todayPlanEntry || isTodayExplicitlyPostponed;
-        const noPlanForToday = !hasPlanForToday;
-        const alreadyAutoGeneratedWeek = autoGeneratedWeekRef.current === weekKey ||
-          localStorage.getItem('last_auto_generated_week_key') === weekKey;
+        let missingWeeklyPlan = !hasWeeklyPlan;
+        if (missingWeeklyPlan) {
+          const retryPlanData = await dataService.get(`weekly_plan_${weekKey}`).catch(() => null);
+          if (retryPlanData) {
+            try {
+              const retriedPlan = JSON.parse(retryPlanData);
+              if (retriedPlan && typeof retriedPlan === 'object') {
+                parsedPlanForState = retriedPlan;
+                setWeeklyPlan(retriedPlan);
+                missingWeeklyPlan = false;
+              }
+            } catch {
+              // keep missingWeeklyPlan as true
+            }
+          }
+        }
+        const serverAutoGeneratedWeekKey = parsedPlanForState?._generationMeta?.autoGeneratedWeekKey || null;
+        const localAutoGeneratedWeekKey = autoGeneratedWeekRef.current || localStorage.getItem('last_auto_generated_week_key');
+        const allowAutoGeneration = shouldAutoGenerateWeeklyPlan({
+          plan: parsedPlanForState,
+          weekKey,
+          availableApiKey,
+          activityCount: finalActivities.length,
+          localAutoGeneratedWeekKey
+        });
+        const alreadyAutoGeneratedWeek = !allowAutoGeneration && missingWeeklyPlan && (
+          serverAutoGeneratedWeekKey === weekKey || localAutoGeneratedWeekKey === weekKey
+        );
 
-        if (noPlanForToday && availableApiKey && finalActivities.length > 0 && !alreadyAutoGeneratedWeek) {
+        if (allowAutoGeneration) {
           try {
-            console.log('Auto-generating weekly plan because today has no plan entry...');
+            console.log('Auto-generating weekly plan because no valid weekly plan exists...');
             // Call handleGenerateWeeklyPlan with auto-generation flag
             await handleGenerateWeeklyPlan(true);
             planWasGenerated = true;
@@ -838,8 +943,10 @@ function App() {
           } catch (err) {
             console.error('Auto-generation of weekly plan failed:', err);
           }
-        } else if (noPlanForToday && alreadyAutoGeneratedWeek) {
+        } else if (missingWeeklyPlan && alreadyAutoGeneratedWeek) {
           console.log('Skipping auto-generation: weekly plan already auto-generated for this week.');
+        } else if (!missingWeeklyPlan) {
+          console.log('Skipping auto-generation: Supabase/local weekly plan already exists.');
         }
 
         // Auto-generate weekly analysis if missing (only if plan wasn't just generated)
@@ -938,20 +1045,8 @@ function App() {
           }
         }
         
-        // Fetch existing ratings from Supabase to avoid re-prompting
-        let existingRatings = [];
-        try {
-          existingRatings = await getActivityRatings();
-          // Merge rated activity IDs into last_known_activity_ids
-          if (existingRatings.length > 0) {
-            const ratedIds = existingRatings.map(r => String(r.activity_id));
-            const knownIds = JSON.parse(localStorage.getItem('last_known_activity_ids') || '[]');
-            const merged = [...new Set([...knownIds, ...ratedIds])];
-            localStorage.setItem('last_known_activity_ids', JSON.stringify(merged));
-          }
-        } catch (e) {
-          console.warn('Could not fetch existing ratings from Supabase, using localStorage fallback');
-        }
+        // Load merged cloud+local ratings before building the queue.
+        const existingRatings = await loadAuthoritativeRatingRows();
 
         // Detect new activities after sync (compare against last known IDs BEFORE updating them)
         let newActivities = [];
@@ -1048,10 +1143,15 @@ function App() {
           if (!plan) return;
           setWeeklyPlan((prev) => {
             if (!prev) return plan;
-            const incomingTime = new Date(plan._updatedAt || 0).getTime();
-            const currentTime = new Date(prev._updatedAt || 0).getTime();
+            const incomingRaw = new Date(plan._updatedAt || 0).getTime();
+            const currentRaw = new Date(prev._updatedAt || 0).getTime();
+            const incomingTime = Number.isFinite(incomingRaw) ? incomingRaw : 0;
+            const currentTime = Number.isFinite(currentRaw) ? currentRaw : 0;
             if (incomingTime > currentTime) return plan;
-            return prev;
+            if (incomingTime < currentTime) return prev;
+            const incomingStr = JSON.stringify(plan);
+            const currentStr = JSON.stringify(prev);
+            return incomingStr !== currentStr ? plan : prev;
           });
         },
         onRatingsChange: async () => {
@@ -1338,6 +1438,13 @@ function App() {
       delete planToSave._ratingAnalysis;
       // Store activity matches with the plan
       planToSave._activityMatches = activityMatches;
+      planToSave._weekStartDate = weekKey;
+      planToSave._generationMeta = {
+        ...(weeklyPlan._generationMeta || {}),
+        source: isAutoGeneration ? 'auto' : 'manual',
+        lastGeneratedAt: new Date().toISOString(),
+        autoGeneratedWeekKey: isAutoGeneration ? weekKey : (weeklyPlan._generationMeta?.autoGeneratedWeekKey || null)
+      };
       
       // Add timestamp to track when this update was made
       planToSave._updatedAt = new Date().toISOString();
@@ -1897,7 +2004,8 @@ function App() {
         date: postponeData.postponedDate || new Date().toISOString(),
         originalDay: currentDayName,
         originalWorkout: originalWorkout,
-        adjustment: postponeData.adjustment
+        adjustment: postponeData.adjustment,
+        rescheduledAt: null
       };
       
       
@@ -1934,6 +2042,10 @@ function App() {
             ...(adjustedPlan._postponements || {}),
             ...(weeklyPlan._postponements || {})
           };
+          adjustedPlan._postponements[currentDayName] = {
+            ...(adjustedPlan._postponements[currentDayName] || {}),
+            rescheduledAt: new Date().toISOString()
+          };
           
           
           // CRITICAL: Ensure ALL postponed days are explicitly set to null (AI might put workouts back)
@@ -1950,6 +2062,7 @@ function App() {
           
           // Add timestamp to track when this update was made
           adjustedPlan._updatedAt = new Date().toISOString();
+          adjustedPlan._weekStartDate = weekKey;
           
           // Update weekly plan state immediately (optimistic update)
           setWeeklyPlan(adjustedPlan);
@@ -1974,6 +2087,7 @@ function App() {
           setLoading(false);
           // Add timestamp to track when this update was made
           weeklyPlan._updatedAt = new Date().toISOString();
+          weeklyPlan._weekStartDate = weekKey;
           
           // Update weekly plan state immediately (optimistic update)
           setWeeklyPlan(weeklyPlan);
@@ -1991,6 +2105,7 @@ function App() {
       } else {
         // Add timestamp to track when this update was made
         weeklyPlan._updatedAt = new Date().toISOString();
+        weeklyPlan._weekStartDate = weekKey;
         
         // Update weekly plan state immediately (optimistic update)
         setWeeklyPlan(weeklyPlan);
@@ -2072,16 +2187,14 @@ function App() {
         await dataService.set('strava_activities', JSON.stringify(syncedActivities));
         localStorage.setItem('strava_activities', JSON.stringify(syncedActivities)); // Keep local copy
 
-        // Fetch existing ratings from Supabase to avoid re-prompting
-        let existingRatings = [];
-        try {
-          existingRatings = await getActivityRatings();
-        } catch (e) {
-          console.warn('Could not fetch existing ratings from Supabase, using localStorage fallback');
-        }
+        // Load merged cloud+local ratings before queueing prompts.
+        const existingRatings = await loadAuthoritativeRatingRows();
+
+        // Merge rated IDs into baseline first so cross-device ratings suppress prompts.
+        const baselineWithRatings = mergeBaselineWithRatedIds(lastKnownIds, existingRatings);
 
         // Detect new activities and prompt for rating (only if baseline exists)
-        let detectedNew = detectNewActivities(syncedActivities, lastKnownIds);
+        let detectedNew = detectNewActivities(syncedActivities, baselineWithRatings);
         
         // Filter out activities that already have ratings
         let newActivities = buildRatingQueue(detectedNew, existingRatings);
@@ -2346,11 +2459,25 @@ function App() {
         );
 
         setWeeklyPlan(updatedPlan);
+        setWeeklyPlanRefreshKey((prev) => prev + 1);
         if (updatedPlan[dayKey]) {
           setSelectedPlannedWorkout({
             ...selectedPlannedWorkout,
             workout: updatedPlan[dayKey]
           });
+        }
+
+        const todayDayKey = dayNameMap[new Date().getDay()];
+        if (dayKey === todayDayKey) {
+          const todaysWorkout = updatedPlan[dayKey] || null;
+          setWorkout(todaysWorkout);
+          if (todaysWorkout) {
+            await dataService.set('current_workout', JSON.stringify(todaysWorkout));
+            localStorage.setItem('current_workout', JSON.stringify(todaysWorkout));
+          } else {
+            await dataService.set('current_workout', null);
+            localStorage.removeItem('current_workout');
+          }
         }
       } catch (e) {
         console.error('Failed to regenerate day workout:', e);
@@ -3266,17 +3393,7 @@ function App() {
                     onFix={async () => {
                       if (!weeklyPlan) return;
                       const today = new Date();
-                      const dayOfWeek = today.getDay();
-                      const dayNameMap = {
-                        0: 'sunday',
-                        1: 'monday',
-                        2: 'tuesday',
-                        3: 'wednesday',
-                        4: 'thursday',
-                        5: 'friday',
-                        6: 'saturday'
-                      };
-                      const dayKey = dayNameMap[dayOfWeek];
+                      const dayKey = dayNameMap[today.getDay()];
                       
                       setIsFixingWorkout(true);
                       try {
@@ -3292,10 +3409,15 @@ function App() {
                         );
                         
                         setWeeklyPlan(updatedPlan);
+                        setWeeklyPlanRefreshKey((prev) => prev + 1);
                         if (updatedPlan[dayKey]) {
                           setWorkout(updatedPlan[dayKey]);
                           await dataService.set('current_workout', JSON.stringify(updatedPlan[dayKey]));
                           localStorage.setItem('current_workout', JSON.stringify(updatedPlan[dayKey]));
+                        } else {
+                          setWorkout(null);
+                          await dataService.set('current_workout', null);
+                          localStorage.removeItem('current_workout');
                         }
                       } catch (e) {
                         console.error('Failed to regenerate day workout:', e);

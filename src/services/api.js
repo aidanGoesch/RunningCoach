@@ -1462,21 +1462,55 @@ CRITICAL INSTRUCTIONS:
   }
 };
 
+const formatDateKey = (date) => {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const parseWeekStartKeyToUtcDate = (weekStartKey) => {
+  if (typeof weekStartKey !== 'string') return null;
+  const match = weekStartKey.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const [, y, m, d] = match;
+  return new Date(Date.UTC(Number(y), Number(m) - 1, Number(d)));
+};
+
+const getActivityDateKey = (activity) => {
+  const localDate = typeof activity?.start_date_local === 'string'
+    ? activity.start_date_local.split('T')[0]
+    : null;
+  if (localDate && /^\d{4}-\d{2}-\d{2}$/.test(localDate)) {
+    return localDate;
+  }
+
+  const utcDate = typeof activity?.start_date === 'string'
+    ? activity.start_date.split('T')[0]
+    : null;
+  if (utcDate && /^\d{4}-\d{2}-\d{2}$/.test(utcDate)) {
+    return utcDate;
+  }
+
+  if (!activity?.start_date) return null;
+  return formatDateKey(new Date(activity.start_date));
+};
+
 // Helper function to get the calendar date for a day of the current week
-function getDateForDayOfCurrentWeek(dayKey) {
+function getDateForDayOfCurrentWeek(dayKey, weekStartKey) {
   const dayIndexMap = {
     monday: 0, tuesday: 1, wednesday: 2, thursday: 3,
     friday: 4, saturday: 5, sunday: 6
   };
-  const today = new Date();
-  const todayDay = today.getDay(); // 0=Sun, 1=Mon...
-  const mondayOffset = todayDay === 0 ? -6 : 1 - todayDay;
-  const monday = new Date(today);
-  monday.setDate(today.getDate() + mondayOffset);
-  monday.setHours(0, 0, 0, 0);
+  let monday = parseWeekStartKeyToUtcDate(weekStartKey);
+  if (!monday) {
+    const fallbackWeekKey = getWeekKey(new Date());
+    monday = parseWeekStartKeyToUtcDate(fallbackWeekKey);
+  }
+  if (!monday) return null;
   const target = new Date(monday);
-  target.setDate(monday.getDate() + dayIndexMap[dayKey]);
-  return target.toLocaleDateString('en-CA'); // YYYY-MM-DD
+  target.setUTCDate(monday.getUTCDate() + dayIndexMap[dayKey]);
+  return formatDateKey(target);
 }
 
 // Match Strava activities to assigned workouts
@@ -1487,6 +1521,7 @@ export const matchActivitiesToWorkouts = (activities, weeklyPlan) => {
 
   const days = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
   const result = {};
+  const weekStartKey = weeklyPlan?._weekStartDate || getWeekKey(new Date());
 
   // For each day in the weekly plan
   for (const dayKey of days) {
@@ -1494,11 +1529,13 @@ export const matchActivitiesToWorkouts = (activities, weeklyPlan) => {
     if (!workout) continue; // rest day — skip
 
     // Find the calendar date this day corresponds to in the current week
-    const dayDate = getDateForDayOfCurrentWeek(dayKey); // returns YYYY-MM-DD string
+    const dayDate = getDateForDayOfCurrentWeek(dayKey, weekStartKey); // returns YYYY-MM-DD string
+    if (!dayDate) continue;
     
     // Find any Strava activities whose start_date falls on that calendar date
     const matched = activities.filter(a => {
-      const actDate = new Date(a.start_date).toLocaleDateString('en-CA'); // YYYY-MM-DD
+      const actDate = getActivityDateKey(a);
+      if (!actDate) return false;
       return actDate === dayDate && a.type === 'Run';
     });
 
@@ -2941,6 +2978,8 @@ Return ONLY the corrected JSON object for the "${dayName}" workout.`;
 
   // Compute canonical local week key (Monday) for storage
   const weekKey = getWeekKey(today);
+  updatedPlan._updatedAt = new Date().toISOString();
+  updatedPlan._weekStartDate = currentWeekPlan?._weekStartDate || weekKey;
 
   // Save via DataService and localStorage
   const planJson = JSON.stringify(updatedPlan);

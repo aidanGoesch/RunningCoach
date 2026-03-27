@@ -17,8 +17,10 @@ const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, on
       return true;
     }
     
-    const incomingTime = new Date(incomingPlan._updatedAt || 0).getTime();
-    const currentTime = new Date(currentPlan._updatedAt || 0).getTime();
+    const incomingTimeRaw = new Date(incomingPlan._updatedAt || 0).getTime();
+    const currentTimeRaw = new Date(currentPlan._updatedAt || 0).getTime();
+    const incomingTime = Number.isFinite(incomingTimeRaw) ? incomingTimeRaw : 0;
+    const currentTime = Number.isFinite(currentTimeRaw) ? currentTimeRaw : 0;
     
     if (incomingTime > currentTime) {
       // Incoming plan is newer - apply it

@@ -20,6 +20,9 @@ export default defineConfig({
       }
     }
   },
+  test: {
+    environment: 'jsdom'
+  },
   // Configure public directory to not interfere with routes
   publicDir: 'public'
 })
