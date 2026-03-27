@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 const roleStyle = {
   assistant: {
@@ -21,6 +21,8 @@ const CoachChatPanel = ({
   onInputChange,
   onSend,
   isSending = false,
+  isPlanApplying = false,
+  disableInteractions = false,
   quickReplies = [],
   onQuickReply,
   askEnableInjuryMode = false,
@@ -29,11 +31,38 @@ const CoachChatPanel = ({
   onPlanUpdateDecision
 }) => {
   const listRef = useRef(null);
+  const textareaRef = useRef(null);
+  const [applyDots, setApplyDots] = useState('');
+  const isBusy = isSending || isPlanApplying || disableInteractions;
 
   useEffect(() => {
     if (!isOpen || !listRef.current) return;
     listRef.current.scrollTop = listRef.current.scrollHeight;
-  }, [isOpen, messages, askEnableInjuryMode, askApplyPlanUpdate]);
+  }, [isOpen, messages, askEnableInjuryMode, askApplyPlanUpdate, isPlanApplying]);
+
+  useEffect(() => {
+    if (!textareaRef.current) return;
+    const el = textareaRef.current;
+    const minHeight = 42;
+    const maxHeight = 104; // roughly 4 visible lines at 16px.
+    el.style.height = 'auto';
+    const nextHeight = Math.max(minHeight, Math.min(el.scrollHeight, maxHeight));
+    el.style.height = `${nextHeight}px`;
+    el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden';
+  }, [inputValue]);
+
+  useEffect(() => {
+    if (!isPlanApplying) {
+      setApplyDots('');
+      return;
+    }
+    let tick = 0;
+    const intervalId = setInterval(() => {
+      tick = (tick + 1) % 4;
+      setApplyDots('.'.repeat(tick));
+    }, 350);
+    return () => clearInterval(intervalId);
+  }, [isPlanApplying]);
 
   const renderedMessages = useMemo(
     () => (Array.isArray(messages) ? messages : []),
@@ -51,9 +80,12 @@ const CoachChatPanel = ({
         zIndex: 10020,
         display: 'flex',
         justifyContent: 'center',
-        alignItems: 'flex-end'
+        alignItems: 'flex-end',
+        touchAction: 'manipulation'
       }}
-      onClick={onClose}
+      onClick={() => {
+        if (!disableInteractions) onClose?.();
+      }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -70,7 +102,8 @@ const CoachChatPanel = ({
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
-          boxShadow: '0 -16px 30px rgba(0,0,0,0.45)'
+          boxShadow: '0 -16px 30px rgba(0,0,0,0.45)',
+          WebkitTextSizeAdjust: '100%'
         }}
       >
         <div style={{ padding: '10px 16px 12px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
@@ -83,6 +116,7 @@ const CoachChatPanel = ({
             </div>
             <button
               onClick={onClose}
+              disabled={disableInteractions}
               style={{
                 width: '30px',
                 height: '30px',
@@ -90,9 +124,10 @@ const CoachChatPanel = ({
                 border: '1px solid rgba(255,255,255,0.2)',
                 background: 'rgba(255,255,255,0.04)',
                 color: 'rgba(255,255,255,0.75)',
-                cursor: 'pointer',
+                cursor: disableInteractions ? 'not-allowed' : 'pointer',
                 fontSize: '18px',
-                lineHeight: 1
+                lineHeight: 1,
+                opacity: disableInteractions ? 0.6 : 1
               }}
             >
               ×
@@ -144,6 +179,35 @@ const CoachChatPanel = ({
             </div>
           )}
 
+          {isPlanApplying && (
+            <div
+              style={{
+                maxWidth: '82%',
+                alignSelf: 'flex-start',
+                padding: '10px 12px',
+                borderRadius: '12px',
+                fontSize: '14px',
+                background: 'rgba(31,113,194,0.18)',
+                color: '#dcebff',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}
+            >
+              <div
+                style={{
+                  width: '14px',
+                  height: '14px',
+                  border: '2px solid rgba(220,235,255,0.35)',
+                  borderTopColor: '#dcebff',
+                  borderRadius: '50%',
+                  animation: 'spin 0.9s linear infinite'
+                }}
+              />
+              <span>Applying plan changes{applyDots}</span>
+            </div>
+          )}
+
           {askEnableInjuryMode && (
             <div
               style={{
@@ -161,6 +225,7 @@ const CoachChatPanel = ({
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button
                   onClick={() => onInjuryModeDecision?.(true)}
+                  disabled={isBusy}
                   style={{
                     padding: '7px 12px',
                     borderRadius: '999px',
@@ -168,13 +233,15 @@ const CoachChatPanel = ({
                     background: '#1f71c2',
                     color: '#fff',
                     fontWeight: 600,
-                    cursor: 'pointer'
+                    cursor: isBusy ? 'not-allowed' : 'pointer',
+                    opacity: isBusy ? 0.6 : 1
                   }}
                 >
                   Yes
                 </button>
                 <button
                   onClick={() => onInjuryModeDecision?.(false)}
+                  disabled={isBusy}
                   style={{
                     padding: '7px 12px',
                     borderRadius: '999px',
@@ -182,7 +249,8 @@ const CoachChatPanel = ({
                     background: 'transparent',
                     color: 'rgba(255,255,255,0.9)',
                     fontWeight: 600,
-                    cursor: 'pointer'
+                    cursor: isBusy ? 'not-allowed' : 'pointer',
+                    opacity: isBusy ? 0.6 : 1
                   }}
                 >
                   No
@@ -208,6 +276,7 @@ const CoachChatPanel = ({
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button
                   onClick={() => onPlanUpdateDecision?.(true)}
+                  disabled={isBusy}
                   style={{
                     padding: '7px 12px',
                     borderRadius: '999px',
@@ -215,13 +284,15 @@ const CoachChatPanel = ({
                     background: '#1f71c2',
                     color: '#fff',
                     fontWeight: 600,
-                    cursor: 'pointer'
+                    cursor: isBusy ? 'not-allowed' : 'pointer',
+                    opacity: isBusy ? 0.6 : 1
                   }}
                 >
                   Yes
                 </button>
                 <button
                   onClick={() => onPlanUpdateDecision?.(false)}
+                  disabled={isBusy}
                   style={{
                     padding: '7px 12px',
                     borderRadius: '999px',
@@ -229,7 +300,8 @@ const CoachChatPanel = ({
                     background: 'transparent',
                     color: 'rgba(255,255,255,0.9)',
                     fontWeight: 600,
-                    cursor: 'pointer'
+                    cursor: isBusy ? 'not-allowed' : 'pointer',
+                    opacity: isBusy ? 0.6 : 1
                   }}
                 >
                   No
@@ -252,6 +324,7 @@ const CoachChatPanel = ({
               <button
                 key={reply}
                 onClick={() => onQuickReply?.(reply)}
+                disabled={isBusy}
                 style={{
                   border: '1px solid rgba(255,255,255,0.25)',
                   borderRadius: '999px',
@@ -260,7 +333,8 @@ const CoachChatPanel = ({
                   fontSize: '12px',
                   padding: '7px 12px',
                   whiteSpace: 'nowrap',
-                  cursor: 'pointer'
+                  cursor: isBusy ? 'not-allowed' : 'pointer',
+                  opacity: isBusy ? 0.6 : 1
                 }}
               >
                 {reply}
@@ -278,34 +352,46 @@ const CoachChatPanel = ({
             gap: '8px'
           }}
         >
-          <input
+          <textarea
+            ref={textareaRef}
             value={inputValue}
             onChange={(e) => onInputChange?.(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                onSend?.(e);
+              }
+            }}
             placeholder="Ask your coach..."
+            disabled={isBusy}
+            rows={1}
             style={{
               flex: 1,
-              height: '42px',
+              minHeight: '42px',
+              maxHeight: '104px',
               borderRadius: '10px',
               border: '1px solid rgba(255,255,255,0.18)',
               background: 'rgba(255,255,255,0.08)',
               color: '#fff',
-              padding: '0 12px',
-              fontSize: '15px',
-              outline: 'none'
+              padding: '10px 12px',
+              fontSize: '16px',
+              lineHeight: 1.35,
+              outline: 'none',
+              resize: 'none'
             }}
           />
           <button
             type="submit"
-            disabled={isSending || !inputValue.trim()}
+            disabled={isBusy || !inputValue.trim()}
             style={{
               width: '42px',
               height: '42px',
               borderRadius: '999px',
               border: 'none',
-              background: isSending || !inputValue.trim() ? 'rgba(255,255,255,0.2)' : '#1f71c2',
+              background: isBusy || !inputValue.trim() ? 'rgba(255,255,255,0.2)' : '#1f71c2',
               color: '#fff',
               fontSize: '18px',
-              cursor: isSending || !inputValue.trim() ? 'not-allowed' : 'pointer'
+              cursor: isBusy || !inputValue.trim() ? 'not-allowed' : 'pointer'
             }}
           >
             →

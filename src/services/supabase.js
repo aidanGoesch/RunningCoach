@@ -49,6 +49,17 @@ export const ensureUser = async () => {
 export class DataService {
   constructor(useSupabase = false) {
     this.useSupabase = useSupabase
+    this.coachStatesMissing = false
+  }
+
+  isCoachStateKey(key) {
+    return key === 'coach_agent_context' || key === 'coach_chat_history' || key === 'coach_chat_meta'
+  }
+
+  isMissingRelationError(error, status) {
+    const code = error?.code || ''
+    const message = error?.message || ''
+    return status === 404 || code === 'PGRST205' || /coach_states/i.test(message)
   }
 
   async get(key) {
@@ -57,6 +68,9 @@ export class DataService {
       if (key.startsWith('recovery_workout_')) {
         return localStorage.getItem(key)
       }
+      return localStorage.getItem(key)
+    }
+    if (this.coachStatesMissing && this.isCoachStateKey(key)) {
       return localStorage.getItem(key)
     }
 
@@ -167,7 +181,15 @@ export class DataService {
       }
 
       // Race the data promise against timeout (ensureUser already raced above)
-      const { data } = await Promise.race([dataPromise, timeoutPromise]);
+      const response = await Promise.race([dataPromise, timeoutPromise]);
+      const { data, error, status } = response || {};
+      if (error) {
+        if (this.isCoachStateKey(key) && this.isMissingRelationError(error, status)) {
+          this.coachStatesMissing = true;
+          return localStorage.getItem(key);
+        }
+        throw error;
+      }
 
       // Process the response based on key type
       switch (key) {
@@ -231,6 +253,10 @@ export class DataService {
       localStorage.setItem(key, value)
       return
     }
+    if (this.coachStatesMissing && this.isCoachStateKey(key)) {
+      localStorage.setItem(key, value)
+      return
+    }
 
     try {
       console.log('[DataService Set] Supabase enabled, proceeding with save');
@@ -255,7 +281,7 @@ export class DataService {
 
         case 'coach_agent_context': {
           const parsedValue = value ? JSON.parse(value) : {}
-          await supabase
+          const { error, status } = await supabase
             .from('coach_states')
             .upsert({
               user_id: user.id,
@@ -264,13 +290,21 @@ export class DataService {
             }, {
               onConflict: 'user_id'
             })
+          if (error) {
+            if (this.isMissingRelationError(error, status)) {
+              this.coachStatesMissing = true;
+              localStorage.setItem(key, value || JSON.stringify({}))
+              break
+            }
+            throw error
+          }
           localStorage.setItem(key, value || JSON.stringify({}))
           break
         }
 
         case 'coach_chat_history': {
           const parsedValue = value ? JSON.parse(value) : []
-          await supabase
+          const { error, status } = await supabase
             .from('coach_states')
             .upsert({
               user_id: user.id,
@@ -279,13 +313,21 @@ export class DataService {
             }, {
               onConflict: 'user_id'
             })
+          if (error) {
+            if (this.isMissingRelationError(error, status)) {
+              this.coachStatesMissing = true;
+              localStorage.setItem(key, value || JSON.stringify([]))
+              break
+            }
+            throw error
+          }
           localStorage.setItem(key, value || JSON.stringify([]))
           break
         }
 
         case 'coach_chat_meta': {
           const parsedValue = value ? JSON.parse(value) : {}
-          await supabase
+          const { error, status } = await supabase
             .from('coach_states')
             .upsert({
               user_id: user.id,
@@ -294,6 +336,14 @@ export class DataService {
             }, {
               onConflict: 'user_id'
             })
+          if (error) {
+            if (this.isMissingRelationError(error, status)) {
+              this.coachStatesMissing = true;
+              localStorage.setItem(key, value || JSON.stringify({}))
+              break
+            }
+            throw error
+          }
           localStorage.setItem(key, value || JSON.stringify({}))
           break
         }
@@ -463,6 +513,10 @@ export class DataService {
       localStorage.removeItem(key)
       return
     }
+    if (this.coachStatesMissing && this.isCoachStateKey(key)) {
+      localStorage.removeItem(key)
+      return
+    }
 
     try {
       // Add timeout to prevent hanging
@@ -482,7 +536,8 @@ export class DataService {
         break
 
       case 'coach_agent_context':
-        await supabase
+        {
+          const { error, status } = await supabase
           .from('coach_states')
           .upsert({
             user_id: user.id,
@@ -491,11 +546,20 @@ export class DataService {
           }, {
             onConflict: 'user_id'
           })
+          if (error) {
+            if (this.isMissingRelationError(error, status)) {
+              this.coachStatesMissing = true;
+            } else {
+              throw error
+            }
+          }
+        }
         localStorage.removeItem(key)
         break
 
       case 'coach_chat_history':
-        await supabase
+        {
+          const { error, status } = await supabase
           .from('coach_states')
           .upsert({
             user_id: user.id,
@@ -504,11 +568,20 @@ export class DataService {
           }, {
             onConflict: 'user_id'
           })
+          if (error) {
+            if (this.isMissingRelationError(error, status)) {
+              this.coachStatesMissing = true;
+            } else {
+              throw error
+            }
+          }
+        }
         localStorage.removeItem(key)
         break
 
       case 'coach_chat_meta':
-        await supabase
+        {
+          const { error, status } = await supabase
           .from('coach_states')
           .upsert({
             user_id: user.id,
@@ -517,6 +590,14 @@ export class DataService {
           }, {
             onConflict: 'user_id'
           })
+          if (error) {
+            if (this.isMissingRelationError(error, status)) {
+              this.coachStatesMissing = true;
+            } else {
+              throw error
+            }
+          }
+        }
         localStorage.removeItem(key)
         break
 

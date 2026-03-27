@@ -189,12 +189,14 @@ const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, on
     // Polling removed - plan updates come via onWeeklyPlanChange (Supabase realtime) and weeklyPlanProp
   }, [apiKey]); // Removed onGenerateWeeklyPlan from dependencies to prevent infinite loops
 
-  // Sync weeklyPlan prop to internal state immediately when it changes
+  // Parent App state is the source of truth for immediate UI updates.
+  // Apply prop changes directly so chat-driven plan edits reflect in real time.
   useEffect(() => {
     if (weeklyPlanProp) {
-      applyPlanIfNewer(weeklyPlanProp, weeklyPlan, 'Prop Sync');
+      setWeeklyPlan(weeklyPlanProp);
+      weeklyPlanRef.current = weeklyPlanProp;
     }
-  }, [weeklyPlanProp, weeklyPlan]); // Include weeklyPlan to compare against
+  }, [weeklyPlanProp]);
 
   // Re-match activities when they change; parent pushes updated plan via props
   useEffect(() => {
@@ -239,7 +241,10 @@ const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, on
       return activityDate.getTime() === date.getTime() && activity.type === 'Run';
     });
     
-    const hasRun = hasMatchedWorkout || dayActivities.length > 0;
+    // For today, trust actual activities only; _activityMatches can be stale right after plan edits.
+    const hasRun = isToday
+      ? dayActivities.length > 0
+      : (hasMatchedWorkout || dayActivities.length > 0);
     
     // Check for postpone status
     const postponements = weeklyPlan?._postponements || {};

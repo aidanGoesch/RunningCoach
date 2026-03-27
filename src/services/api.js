@@ -496,6 +496,9 @@ RULES FOR USING THIS CONTEXT:
 - If injuryMode is true, prioritize low-risk training and conservative progressions.
 - If maxRunsThisWeek is set, do not exceed that run count.
 - If priorities are listed, reflect them directly in workout selection and weekly structure.
+- Treat constraints.notes as explicit user intent for THIS WEEK and honor it as a hard constraint.
+- If constraints.notes references specific day changes (e.g., moved run day, skipped speed), preserve those edits and avoid reintroducing removed sessions.
+- Keep unchanged days stable unless a change is required by those explicit notes.
 - Keep recommendations non-diagnostic.`;
 };
 
@@ -2022,6 +2025,158 @@ CRITICAL: Every workout block MUST have both "distance" and "pace" fields. Do no
     // Return original plan on error
     return currentPlan;
   }
+};
+
+export const applyInstructionToWeeklyPlan = async (apiKey, currentPlan, instruction, activities = []) => {
+  if (!currentPlan || typeof currentPlan !== 'object') {
+    throw new Error('Current weekly plan is required');
+  }
+  if (!instruction || !instruction.trim()) {
+    return currentPlan;
+  }
+
+  const extractBalancedJsonObject = (text) => {
+    if (!text) return null;
+    const start = text.indexOf('{');
+    if (start < 0) return null;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < text.length; i += 1) {
+      const ch = text[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+        } else if (ch === '"') {
+          inString = false;
+        }
+      } else if (ch === '"') {
+        inString = true;
+      } else if (ch === '{') {
+        depth += 1;
+      } else if (ch === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          return text.slice(start, i + 1);
+        }
+      }
+    }
+    return null;
+  };
+
+  const tryParsePlanJson = (content) => {
+    const balanced = extractBalancedJsonObject(content);
+    if (!balanced) return null;
+    const candidates = [
+      balanced,
+      balanced.replace(/,\s*([}\]])/g, '$1') // remove trailing commas
+    ];
+    for (const candidate of candidates) {
+      try {
+        return JSON.parse(candidate);
+      } catch {
+        // continue
+      }
+    }
+    return null;
+  };
+
+  let basePrompt = `You are an expert running coach updating an existing weekly plan.
+Your task is to apply the user's instruction to THIS WEEK ONLY with minimal edits.
+Do not rewrite unrelated days.
+If the instruction says to skip/move a session, preserve that exactly.
+If the instruction says do NOT enable injury mode, do not add injury mode behavior.
+Return ONLY valid JSON.
+`;
+  basePrompt = updatePromptWithCurrentData(basePrompt, activities);
+  basePrompt += await buildCoachAgentContextBlock();
+
+  const messages = [
+    { role: 'system', content: basePrompt },
+    {
+      role: 'user',
+      content: `Current weekly plan JSON:
+${JSON.stringify(currentPlan, null, 2)}
+
+User instruction for this week:
+${instruction}
+
+Return the full updated weekly plan in the exact same JSON shape.
+Rules:
+1) Keep unchanged days exactly as-is unless the instruction requires a change.
+2) Preserve metadata fields (e.g. _postponements) unless instruction conflicts.
+3) Every running workout block must include required fields (title, distance, pace, duration, notes).
+4) Return ONLY JSON.`
+    }
+  ];
+
+  const response = await fetch(OPENAI_API_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o-mini',
+      messages,
+      temperature: 0.2,
+      max_tokens: 3000
+    })
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Weekly instruction update failed: ${response.status} ${errText}`);
+  }
+
+  const data = await response.json();
+  const content = data?.choices?.[0]?.message?.content || '';
+  let updatedPlan = tryParsePlanJson(content);
+
+  // One repair attempt if model returned malformed JSON.
+  if (!updatedPlan) {
+    const repairResponse = await fetch(OPENAI_API_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        temperature: 0,
+        max_tokens: 3000,
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a JSON repair tool. Return ONLY valid JSON with no commentary.'
+          },
+          {
+            role: 'user',
+            content: `Fix this malformed JSON so it parses and preserves the same intent/fields:\n\n${content}`
+          }
+        ]
+      })
+    });
+
+    if (repairResponse.ok) {
+      const repairData = await repairResponse.json();
+      const repairedContent = repairData?.choices?.[0]?.message?.content || '';
+      updatedPlan = tryParsePlanJson(repairedContent);
+    }
+  }
+
+  if (!updatedPlan) {
+    throw new Error('No valid JSON found while applying weekly instruction');
+  }
+
+  const validation = validatePlanBlocks(updatedPlan);
+  if (!validation.isValid) {
+    throw new Error(`Instruction-updated plan invalid: ${validation.errors.join('; ')}`);
+  }
+
+  return updatedPlan;
 };
 
 export const generateWeeklyPlan = async (apiKey, activities = [], isInjured = false) => {

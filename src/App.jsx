@@ -13,7 +13,7 @@ import PullToRefresh from './components/PullToRefresh';
 import NewActivityRatingModal from './components/NewActivityRatingModal';
 import RecoveryPage from './components/RecoveryPage';
 import CoachChatPanel from './components/CoachChatPanel';
-import { generateWorkout, generateWeeklyPlan, generateDataDrivenWeeklyPlan, generateWeeklyAnalysis, matchActivitiesToWorkouts, syncWithStrava, generateInsights, detectNewActivities, adjustWeeklyPlanForPostponement, regenerateDayWorkout, updatePromptWithCurrentData, buildFourWeekSummary, buildRatingQueue, DEFAULT_COACHING_PROMPT, getAppBasePath, refreshStravaToken, getValidStravaAccessToken } from './services/api';
+import { generateWorkout, generateWeeklyPlan, generateDataDrivenWeeklyPlan, generateWeeklyAnalysis, matchActivitiesToWorkouts, syncWithStrava, generateInsights, detectNewActivities, adjustWeeklyPlanForPostponement, regenerateDayWorkout, applyInstructionToWeeklyPlan, updatePromptWithCurrentData, buildFourWeekSummary, buildRatingQueue, DEFAULT_COACHING_PROMPT, getAppBasePath, refreshStravaToken, getValidStravaAccessToken } from './services/api';
 import { dataService, setupRealtimeSync, syncAllDataFromSupabase, enableSupabase, getActivityRating, getActivityRatings, getStravaTokens, saveActivityRating } from './services/supabase';
 import { getLegacyWeekKey, getWeekKey } from './utils/weekKey';
 import { hasValidWeeklyPlanObject, mergeBaselineWithRatedIds, shouldAutoGenerateWeeklyPlan } from './utils/planSync';
@@ -64,6 +64,7 @@ function App() {
   const [coachChatMessages, setCoachChatMessages] = useState([]);
   const [coachChatInput, setCoachChatInput] = useState('');
   const [coachChatLoading, setCoachChatLoading] = useState(false);
+  const [isPlanApplying, setIsPlanApplying] = useState(false);
   const [coachAgentContext, setCoachAgentContext] = useState(null);
   const [coachChatMeta, setCoachChatMeta] = useState(null);
   const [pendingContextPatch, setPendingContextPatch] = useState(null);
@@ -78,6 +79,8 @@ function App() {
     'Show me my updated plan'
   ]);
   const weeklyCoachPromptShownRef = useRef(false);
+  const pendingSyncCurrentWorkoutRef = useRef(false);
+  const pendingDirectPlanEditRef = useRef(null);
 
   const todayDate = new Date().toISOString().split('T')[0];
   const dayNameMap = {
@@ -305,6 +308,125 @@ function App() {
     createdAt: new Date().toISOString(),
     ...extra
   }), []);
+
+  const shouldSyncCurrentWorkoutForInstruction = (instruction = '', suggestedPlanAction = 'none') => {
+    if (suggestedPlanAction === 'regenerate_day') return true;
+
+    const lower = String(instruction || '').toLowerCase();
+    const explicitTodayRegex = /\btoday\b|\btoday's\b|\bcurrent workout\b|\bdo today\b|\btonight\b|\bthis morning\b|\bthis afternoon\b/;
+    if (explicitTodayRegex.test(lower)) return true;
+
+    const todayName = dayNameMap[new Date().getDay()];
+    if (todayName && new RegExp(`\\b${todayName}\\b`, 'i').test(lower)) {
+      return true;
+    }
+
+    return false;
+  };
+
+  const extractLatestWeeklyInstruction = (contextPatch) => {
+    const notes = contextPatch?.constraints?.notes || '';
+    const lines = String(notes)
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      const prefix = 'Latest user weekly plan instruction:';
+      if (lines[i].startsWith(prefix)) {
+        return lines[i].slice(prefix.length).trim();
+      }
+    }
+    return '';
+  };
+
+  const stripPlanMetaForCompare = (plan) => {
+    if (!plan || typeof plan !== 'object') return plan;
+    const clone = { ...plan };
+    delete clone._updatedAt;
+    delete clone._generationMeta;
+    delete clone._activityMatches;
+    return clone;
+  };
+
+  const isPlannedRunWorkout = (workout) => {
+    if (!workout || typeof workout !== 'object') return false;
+    const type = String(workout.type || '').toLowerCase().trim();
+    const title = String(workout.title || '').toLowerCase().trim();
+
+    const nonRunTokens = ['recovery', 'rest', 'mobility', 'pt', 'strength', 'cross'];
+    const runTokens = ['run', 'easy', 'speed', 'tempo', 'long', 'interval', 'threshold'];
+
+    if (type) {
+      if (nonRunTokens.some((token) => type.includes(token))) return false;
+      return runTokens.some((token) => type.includes(token));
+    }
+
+    if (!title) return false;
+    if (nonRunTokens.some((token) => title.includes(token))) return false;
+    return runTokens.some((token) => title.includes(token));
+  };
+
+  const parseDeleteWorkoutInstruction = (instruction = '') => {
+    const lower = String(instruction || '').toLowerCase();
+    const hasDeleteIntent = /\b(remove|delete|clear|drop|cancel|skip|omit)\b/.test(lower) ||
+      /\bwithout\b.*\bworkout\b/.test(lower) ||
+      /\bno workout\b/.test(lower);
+    const hasWorkoutIntent = /\b(workout|run|session|speed work|easy run|long run|tempo)\b/.test(lower);
+
+    if (!hasDeleteIntent || !hasWorkoutIntent) {
+      return { shouldDelete: false, targetDayKey: null };
+    }
+
+    if (/\btoday\b|\btoday's\b/.test(lower)) {
+      return {
+        shouldDelete: true,
+        targetDayKey: dayNameMap[new Date().getDay()]
+      };
+    }
+
+    const weekdayAliases = {
+      monday: ['monday', 'mon'],
+      tuesday: ['tuesday', 'tue', 'tues'],
+      wednesday: ['wednesday', 'wed'],
+      thursday: ['thursday', 'thu', 'thur', 'thurs'],
+      friday: ['friday', 'fri'],
+      saturday: ['saturday', 'sat'],
+      sunday: ['sunday', 'sun']
+    };
+
+    for (const [dayKey, aliases] of Object.entries(weekdayAliases)) {
+      if (aliases.some((alias) => new RegExp(`\\b${alias}\\b`, 'i').test(lower))) {
+        return { shouldDelete: true, targetDayKey: dayKey };
+      }
+    }
+
+    // Infer canonical day when user references workout type but not weekday.
+    if (/\b(speed|tempo)\b/.test(lower)) {
+      return { shouldDelete: true, targetDayKey: 'thursday' };
+    }
+    if (/\beasy\b/.test(lower)) {
+      return { shouldDelete: true, targetDayKey: 'tuesday' };
+    }
+    if (/\blong\b/.test(lower)) {
+      return { shouldDelete: true, targetDayKey: 'sunday' };
+    }
+
+    return { shouldDelete: true, targetDayKey: null };
+  };
+
+  const inferDirectPlanEditFromConversation = (userText = '', assistantText = '') => {
+    const fromUser = parseDeleteWorkoutInstruction(userText);
+    if (fromUser.shouldDelete && fromUser.targetDayKey) {
+      return { action: 'delete_day', targetDayKey: fromUser.targetDayKey };
+    }
+
+    const fromAssistant = parseDeleteWorkoutInstruction(assistantText);
+    if (fromAssistant.shouldDelete && fromAssistant.targetDayKey) {
+      return { action: 'delete_day', targetDayKey: fromAssistant.targetDayKey };
+    }
+
+    return null;
+  };
 
   const loadCoachState = useCallback(async () => {
     try {
@@ -1398,9 +1520,10 @@ function App() {
     return () => clearInterval(pollInterval);
   }, [isStravaCallback]);
 
-  const handleGenerateWeeklyPlan = useCallback(async (isAutoGeneration = false) => {
+  const handleGenerateWeeklyPlan = useCallback(async (isAutoGeneration = false, options = {}) => {
     const availableApiKey = import.meta.env.VITE_OPENAI_API_KEY || apiKey;
     let generationSucceeded = false;
+    const { skipCurrentWorkoutSync = false } = options || {};
     
     if (!availableApiKey) {
       if (!isAutoGeneration) {
@@ -1451,6 +1574,7 @@ function App() {
       
       // Update weekly plan state immediately (optimistic update)
       setWeeklyPlan(planToSave);
+      setWeeklyPlanRefreshKey(prev => prev + 1);
       
       // Save to localStorage synchronously (immediate)
       localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(planToSave));
@@ -1469,40 +1593,43 @@ function App() {
       // Mark generation date
       localStorage.setItem('last_plan_generation_date', today.toISOString().split('T')[0]);
       
-      // Set current workout based on today's day of the week
-      const dayOfWeek = today.getDay(); // 0=Sunday, 1=Monday, 2=Tuesday, 4=Thursday
-      const dayNameMap = {
-        0: 'sunday',
-        1: 'monday',
-        2: 'tuesday',
-        3: 'wednesday',
-        4: 'thursday',
-        5: 'friday',
-        6: 'saturday'
-      };
-      
-      // Check if today was postponed
-      const postponements = weeklyPlan._postponements || {};
-      const todayPostponeInfo = postponements[dayNameMap[dayOfWeek]];
-      const isTodayPostponed = !!todayPostponeInfo && todayPostponeInfo.postponed;
-      
-      const todayWorkout = weeklyPlan[dayNameMap[dayOfWeek]];
-      
-      // Clear current workout first
-      setWorkout(null);
-      await dataService.set('current_workout', null);
-      localStorage.removeItem('current_workout');
-      
-      // Set today's workout if it exists and wasn't postponed
-      if (!isTodayPostponed && todayWorkout) {
-        setWorkout(todayWorkout);
-        await dataService.set('current_workout', JSON.stringify(todayWorkout));
-        localStorage.setItem('current_workout', JSON.stringify(todayWorkout));
-      } else if (!isTodayPostponed && weeklyPlan.tuesday) {
-        // Fallback to Tuesday if today doesn't have a workout and wasn't postponed
-        setWorkout(weeklyPlan.tuesday);
-        await dataService.set('current_workout', JSON.stringify(weeklyPlan.tuesday));
-        localStorage.setItem('current_workout', JSON.stringify(weeklyPlan.tuesday));
+      // Set current workout based on today's day of the week unless explicitly skipped.
+      // Chat-driven plan edits should not clobber the currently displayed day workout.
+      if (!skipCurrentWorkoutSync) {
+        const dayOfWeek = today.getDay(); // 0=Sunday, 1=Monday, 2=Tuesday, 4=Thursday
+        const dayNameMap = {
+          0: 'sunday',
+          1: 'monday',
+          2: 'tuesday',
+          3: 'wednesday',
+          4: 'thursday',
+          5: 'friday',
+          6: 'saturday'
+        };
+        
+        // Check if today was postponed
+        const postponements = planToSave._postponements || {};
+        const todayPostponeInfo = postponements[dayNameMap[dayOfWeek]];
+        const isTodayPostponed = !!todayPostponeInfo && todayPostponeInfo.postponed;
+        
+        const todayWorkout = planToSave[dayNameMap[dayOfWeek]];
+        
+        // Clear current workout first
+        setWorkout(null);
+        await dataService.set('current_workout', null);
+        localStorage.removeItem('current_workout');
+        
+        // Set today's workout if it exists and wasn't postponed
+        if (!isTodayPostponed && todayWorkout) {
+          setWorkout(todayWorkout);
+          await dataService.set('current_workout', JSON.stringify(todayWorkout));
+          localStorage.setItem('current_workout', JSON.stringify(todayWorkout));
+        } else if (!isTodayPostponed && planToSave.tuesday) {
+          // Fallback to Tuesday if today doesn't have a workout and wasn't postponed
+          setWorkout(planToSave.tuesday);
+          await dataService.set('current_workout', JSON.stringify(planToSave.tuesday));
+          localStorage.setItem('current_workout', JSON.stringify(planToSave.tuesday));
+        }
       }
       
       if (!isAutoGeneration) {
@@ -1545,6 +1672,7 @@ function App() {
 
     const text = (overrideText || coachChatInput || '').trim();
     if (!text || coachChatLoading) return;
+    pendingDirectPlanEditRef.current = null;
 
     const availableApiKey = import.meta.env.VITE_OPENAI_API_KEY || apiKey;
     if (!availableApiKey) {
@@ -1581,11 +1709,30 @@ function App() {
 
       const assistantMessage = makeCoachMessage('assistant', response.assistantMessage);
       appendCoachMessages(assistantMessage);
+      pendingDirectPlanEditRef.current = inferDirectPlanEditFromConversation(
+        text,
+        response.assistantMessage || ''
+      );
 
-      setPendingContextPatch(response.suggestedContextPatch || null);
+      const enrichedContextPatch = {
+        ...(response.suggestedContextPatch || {}),
+        constraints: {
+          ...((response.suggestedContextPatch && response.suggestedContextPatch.constraints) || {}),
+          notes: [
+            (response?.suggestedContextPatch?.constraints?.notes || '').trim(),
+            `Latest user weekly plan instruction: ${text}`
+          ].filter(Boolean).join('\n')
+        }
+      };
+
+      setPendingContextPatch(enrichedContextPatch);
       setPendingPlanAction(response.suggestedPlanAction || 'none');
       const shouldAskInjuryMode = !!response.askEnableInjuryMode;
       const shouldAskPlanUpdate = !!response.askApplyPlanUpdate;
+      pendingSyncCurrentWorkoutRef.current = shouldSyncCurrentWorkoutForInstruction(
+        text,
+        response.suggestedPlanAction || 'none'
+      );
       setAskEnableInjuryMode(shouldAskInjuryMode);
       setAskApplyPlanUpdate(shouldAskPlanUpdate && !shouldAskInjuryMode);
       setDeferPlanUpdatePromptUntilInjuryDecision(shouldAskInjuryMode && shouldAskPlanUpdate);
@@ -1596,8 +1743,8 @@ function App() {
       );
 
       // Apply immediately only when no explicit confirmation is needed.
-      if (!response.askEnableInjuryMode && !response.askApplyPlanUpdate && response.suggestedContextPatch) {
-        await applyCoachContextPatch(response.suggestedContextPatch);
+      if (!response.askEnableInjuryMode && !response.askApplyPlanUpdate && enrichedContextPatch) {
+        await applyCoachContextPatch(enrichedContextPatch);
       }
     } catch (coachError) {
       console.error('Coach chat send failed:', coachError);
@@ -1669,21 +1816,156 @@ function App() {
       setPendingContextPatch(null);
       setPendingPlanAction('none');
       setDeferPlanUpdatePromptUntilInjuryDecision(false);
+      pendingSyncCurrentWorkoutRef.current = false;
+      pendingDirectPlanEditRef.current = null;
       return;
     }
 
+    setIsPlanApplying(true);
     appendCoachMessages(
       makeCoachMessage('assistant', 'Updating your current week now...')
     );
 
     try {
-      const updated = await handleGenerateWeeklyPlan(true);
+      const availableApiKey = import.meta.env.VITE_OPENAI_API_KEY || apiKey;
+      const weekKey = getWeekKey(new Date());
+      const latestInstruction = extractLatestWeeklyInstruction(pendingContextPatch);
+      let updated = false;
+      const deleteInstruction = parseDeleteWorkoutInstruction(latestInstruction);
+      const directEdit = pendingDirectPlanEditRef.current;
+      const syncTodayFromPlanIfNeeded = async (previousPlan, nextPlan, force = false) => {
+        const todayDayKey = {
+          0: 'sunday',
+          1: 'monday',
+          2: 'tuesday',
+          3: 'wednesday',
+          4: 'thursday',
+          5: 'friday',
+          6: 'saturday'
+        }[new Date().getDay()];
+
+        const prevTodayWorkout = previousPlan?.[todayDayKey] || null;
+        const nextTodayWorkout = nextPlan?.[todayDayKey] || null;
+        const prevTodayPostponed = !!previousPlan?._postponements?.[todayDayKey]?.postponed;
+        const nextTodayPostponed = !!nextPlan?._postponements?.[todayDayKey]?.postponed;
+        const todayChanged =
+          JSON.stringify(prevTodayWorkout) !== JSON.stringify(nextTodayWorkout) ||
+          prevTodayPostponed !== nextTodayPostponed;
+
+        if (!force && !todayChanged) {
+          return;
+        }
+
+        if (nextTodayPostponed || !nextTodayWorkout) {
+          setWorkout(null);
+          await dataService.set('current_workout', null);
+          localStorage.removeItem('current_workout');
+          return;
+        }
+
+        setWorkout(nextTodayWorkout);
+        await dataService.set('current_workout', JSON.stringify(nextTodayWorkout));
+        localStorage.setItem('current_workout', JSON.stringify(nextTodayWorkout));
+      };
+
+      if (weeklyPlan && directEdit?.action === 'delete_day' && directEdit?.targetDayKey) {
+        const targetDayKey = directEdit.targetDayKey;
+        const adjustedPlan = {
+          ...weeklyPlan,
+          [targetDayKey]: null,
+          _updatedAt: new Date().toISOString(),
+          _generationMeta: {
+            ...(weeklyPlan?._generationMeta || {}),
+            source: 'chat',
+            lastGeneratedAt: new Date().toISOString(),
+            latestInstruction
+          }
+        };
+        const changed =
+          JSON.stringify(stripPlanMetaForCompare(adjustedPlan)) !==
+          JSON.stringify(stripPlanMetaForCompare(weeklyPlan));
+        if (changed) {
+          setWeeklyPlan(adjustedPlan);
+          setWeeklyPlanRefreshKey((prev) => prev + 1);
+          localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(adjustedPlan));
+          await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(adjustedPlan));
+          await syncTodayFromPlanIfNeeded(weeklyPlan, adjustedPlan, pendingSyncCurrentWorkoutRef.current);
+          updated = true;
+        }
+      } else if (weeklyPlan && latestInstruction && deleteInstruction.shouldDelete && deleteInstruction.targetDayKey) {
+        const targetDayKey = deleteInstruction.targetDayKey;
+        const adjustedPlan = {
+          ...weeklyPlan,
+          [targetDayKey]: null,
+          _updatedAt: new Date().toISOString(),
+          _generationMeta: {
+            ...(weeklyPlan?._generationMeta || {}),
+            source: 'chat',
+            lastGeneratedAt: new Date().toISOString(),
+            latestInstruction
+          }
+        };
+        const changed =
+          JSON.stringify(stripPlanMetaForCompare(adjustedPlan)) !==
+          JSON.stringify(stripPlanMetaForCompare(weeklyPlan));
+        if (changed) {
+          setWeeklyPlan(adjustedPlan);
+          setWeeklyPlanRefreshKey((prev) => prev + 1);
+          localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(adjustedPlan));
+          await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(adjustedPlan));
+          await syncTodayFromPlanIfNeeded(weeklyPlan, adjustedPlan, pendingSyncCurrentWorkoutRef.current);
+          updated = true;
+        }
+      } else if (weeklyPlan && latestInstruction && deleteInstruction.shouldDelete && !deleteInstruction.targetDayKey) {
+        // Delete intent without a resolvable day should not trigger full-week regeneration.
+        updated = false;
+      } else if (availableApiKey && weeklyPlan && latestInstruction) {
+        const adjustedPlan = await applyInstructionToWeeklyPlan(
+          availableApiKey,
+          weeklyPlan,
+          latestInstruction,
+          activities
+        );
+
+        const planToSave = {
+          ...adjustedPlan,
+          _activityMatches: matchActivitiesToWorkouts(activities, adjustedPlan),
+          _weekStartDate: weekKey,
+          _generationMeta: {
+            ...(weeklyPlan?._generationMeta || {}),
+            source: 'chat',
+            lastGeneratedAt: new Date().toISOString(),
+            latestInstruction
+          },
+          _updatedAt: new Date().toISOString()
+        };
+
+        const changed =
+          JSON.stringify(stripPlanMetaForCompare(planToSave)) !==
+          JSON.stringify(stripPlanMetaForCompare(weeklyPlan));
+
+        if (changed) {
+          setWeeklyPlan(planToSave);
+          setWeeklyPlanRefreshKey((prev) => prev + 1);
+          localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(planToSave));
+          await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(planToSave));
+          await syncTodayFromPlanIfNeeded(weeklyPlan, planToSave, pendingSyncCurrentWorkoutRef.current);
+          updated = true;
+        }
+      } else {
+        updated = await handleGenerateWeeklyPlan(true, {
+          skipCurrentWorkoutSync: !pendingSyncCurrentWorkoutRef.current
+        });
+      }
+
       appendCoachMessages(
         makeCoachMessage(
           'assistant',
           updated
             ? 'Plan updated. I applied the changes to this week.'
-            : 'I could not update the plan right now. The context is still saved.'
+            : (deleteInstruction.shouldDelete
+              ? 'I need the exact day to delete (or the workout type). Try: "remove Thursday workout" or "delete today workout".'
+              : 'I could not apply those exact weekly changes yet. Please be more explicit day-by-day (e.g., "move easy run to Wednesday, remove Thursday speed").')
         )
       );
     } catch (updateError) {
@@ -1698,13 +1980,19 @@ function App() {
       setPendingContextPatch(null);
       setPendingPlanAction('none');
       setDeferPlanUpdatePromptUntilInjuryDecision(false);
+      pendingSyncCurrentWorkoutRef.current = false;
+      pendingDirectPlanEditRef.current = null;
+      setIsPlanApplying(false);
     }
   }, [
     pendingContextPatch,
     applyCoachContextPatch,
     appendCoachMessages,
     makeCoachMessage,
-    handleGenerateWeeklyPlan
+    handleGenerateWeeklyPlan,
+    apiKey,
+    weeklyPlan,
+    activities
   ]);
 
   useEffect(() => {
@@ -3086,7 +3374,7 @@ function App() {
         </div>
       )}
 
-      <PullToRefresh onRefresh={handleStravaSync}>
+      <PullToRefresh onRefresh={handleStravaSync} disabled={showCoachChat || isPlanApplying}>
         {!isPreloading && (
           <div className="dashboard-container" style={{ paddingBottom: '32px' }}>
             {!import.meta.env.VITE_OPENAI_API_KEY && (
@@ -3144,10 +3432,17 @@ function App() {
               const matchedActivities = Object.values(activityMatches).flatMap(match => match.activities || []);
               const milesThisWeek = matchedActivities.reduce((sum, a) => sum + (a.distance / 1609.34), 0);
               
-              // Runs done: count days with matches vs total planned days
-              const completedRunDays = Object.keys(activityMatches).length;
-              const totalPlannedDays = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday']
-                .filter(day => weeklyPlan?.[day] !== null && weeklyPlan?.[day] !== undefined).length;
+              // Runs done: day-level completion against run sessions in plan only.
+              const weekDays = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+              const totalPlannedRuns = weekDays
+                .filter((day) => isPlannedRunWorkout(weeklyPlan?.[day]))
+                .length;
+              const completedRunDays = Object.entries(activityMatches)
+                .filter(([dayKey, match]) =>
+                  isPlannedRunWorkout(weeklyPlan?.[dayKey]) &&
+                  (match?.activities?.length || 0) > 0
+                )
+                .length;
               
               // Avg rating: average of ratings for matched activity IDs
               const matchedActivityIds = Object.values(activityMatches).flatMap(match => match.matchedActivityIds || []);
@@ -3308,7 +3603,7 @@ function App() {
                         color: 'var(--color-text-primary)',
                         lineHeight: 1
                       }}>
-                        {completedRunDays} / {totalPlannedDays}
+                        {completedRunDays} / {totalPlannedRuns}
                       </div>
                       <div style={{
                         fontSize: '10px',
@@ -3639,12 +3934,17 @@ function App() {
 
       <CoachChatPanel
         isOpen={showCoachChat}
-        onClose={() => setShowCoachChat(false)}
+        onClose={() => {
+          if (isPlanApplying) return;
+          setShowCoachChat(false);
+        }}
         messages={coachChatMessages}
         inputValue={coachChatInput}
         onInputChange={setCoachChatInput}
         onSend={(event) => handleCoachSend(event)}
         isSending={coachChatLoading}
+        isPlanApplying={isPlanApplying}
+        disableInteractions={isPlanApplying}
         quickReplies={coachQuickReplies}
         onQuickReply={(reply) => void handleCoachSend(null, reply)}
         askEnableInjuryMode={askEnableInjuryMode}
