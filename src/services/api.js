@@ -440,7 +440,7 @@ Do NOT include any conversational text. Return ONLY the JSON structure above wit
   try {
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]);
+      return normalizeWeeklyPlanBlockOrder(JSON.parse(jsonMatch[0]));
     }
   } catch (parseError) {
     console.log('Could not parse JSON, using text format');
@@ -1371,8 +1371,9 @@ CRITICAL INSTRUCTIONS:
       }
       
       // Plan is valid or we've exhausted retries
-      plan._ratingAnalysis = ratingAnalysis;
-      return plan;
+      const normalizedPlan = normalizeWeeklyPlanBlockOrder(plan);
+      normalizedPlan._ratingAnalysis = ratingAnalysis;
+      return normalizedPlan;
       
     } catch (error) {
       if (retryCount < maxRetries && error.message.includes('No JSON found')) {
@@ -1392,7 +1393,7 @@ CRITICAL INSTRUCTIONS:
   
   try {
     const plan = await generatePlanWithRetry(initialMessages);
-    return plan;
+    return normalizeWeeklyPlanBlockOrder(plan);
   } catch (parseError) {
     console.error('Failed to parse weekly plan JSON after retries:', parseError);
     // Fallback to simple structure if JSON parsing fails
@@ -1480,6 +1481,72 @@ const parseWeekStartKeyToUtcDate = (weekStartKey) => {
   return new Date(Date.UTC(Number(y), Number(m) - 1, Number(d)));
 };
 
+const DAY_WORKOUT_KEYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+
+const classifyBlockOrderGroup = (block = {}) => {
+  const title = `${block?.title || ''}`.toLowerCase();
+  const notes = `${block?.notes || ''}`.toLowerCase();
+  const text = `${title} ${notes}`;
+
+  const isCoolDown =
+    /\bcool[\s-]?down\b/.test(text) ||
+    /\bdown[\s-]?jog\b/.test(text) ||
+    /\bflush\b/.test(text);
+  if (isCoolDown) return 2;
+
+  const isWarmUp =
+    /\bwarm[\s-]?up\b/.test(text) ||
+    /\bactivation\b/.test(text) ||
+    /\bdynamic\b/.test(text) ||
+    /\bstrides?\b/.test(text);
+  if (isWarmUp) return 0;
+
+  return 1;
+};
+
+export const normalizeWorkoutBlockOrder = (workout) => {
+  if (!workout || typeof workout !== 'object' || !Array.isArray(workout.blocks)) {
+    return workout;
+  }
+
+  const indexed = workout.blocks.map((block, index) => ({
+    block,
+    index,
+    group: classifyBlockOrderGroup(block)
+  }));
+
+  const sorted = [...indexed].sort((a, b) => {
+    if (a.group !== b.group) return a.group - b.group;
+    return a.index - b.index;
+  });
+
+  const wasReordered = sorted.some((item, idx) => item.index !== idx);
+  if (!wasReordered) return workout;
+
+  return {
+    ...workout,
+    blocks: sorted.map((item) => item.block)
+  };
+};
+
+export const normalizeWeeklyPlanBlockOrder = (plan) => {
+  if (!plan || typeof plan !== 'object') return plan;
+
+  let changed = false;
+  const normalized = { ...plan };
+  for (const dayKey of DAY_WORKOUT_KEYS) {
+    const workout = normalized[dayKey];
+    if (!workout || typeof workout !== 'object' || !Array.isArray(workout.blocks)) continue;
+    const nextWorkout = normalizeWorkoutBlockOrder(workout);
+    if (nextWorkout !== workout) {
+      normalized[dayKey] = nextWorkout;
+      changed = true;
+    }
+  }
+
+  return changed ? normalized : plan;
+};
+
 const getActivityDateKey = (activity) => {
   const localDate = typeof activity?.start_date_local === 'string'
     ? activity.start_date_local.split('T')[0]
@@ -1497,6 +1564,120 @@ const getActivityDateKey = (activity) => {
 
   if (!activity?.start_date) return null;
   return formatDateKey(new Date(activity.start_date));
+};
+
+export const normalizePlanWeekMetadata = (plan, expectedWeekKey) => {
+  if (!plan || typeof plan !== 'object' || !expectedWeekKey) {
+    return { plan, changed: false, hadWeekMismatch: false };
+  }
+
+  const currentWeekKey = typeof plan._weekStartDate === 'string' ? plan._weekStartDate : null;
+  let normalizedPlan = plan;
+  let changed = false;
+  const hadWeekMismatch = !!(currentWeekKey && currentWeekKey !== expectedWeekKey);
+
+  if (currentWeekKey !== expectedWeekKey) {
+    normalizedPlan = {
+      ...normalizedPlan,
+      _weekStartDate: expectedWeekKey
+    };
+    changed = true;
+  }
+
+  // If the plan explicitly belongs to another week, drop cached week-scoped state.
+  if (currentWeekKey && currentWeekKey !== expectedWeekKey) {
+    if (normalizedPlan._activityMatches) {
+      const { _activityMatches, ...rest } = normalizedPlan;
+      normalizedPlan = rest;
+      changed = true;
+    }
+    if (normalizedPlan._postponements) {
+      const { _postponements, ...rest } = normalizedPlan;
+      normalizedPlan = rest;
+      changed = true;
+    }
+  }
+
+  // Clean stale postponements even when week key appears current.
+  if (normalizedPlan._postponements && typeof normalizedPlan._postponements === 'object') {
+    const cleanedPostponements = Object.entries(normalizedPlan._postponements).reduce((acc, [day, details]) => {
+      if (!details || typeof details !== 'object') return acc;
+      const rawDate = typeof details.date === 'string' ? details.date.split('T')[0] : null;
+      const hasDate = !!rawDate && /^\d{4}-\d{2}-\d{2}$/.test(rawDate);
+      if (hasDate && getWeekKey(new Date(`${rawDate}T12:00:00`)) !== expectedWeekKey) {
+        return acc;
+      }
+      acc[day] = details;
+      return acc;
+    }, {});
+
+    if (Object.keys(cleanedPostponements).length !== Object.keys(normalizedPlan._postponements).length) {
+      normalizedPlan = {
+        ...normalizedPlan,
+        _postponements: cleanedPostponements
+      };
+      changed = true;
+    }
+  }
+
+  // Clean stale cached activity matches that don't belong to this plan week/day.
+  if (normalizedPlan._activityMatches && typeof normalizedPlan._activityMatches === 'object') {
+    const cleanedMatches = Object.entries(normalizedPlan._activityMatches).reduce((acc, [dayKey, match]) => {
+      if (!match || typeof match !== 'object') return acc;
+      const dayDate = getDateForDayOfCurrentWeek(dayKey, expectedWeekKey);
+      if (!dayDate) return acc;
+
+      const filteredActivities = Array.isArray(match.activities)
+        ? match.activities.filter((activity) => getActivityDateKey(activity) === dayDate && activity?.type === 'Run')
+        : [];
+
+      if (filteredActivities.length === 0) return acc;
+
+      acc[dayKey] = {
+        ...match,
+        activities: filteredActivities,
+        matchedActivityIds: filteredActivities.map((activity) => activity.id)
+      };
+      return acc;
+    }, {});
+
+    if (JSON.stringify(cleanedMatches) !== JSON.stringify(normalizedPlan._activityMatches)) {
+      normalizedPlan = {
+        ...normalizedPlan,
+        _activityMatches: cleanedMatches
+      };
+      changed = true;
+    }
+  }
+
+  return { plan: normalizedPlan, changed, hadWeekMismatch };
+};
+
+export const getPastAndFuturePlanDays = (referenceDate = new Date()) => {
+  const today = new Date(referenceDate);
+  today.setHours(0, 0, 0, 0);
+
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+  monday.setHours(0, 0, 0, 0);
+
+  const planDayOrder = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+  const pastDays = [];
+  const futureDays = [];
+
+  planDayOrder.forEach((dayName, offset) => {
+    const dayDate = new Date(monday);
+    dayDate.setDate(monday.getDate() + offset);
+    dayDate.setHours(0, 0, 0, 0);
+
+    if (dayDate < today) {
+      pastDays.push(dayName);
+    } else if (dayDate > today) {
+      futureDays.push(dayName);
+    }
+  });
+
+  return { pastDays, futureDays };
 };
 
 // Helper function to get the calendar date for a day of the current week
@@ -1803,25 +1984,7 @@ export const adjustWeeklyPlanForPostponement = async (apiKey, currentPlan, postp
     planContext[postponedDay] = postponedWorkout;
   }
   
-  // Determine which days are in the past (already passed)
-  const monday = new Date(today);
-  monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-  monday.setHours(0, 0, 0, 0);
-  
-  const pastDays = [];
-  const futureDays = [];
-  Object.keys(dayNameMap).forEach(dayNum => {
-    const dayName = dayNameMap[dayNum];
-    const dayDate = new Date(monday);
-    dayDate.setDate(monday.getDate() + parseInt(dayNum));
-    dayDate.setHours(0, 0, 0, 0);
-    
-    if (dayDate < today) {
-      pastDays.push(dayName);
-    } else if (dayDate > today) {
-      futureDays.push(dayName);
-    }
-  });
+  const { pastDays, futureDays } = getPastAndFuturePlanDays(today);
   
   // Safely stringify plan context and postponed workout
   let planContextStr = '{}';
@@ -1961,7 +2124,7 @@ CRITICAL: Every workout block MUST have both "distance" and "pace" fields. Do no
     try {
       const jsonMatch = content.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
-        const adjustedPlan = JSON.parse(jsonMatch[0]);
+        const adjustedPlan = normalizeWeeklyPlanBlockOrder(JSON.parse(jsonMatch[0]));
         
         console.log('Parsed adjusted plan from AI:', adjustedPlan);
         
@@ -2108,7 +2271,8 @@ Rules:
 1) Keep unchanged days exactly as-is unless the instruction requires a change.
 2) Preserve metadata fields (e.g. _postponements) unless instruction conflicts.
 3) Every running workout block must include required fields (title, distance, pace, duration, notes).
-4) Return ONLY JSON.`
+4) Block order must be warm-up first, main-work blocks second, cool-down last.
+5) Return ONLY JSON.`
     }
   ];
 
@@ -2176,7 +2340,7 @@ Rules:
     throw new Error(`Instruction-updated plan invalid: ${validation.errors.join('; ')}`);
   }
 
-  return updatedPlan;
+  return normalizeWeeklyPlanBlockOrder(updatedPlan);
 };
 
 export const generateWeeklyPlan = async (apiKey, activities = [], isInjured = false) => {
@@ -2893,6 +3057,11 @@ export async function regenerateDayWorkout(
 
   const lowerDayName = dayName.toLowerCase();
   const existingWorkout = currentWeekPlan?.[lowerDayName] || null;
+  const canonicalizeWorkout = (workout) => {
+    if (!workout || typeof workout !== 'object') return null;
+    return JSON.stringify(normalizeWorkoutBlockOrder(workout));
+  };
+  const existingWorkoutCanonical = canonicalizeWorkout(existingWorkout);
 
   // Current training week (same formula as elsewhere) for Sunday progression vs easy
   const raceDate = new Date('2026-05-02');
@@ -2925,6 +3094,7 @@ Required block schema (same as weekly plan):
 - "restInterval": REQUIRED field. For interval/speed blocks, this is a string (e.g., "90 sec standing recovery between intervals"). For non-interval blocks (warm-up, cool-down, steady easy miles), this field must be present and set to null.
 
 Every block you generate MUST match this level of detail. Vague instructions like "run at a comfortable pace" or missing fields are NOT acceptable.
+Block order is REQUIRED: warm-up blocks first, main-work blocks second, cool-down blocks last.
 
 CURRENT WEEKLY PLAN (for context only – do NOT modify days other than "${dayName}"):
 ${JSON.stringify(
@@ -2957,6 +3127,9 @@ Respond by returning ONLY a JSON object for the regenerated "${dayName}" workout
   "type": "easy" | "speed" | "long",
   "blocks": [ { ...fully detailed blocks as described above... } ]
 }
+
+CRITICAL: The regenerated workout MUST be meaningfully different from the CURRENT "${dayName}" workout shown above.
+Change at least two of: block structure, distances, pace ranges, durations, or specific coaching cues.
 `;
 
   // Helper to validate just the regenerated day using validatePlanBlocks
@@ -3039,8 +3212,33 @@ Respond by returning ONLY a JSON object for the regenerated "${dayName}" workout
     // Validate just this day
     const validation = validateDayWorkout(workout, lowerDayName);
     if (validation.isValid) {
-      regeneratedWorkout = workout;
-      break;
+      const normalizedWorkout = normalizeWorkoutBlockOrder(workout);
+      const regeneratedCanonical = canonicalizeWorkout(normalizedWorkout);
+      const unchangedWorkout =
+        !!existingWorkoutCanonical && regeneratedCanonical === existingWorkoutCanonical;
+
+      if (!unchangedWorkout) {
+        regeneratedWorkout = normalizedWorkout;
+        break;
+      }
+
+      // If the model returns the same workout, force a meaningful rewrite.
+      retryCount += 1;
+      if (retryCount > maxRetries) {
+        throw new Error(`Regenerated ${dayName} workout was unchanged after multiple attempts.`);
+      }
+      messages = [
+        ...messages,
+        { role: 'assistant', content: JSON.stringify(workout, null, 2) },
+        {
+          role: 'user',
+          content:
+            `That workout is still effectively the same as the original ${dayName} workout. ` +
+            'Regenerate it again with meaningful changes to at least two dimensions: block structure, distance, pace range, duration, or coaching cues. ' +
+            `Return ONLY JSON for "${dayName}".`
+        }
+      ];
+      continue;
     }
 
     retryCount += 1;
@@ -3145,5 +3343,5 @@ Return ONLY the corrected JSON object for the "${dayName}" workout.`;
   }
   localStorage.setItem(`weekly_plan_${weekKey}`, planJson);
 
-  return updatedPlan;
+  return normalizeWeeklyPlanBlockOrder(updatedPlan);
 }

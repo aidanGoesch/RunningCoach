@@ -13,7 +13,7 @@ import PullToRefresh from './components/PullToRefresh';
 import NewActivityRatingModal from './components/NewActivityRatingModal';
 import RecoveryPage from './components/RecoveryPage';
 import CoachChatPanel from './components/CoachChatPanel';
-import { generateWorkout, generateWeeklyPlan, generateDataDrivenWeeklyPlan, generateWeeklyAnalysis, matchActivitiesToWorkouts, syncWithStrava, generateInsights, detectNewActivities, adjustWeeklyPlanForPostponement, regenerateDayWorkout, applyInstructionToWeeklyPlan, updatePromptWithCurrentData, buildFourWeekSummary, buildRatingQueue, DEFAULT_COACHING_PROMPT, getAppBasePath, refreshStravaToken, getValidStravaAccessToken } from './services/api';
+import { generateWorkout, generateWeeklyPlan, generateDataDrivenWeeklyPlan, generateWeeklyAnalysis, matchActivitiesToWorkouts, syncWithStrava, generateInsights, detectNewActivities, adjustWeeklyPlanForPostponement, regenerateDayWorkout, applyInstructionToWeeklyPlan, updatePromptWithCurrentData, buildFourWeekSummary, buildRatingQueue, DEFAULT_COACHING_PROMPT, getAppBasePath, refreshStravaToken, getValidStravaAccessToken, normalizePlanWeekMetadata } from './services/api';
 import { dataService, setupRealtimeSync, syncAllDataFromSupabase, enableSupabase, getActivityRating, getActivityRatings, getStravaTokens, saveActivityRating } from './services/supabase';
 import { getLegacyWeekKey, getWeekKey } from './utils/weekKey';
 import { hasValidWeeklyPlanObject, mergeBaselineWithRatedIds, shouldAutoGenerateWeeklyPlan } from './utils/planSync';
@@ -768,8 +768,18 @@ function App() {
         
         let todayWorkout = null;
         let isTodayPostponed = false;
+        let loadedPlanHadWeekMismatch = false;
         if (effectiveWeeklyPlanData) {
-          const parsedPlan = JSON.parse(effectiveWeeklyPlanData);
+          const parsedPlanRaw = JSON.parse(effectiveWeeklyPlanData);
+          const {
+            plan: parsedPlan,
+            changed: weekMetadataChanged,
+            hadWeekMismatch
+          } = normalizePlanWeekMetadata(parsedPlanRaw, weekKey);
+          loadedPlanHadWeekMismatch = hadWeekMismatch;
+          if (weekMetadataChanged) {
+            effectiveWeeklyPlanData = JSON.stringify(parsedPlan);
+          }
           // Check if today was postponed
           const postponements = parsedPlan._postponements || {};
           const todayPostponeInfo = postponements[dayNameMap[dayOfWeek]];
@@ -810,14 +820,25 @@ function App() {
         // Store weekly plan in state for checking postpone status
         // Prioritize Supabase data (already loaded above), fallback to localStorage
         let parsedPlanForState = null;
+        let didSanitizePlanWeekMetadata = false;
+        let forceAutoGenerateFromWeekMismatch = loadedPlanHadWeekMismatch;
         if (effectiveWeeklyPlanData) {
-          parsedPlanForState = JSON.parse(effectiveWeeklyPlanData);
+          const parsedPlanRaw = JSON.parse(effectiveWeeklyPlanData);
+          const {
+            plan: sanitizedPlan,
+            changed,
+            hadWeekMismatch
+          } = normalizePlanWeekMetadata(parsedPlanRaw, weekKey);
+          parsedPlanForState = sanitizedPlan;
+          didSanitizePlanWeekMetadata = changed;
+          forceAutoGenerateFromWeekMismatch = forceAutoGenerateFromWeekMismatch || hadWeekMismatch;
           // CRITICAL: If Supabase plan doesn't have postpone info, check localStorage and merge it
           if (!parsedPlanForState._postponements || Object.keys(parsedPlanForState._postponements).length === 0) {
             const localPlan = localStorage.getItem(`weekly_plan_${weekKey}`);
             if (localPlan) {
               try {
-                const localParsed = JSON.parse(localPlan);
+                const localParsedRaw = JSON.parse(localPlan);
+                const { plan: localParsed } = normalizePlanWeekMetadata(localParsedRaw, weekKey);
                 if (localParsed._postponements && Object.keys(localParsed._postponements).length > 0) {
                   // localStorage has postpone info but Supabase plan doesn't - merge it
                   parsedPlanForState._postponements = localParsed._postponements;
@@ -834,14 +855,27 @@ function App() {
           // Fallback to localStorage if Supabase doesn't have it
           const localPlan = localStorage.getItem(`weekly_plan_${weekKey}`);
           if (localPlan) {
-            parsedPlanForState = JSON.parse(localPlan);
+            const localPlanRaw = JSON.parse(localPlan);
+            const {
+              plan: sanitizedLocalPlan,
+              changed,
+              hadWeekMismatch
+            } = normalizePlanWeekMetadata(localPlanRaw, weekKey);
+            parsedPlanForState = sanitizedLocalPlan;
+            didSanitizePlanWeekMetadata = changed;
+            forceAutoGenerateFromWeekMismatch = forceAutoGenerateFromWeekMismatch || hadWeekMismatch;
             // Upload to Supabase so it's available on other devices
-            await dataService.set(`weekly_plan_${weekKey}`, localPlan).catch(() => {});
+            await dataService.set(`weekly_plan_${weekKey}`, JSON.stringify(sanitizedLocalPlan)).catch(() => {});
           }
         }
         
         // Migrate old postpone data to new structure if needed
         if (parsedPlanForState) {
+          if (didSanitizePlanWeekMetadata) {
+            const sanitizedPlanString = JSON.stringify(parsedPlanForState);
+            localStorage.setItem(`weekly_plan_${weekKey}`, sanitizedPlanString);
+            await dataService.set(`weekly_plan_${weekKey}`, sanitizedPlanString).catch(() => {});
+          }
           const oldPostponeData = localStorage.getItem('postponed_workout');
           if (oldPostponeData && (!parsedPlanForState._postponements || Object.keys(parsedPlanForState._postponements).length === 0)) {
             try {
@@ -852,8 +886,8 @@ function App() {
               const todayEnd = new Date(today);
               todayEnd.setHours(23, 59, 59, 999);
               
-              // Check if postpone was today
-              if (postponeDate >= todayStart && postponeDate <= todayEnd) {
+              // Check if postpone was today and belongs to the current week
+              if (postponeDate >= todayStart && postponeDate <= todayEnd && getWeekKey(postponeDate) === weekKey) {
                 if (!parsedPlanForState._postponements) {
                   parsedPlanForState._postponements = {};
                 }
@@ -984,16 +1018,20 @@ function App() {
         const hasWeeklyPlan = hasValidWeeklyPlanObject(parsedPlanForState);
         // Auto-generate weekly plan only when no weekly plan object exists
         let planWasGenerated = false;
-        let missingWeeklyPlan = !hasWeeklyPlan;
+        let missingWeeklyPlan = !hasWeeklyPlan || forceAutoGenerateFromWeekMismatch;
         if (missingWeeklyPlan) {
           const retryPlanData = await dataService.get(`weekly_plan_${weekKey}`).catch(() => null);
           if (retryPlanData) {
             try {
-              const retriedPlan = JSON.parse(retryPlanData);
+              const retriedPlanRaw = JSON.parse(retryPlanData);
+              const {
+                plan: retriedPlan,
+                hadWeekMismatch
+              } = normalizePlanWeekMetadata(retriedPlanRaw, weekKey);
               if (retriedPlan && typeof retriedPlan === 'object') {
                 parsedPlanForState = retriedPlan;
                 setWeeklyPlan(retriedPlan);
-                missingWeeklyPlan = false;
+                missingWeeklyPlan = !hasValidWeeklyPlanObject(retriedPlan) || hadWeekMismatch;
               }
             } catch {
               // keep missingWeeklyPlan as true

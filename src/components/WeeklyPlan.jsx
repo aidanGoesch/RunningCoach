@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { dataService } from '../services/supabase';
+import { normalizePlanWeekMetadata } from '../services/api';
 import { getLegacyWeekKey, getWeekKey } from '../utils/weekKey';
 
 const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, onGenerateWeeklyPlan, apiKey, onActivitiesChange, onRecoveryClick }) => {
@@ -67,7 +68,8 @@ const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, on
         }
         
         if (storedPlan) {
-          parsedPlan = JSON.parse(storedPlan);
+          const parsedPlanRaw = JSON.parse(storedPlan);
+          parsedPlan = normalizePlanWeekMetadata(parsedPlanRaw, weekKey).plan;
           console.log('Loaded weekly plan from Supabase:', parsedPlan);
           console.log('Supabase plan has postpone info:', !!parsedPlan._postponements, parsedPlan._postponements);
           console.log('Supabase plan postpone keys:', parsedPlan._postponements ? Object.keys(parsedPlan._postponements) : 'none');
@@ -80,9 +82,11 @@ const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, on
         if (!parsedPlan && legacyWeekKey !== weekKey) {
           const legacyPlan = await dataService.get(`weekly_plan_${legacyWeekKey}`).catch(() => null);
           if (legacyPlan) {
-            parsedPlan = JSON.parse(legacyPlan);
-            localStorage.setItem(`weekly_plan_${weekKey}`, legacyPlan);
-            await dataService.set(`weekly_plan_${weekKey}`, legacyPlan).catch(() => {});
+            const parsedPlanRaw = JSON.parse(legacyPlan);
+            parsedPlan = normalizePlanWeekMetadata(parsedPlanRaw, weekKey).plan;
+            const normalizedPlanString = JSON.stringify(parsedPlan);
+            localStorage.setItem(`weekly_plan_${weekKey}`, normalizedPlanString);
+            await dataService.set(`weekly_plan_${weekKey}`, normalizedPlanString).catch(() => {});
             console.log('Migrated legacy weekly plan key to canonical key');
           }
         }
@@ -90,7 +94,12 @@ const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, on
         if (!parsedPlan) {
           const localPlan = localStorage.getItem(`weekly_plan_${weekKey}`);
           if (localPlan) {
-            parsedPlan = JSON.parse(localPlan);
+            const parsedPlanRaw = JSON.parse(localPlan);
+            const { plan: normalizedLocalPlan, changed } = normalizePlanWeekMetadata(parsedPlanRaw, weekKey);
+            parsedPlan = normalizedLocalPlan;
+            if (changed) {
+              localStorage.setItem(`weekly_plan_${weekKey}`, JSON.stringify(parsedPlan));
+            }
             console.log('Loaded weekly plan from localStorage (fallback):', parsedPlan);
             console.log('LocalStorage plan has postpone info:', !!parsedPlan._postponements, parsedPlan._postponements);
             // Try to upload to Supabase in background (don't wait for it)
@@ -106,7 +115,8 @@ const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, on
             const localPlanWithPostpone = localStorage.getItem(`weekly_plan_${weekKey}`);
             if (localPlanWithPostpone) {
               try {
-                const localParsed = JSON.parse(localPlanWithPostpone);
+                const localParsedRaw = JSON.parse(localPlanWithPostpone);
+                const localParsed = normalizePlanWeekMetadata(localParsedRaw, weekKey).plan;
                 if (localParsed._postponements && Object.keys(localParsed._postponements).length > 0) {
                   // localStorage has postpone info but Supabase plan doesn't - merge it
                   parsedPlan._postponements = localParsed._postponements;
@@ -132,8 +142,8 @@ const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, on
                 const today = new Date();
                 const daysDiff = Math.floor((today - postponeDate) / (1000 * 60 * 60 * 24));
                 
-                // Only recover if it's within the last 7 days
-                if (daysDiff >= 0 && daysDiff < 7) {
+                // Only recover if it's within the current week window
+                if (daysDiff >= 0 && daysDiff < 7 && getWeekKey(postponeDate) === weekKey) {
                   const dayNameMap = {
                     0: 'sunday', 1: 'monday', 2: 'tuesday', 3: 'wednesday',
                     4: 'thursday', 5: 'friday', 6: 'saturday'
@@ -177,7 +187,8 @@ const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, on
         const localPlan = localStorage.getItem(`weekly_plan_${weekKey}`);
         console.log('localStorage weekly plan:', localPlan);
         if (localPlan) {
-          const parsedPlan = JSON.parse(localPlan);
+          const parsedPlanRaw = JSON.parse(localPlan);
+          const parsedPlan = normalizePlanWeekMetadata(parsedPlanRaw, weekKey).plan;
           applyPlanIfNewer(parsedPlan, weeklyPlanRef.current, 'Fallback Load');
         } else {
           console.log('No weekly plan found in localStorage either - use Generate Weekly Plan button');
@@ -213,6 +224,24 @@ const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, on
     }
   }, [activities, currentWeek?.key, weeklyPlan, onActivitiesChange]);
 
+  const getLocalDateKey = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const getActivityLocalDateKey = (activity) => {
+    if (typeof activity?.start_date_local === 'string') {
+      const localDate = activity.start_date_local.split('T')[0];
+      if (/^\d{4}-\d{2}-\d{2}$/.test(localDate)) return localDate;
+    }
+    if (!activity?.start_date) return null;
+    const parsedDate = new Date(activity.start_date);
+    if (Number.isNaN(parsedDate.getTime())) return null;
+    return getLocalDateKey(parsedDate);
+  };
+
   const getDayInfo = (dayOffset) => {
     if (!currentWeek) return null;
     
@@ -230,15 +259,16 @@ const WeeklyPlan = ({ weeklyPlan: weeklyPlanProp, activities, onWorkoutClick, on
     const dayName = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'][dayOffset];
     const activityMatches = weeklyPlan?._activityMatches || {};
     const dayMatch = activityMatches[dayName];
+    const dayDateKey = getLocalDateKey(date);
     
-    // Check if workout is matched to an activity
-    const hasMatchedWorkout = !!dayMatch && dayMatch.activities && dayMatch.activities.length > 0;
+    // Only count cached matches when they align with this exact calendar date.
+    const hasMatchedWorkout = !!dayMatch && Array.isArray(dayMatch.activities) && dayMatch.activities.some((activity) => {
+      return getActivityLocalDateKey(activity) === dayDateKey && activity?.type === 'Run';
+    });
     
     // Also check if there's any activity for this day (fallback)
     const dayActivities = activities.filter(activity => {
-      const activityDate = new Date(activity.start_date);
-      activityDate.setHours(0, 0, 0, 0);
-      return activityDate.getTime() === date.getTime() && activity.type === 'Run';
+      return getActivityLocalDateKey(activity) === dayDateKey && activity.type === 'Run';
     });
     
     // For today, trust actual activities only; _activityMatches can be stale right after plan edits.

@@ -1,7 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dataService } from './supabase';
 import { getWeekKey } from '../utils/weekKey';
-import { matchActivitiesToWorkouts, regenerateDayWorkout } from './api';
+import {
+  getPastAndFuturePlanDays,
+  matchActivitiesToWorkouts,
+  normalizePlanWeekMetadata,
+  normalizeWeeklyPlanBlockOrder,
+  normalizeWorkoutBlockOrder,
+  regenerateDayWorkout
+} from './api';
 
 describe('matchActivitiesToWorkouts', () => {
   it('uses canonical week key plus start_date_local for stable matching', () => {
@@ -101,5 +108,99 @@ describe('regenerateDayWorkout persistence metadata', () => {
 
     fetchSpy.mockRestore();
     setSpy.mockRestore();
+  });
+});
+
+describe('normalizePlanWeekMetadata', () => {
+  it('drops stale week-scoped metadata when week key changes', () => {
+    const plan = {
+      _weekStartDate: '2026-03-23',
+      _activityMatches: {
+        tuesday: {
+          matchedActivityIds: [111]
+        }
+      },
+      _postponements: {
+        monday: {
+          postponed: true
+        }
+      },
+      monday: null,
+      tuesday: { title: 'Easy', type: 'easy', blocks: [] }
+    };
+
+    const { plan: normalized, changed, hadWeekMismatch } = normalizePlanWeekMetadata(plan, '2026-03-30');
+
+    expect(changed).toBe(true);
+    expect(hadWeekMismatch).toBe(true);
+    expect(normalized._weekStartDate).toBe('2026-03-30');
+    expect(normalized._activityMatches).toBeUndefined();
+    expect(normalized._postponements).toBeUndefined();
+    expect(normalized.tuesday?.title).toBe('Easy');
+  });
+});
+
+describe('getPastAndFuturePlanDays', () => {
+  it('classifies Monday correctly with Monday-first day order', () => {
+    const monday = new Date('2026-03-30T12:00:00');
+    const { pastDays, futureDays } = getPastAndFuturePlanDays(monday);
+
+    expect(pastDays).toEqual([]);
+    expect(futureDays).toEqual([
+      'tuesday',
+      'wednesday',
+      'thursday',
+      'friday',
+      'saturday',
+      'sunday'
+    ]);
+  });
+});
+
+describe('block order normalization', () => {
+  it('reorders a workout to warm-up, main, cool-down sequence', () => {
+    const workout = {
+      title: 'Speed Work',
+      type: 'speed',
+      blocks: [
+        { title: 'Cool-down jog', notes: 'Easy finish' },
+        { title: 'Main set 4x400m', notes: 'Hard efforts' },
+        { title: 'Warm-up', notes: 'Easy jog + drills' }
+      ]
+    };
+
+    const normalized = normalizeWorkoutBlockOrder(workout);
+    expect(normalized.blocks.map((block) => block.title)).toEqual([
+      'Warm-up',
+      'Main set 4x400m',
+      'Cool-down jog'
+    ]);
+  });
+
+  it('reorders all workout days in a weekly plan', () => {
+    const plan = {
+      monday: null,
+      tuesday: {
+        title: 'Easy Run',
+        type: 'easy',
+        blocks: [
+          { title: 'Cool-down' },
+          { title: 'Main easy miles' },
+          { title: 'Warm-up' }
+        ]
+      },
+      wednesday: null,
+      thursday: null,
+      friday: null,
+      saturday: null,
+      sunday: null
+    };
+
+    const normalizedPlan = normalizeWeeklyPlanBlockOrder(plan);
+    expect(normalizedPlan.tuesday.blocks.map((block) => block.title)).toEqual([
+      'Warm-up',
+      'Main easy miles',
+      'Cool-down'
+    ]);
   });
 });

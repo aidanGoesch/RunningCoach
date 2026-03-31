@@ -116,7 +116,7 @@ export class DataService {
             .select('workout_data')
             .eq('user_id', user.id)
             .eq('workout_date', new Date().toISOString().split('T')[0])
-            .single()
+            .maybeSingle()
           break;
 
         case 'coach_agent_context':
@@ -451,9 +451,23 @@ export class DataService {
           }
         } else if (key.startsWith('weekly_analysis_')) {
           const weekStart = key.replace('weekly_analysis_', '')
-          // Store analysis in weekly_plans table's weekly_analysis column.
-          // Use conflict-safe upsert to avoid duplicate rows for the same week.
-          const { error } = await supabase
+          // Prefer update to avoid 400s on schemas where plan_data is required.
+          const updateResult = await supabase
+            .from('weekly_plans')
+            .update({
+              weekly_analysis: value
+            })
+            .eq('user_id', user.id)
+            .eq('week_start_date', weekStart)
+            .select('id')
+
+          if (updateResult.error) {
+            throw updateResult.error
+          }
+
+          if ((updateResult.data || []).length === 0) {
+            // Fallback for missing row.
+            const { error } = await supabase
             .from('weekly_plans')
             .upsert({
               user_id: user.id,
@@ -463,8 +477,9 @@ export class DataService {
               onConflict: 'user_id,week_start_date'
             })
 
-          if (error) {
-            throw error
+            if (error) {
+              throw error
+            }
           }
         } else if (key.startsWith('activity_insights_')) {
           const activityId = key.replace('activity_insights_', '')
